@@ -108,6 +108,13 @@ from .steam_match_history import (
     game_type_to_mode,
     is_demo_expired,
 )
+from .valve_demo_resolver import (
+    BoilerProcessError,
+    BoilerRuntimeError,
+    InvalidShareCodeError,
+    MatchInfoDecodeError,
+    resolve_valve_demo,
+)
 
 APP_VERSION, _APP_VERSION_SOURCE = resolve_local_version_info()
 
@@ -930,6 +937,11 @@ class MatchHistoryDownloadBody(BaseModel):
     demo_url: str
     match_id: str
     filename: str  # e.g. "match730_3733386468353335412.dem"
+
+
+class MatchShareCodeDownloadBody(BaseModel):
+    share_code: str
+    accept_gpl_sidecar: bool = False
 
 
 @app.get("/api/config")
@@ -2651,6 +2663,51 @@ async def download_match_demo(body: MatchHistoryDownloadBody):
 
     await _enqueue_demo_path(dem_path)
     return {"ok": True, "path": str(dem_path), "filename": filename}
+
+
+@app.post("/api/match-history/download-share-code")
+async def download_match_demo_from_share_code(body: MatchShareCodeDownloadBody):
+    """Resolve a Steam share code through the local GC, then ingest its demo."""
+
+    if not body.accept_gpl_sidecar:
+        raise HTTPException(
+            400,
+            "首次使用前请确认允许下载并运行独立的 GPL-3.0 Game Coordinator 组件",
+        )
+
+    cfg = load_config()
+    watch_paths = [p for p in cfg.demo_watch_paths if p.strip()]
+    if not watch_paths:
+        raise HTTPException(400, "未配置 Demo 库监听目录，请先在「Demo 库」设置监听路径")
+
+    runtime_parent = resolve_config_path().parent / "third_party" / "boiler-writter"
+    try:
+        resolved = await resolve_valve_demo(body.share_code, runtime_parent)
+    except InvalidShareCodeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except BoilerProcessError as exc:
+        raise HTTPException(409 if exc.exit_code in {4, 5, 6, 7} else 502, str(exc)) from exc
+    except (BoilerRuntimeError, MatchInfoDecodeError) as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+    filename = f"match730_{resolved.match_id}.dem"
+    try:
+        dem_path = await download_demo(resolved.demo_url, Path(watch_paths[0]), filename)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(502, f"下载失败，HTTP {exc.response.status_code}") from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(502, f"下载超时或网络错误: {exc}") from exc
+    except OSError as exc:
+        raise HTTPException(500, f"Demo 写入或解压失败: {exc}") from exc
+
+    await _enqueue_demo_path(dem_path)
+    return {
+        "ok": True,
+        "path": str(dem_path),
+        "filename": filename,
+        "match_id": str(resolved.match_id),
+        "share_code": resolved.share_code,
+    }
 
 
 @app.get("/api/demos/discovered")
