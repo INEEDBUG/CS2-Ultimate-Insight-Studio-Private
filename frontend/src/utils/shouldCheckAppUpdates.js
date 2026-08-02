@@ -1,7 +1,8 @@
-import { isTauriDesktop } from "./desktopUpdater";
-
-/** 是否应走 Cloudflare / Tauri updater 检查更新（Vite dev / 浏览器模式跳过）。 */
+/**
+ * This private fork must never consume the upstream project's update channel:
+ * doing so could replace the customized build with an unrelated upstream build.
+ * Private candidates are distributed as authenticated GitHub Actions artifacts.
+ */
 export async function shouldCheckAppUpdates() {
-  if (import.meta.env?.DEV) return false;
-  return isTauriDesktop();
+  return false;
 }
