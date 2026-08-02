@@ -1,8 +1,8 @@
 <h1 align="center">
   <br>
-  <a href="https://github.com/DrEAmSs59/CS2-insight-agent/"><img src="https://raw.githubusercontent.com/DrEAmSs59/CS2-insight-agent/main/frontend/public/cs2-insight-logo.png" alt="CS2-Insight-Agent" width="140"></a>
+  <img src="./frontend/public/cs2-insight-logo.png" alt="CS2 Ultimate Insight Studio" width="140">
   <br>
-  CS2-Insight-Agent
+  CS2 Ultimate Insight Studio
   <br>
 </h1>
 
@@ -10,8 +10,10 @@
   <img src="./asset/icon-cn.svg" alt="" width="20" height="20" style="vertical-align: middle;"> 简体中文 | <a href="./README_EN.md"><img src="./asset/icon-en.svg" alt="" width="20" height="20" style="vertical-align: middle;"> English</a>
 </p>
 
-<h3 align="center"><b>CS2 洞察智能体：为 CS2 玩家打造的桌面端智能电竞终端</b> </h3>
-<h4 align="center"> Demo 管理，高光提取，自动剪辑，LLM 锐评</h4>
+<h3 align="center"><b>面向个人训练与复盘的本地 CS2 工作台</b> </h3>
+<h4 align="center">官匹 Demo 获取 · Demo 分析 · 灵敏度实验室 · 磁轴输入实验室</h4>
+
+> 本项目是基于 [DrEAmSs59/CS2-insight-agent](https://github.com/DrEAmSs59/CS2-insight-agent) 的非商业衍生版本。原项目作者、提交历史和 PolyForm Noncommercial 1.0.0 许可声明均予以保留；下方原项目链接和展示资料用于注明来源。
 
 <p align="center">
   <a href="https://github.com/DrEAmSs59/CS2-insight-agent/releases">

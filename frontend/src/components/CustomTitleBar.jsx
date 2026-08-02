@@ -34,7 +34,7 @@ export default function CustomTitleBar() {
           className="mr-2 h-6 w-6"
           data-tauri-drag-region
         />
-        <span className="text-sm font-semibold" data-tauri-drag-region>CS2 Insight Agent</span>
+        <span className="text-sm font-semibold" data-tauri-drag-region>CS2 Ultimate Insight Studio</span>
       </div>
 
       <div className="flex h-full">
