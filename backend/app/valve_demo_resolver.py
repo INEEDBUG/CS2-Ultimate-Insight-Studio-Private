@@ -25,6 +25,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tarfile
 import uuid
 from dataclasses import dataclass
@@ -344,16 +345,28 @@ async def run_boiler_runtime(
 ) -> bytes:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.unlink(missing_ok=True)
-    process = await asyncio.create_subprocess_exec(
-        str(executable),
-        str(output_path),
-        str(share_code.match_id),
-        str(share_code.reservation_id),
-        str(share_code.tv_port),
-        cwd=str(executable.parent),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    try:
+        process = await asyncio.create_subprocess_exec(
+            str(executable),
+            str(output_path),
+            str(share_code.match_id),
+            str(share_code.reservation_id),
+            str(share_code.tv_port),
+            cwd=str(executable.parent),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except NotImplementedError:
+        # The portable Windows server deliberately uses SelectorEventLoop to
+        # avoid an IOCP accept-loop crash. SelectorEventLoop cannot create
+        # asyncio subprocesses, so run the isolated helper on a worker thread.
+        return await asyncio.to_thread(
+            _run_boiler_runtime_sync,
+            executable,
+            output_path,
+            share_code,
+            timeout_seconds,
+        )
     try:
         _, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
     except TimeoutError as exc:
@@ -373,6 +386,50 @@ async def run_boiler_runtime(
         return output_path.read_bytes()
     except OSError as exc:
         raise BoilerProcessError(9, "Game Coordinator 未生成比赛信息文件") from exc
+    finally:
+        output_path.unlink(missing_ok=True)
+
+
+def _run_boiler_runtime_sync(
+    executable: Path,
+    output_path: Path,
+    share_code: MatchShareCode,
+    timeout_seconds: float,
+) -> bytes:
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    process = subprocess.Popen(
+        [
+            str(executable),
+            str(output_path),
+            str(share_code.match_id),
+            str(share_code.reservation_id),
+            str(share_code.tv_port),
+        ],
+        cwd=str(executable.parent),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        creationflags=creation_flags,
+    )
+    try:
+        try:
+            _, stderr = process.communicate(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            process.communicate()
+            raise BoilerProcessError(-1, "连接 Steam Game Coordinator 超时") from exc
+        if process.returncode != 0:
+            message = _BOILER_EXIT_MESSAGES.get(
+                int(process.returncode or 1),
+                f"Game Coordinator 组件退出，代码 {process.returncode}",
+            )
+            detail = stderr.decode("utf-8", errors="replace").strip()
+            if detail:
+                message = f"{message}：{detail[:300]}"
+            raise BoilerProcessError(int(process.returncode or 1), message)
+        try:
+            return output_path.read_bytes()
+        except OSError as exc:
+            raise BoilerProcessError(9, "Game Coordinator 未生成比赛信息文件") from exc
     finally:
         output_path.unlink(missing_ok=True)
 
