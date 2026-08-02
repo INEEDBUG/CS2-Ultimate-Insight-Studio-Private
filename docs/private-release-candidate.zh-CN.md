@@ -1,0 +1,27 @@
+# 私人 Windows 候选包
+
+## 0.1.0-rc.1（2026-08-02）
+
+- GitHub Actions：<https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/actions/runs/30727120892>
+- Artifact：`CS2-Ultimate-Insight-Studio-0.1.0-rc.1`（私人仓库，保留 14 天）
+- 安装包：`CS2 Ultimate Insight Studio_0.1.0-rc.1_x64-setup.exe`
+- 安装包大小：`39,185,971` 字节（约 37.37 MiB）
+- SHA-256：`48fd15f0f227ba78c9d9dc82caf96f526b7863020dd094f19e48cf7dc85aac30`
+- 内嵌 resources：87.19 MiB（预算 100 MiB）
+- 本机归档目录：`D:\CodexProject\Releases\CS2-Ultimate-Insight-Studio-0.1.0-rc.1`
+
+## 已通过的构建门
+
+- patched demoparser wheel 构建、导入和运行时能力校验。
+- 后端 695 项测试。
+- 前端 590 项测试与生产构建。
+- Rust fmt、clippy（warnings as errors）和 Rust tests。
+- Tauri release 编译、NSIS 生成、内嵌 Python 启动与依赖瘦身校验。
+- 安装包体积、预计安装占用和本地 SHA-256 复核。
+
+## 候选包限制
+
+- 这是私人验收包，尚未配置 Authenticode 代码签名；Windows 可能显示“未知发布者”。
+- 原项目 R2 自动更新通道已停用，避免定制版被上游安装包覆盖。
+- 尚需在实际安装后完成首次启动、页面巡检和真实 Steam Share Code 下载验收。
+- 推荐将应用安装到 D 盘，例如 `D:\CS2-Ultimate-Insight-Studio`；持久化配置和 SQLite 仍兼容旧的 `%APPDATA%\CS2 Insight Agent\data` 路径。
