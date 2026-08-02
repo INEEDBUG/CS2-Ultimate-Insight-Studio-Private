@@ -1,19 +1,20 @@
 # 私人 Windows 候选包
 
-## 0.1.0-rc.1（2026-08-02）
+## 0.1.0-rc.2（2026-08-02，当前候选）
 
-- GitHub Actions：<https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/actions/runs/30727120892>
-- Artifact：`CS2-Ultimate-Insight-Studio-0.1.0-rc.1`（私人仓库，保留 14 天）
-- 安装包：`CS2 Ultimate Insight Studio_0.1.0-rc.1_x64-setup.exe`
-- 安装包大小：`39,185,971` 字节（约 37.37 MiB）
-- SHA-256：`48fd15f0f227ba78c9d9dc82caf96f526b7863020dd094f19e48cf7dc85aac30`
+- GitHub Actions：<https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/actions/runs/30728334503>
+- Artifact：`CS2-Ultimate-Insight-Studio-0.1.0-rc.2`（私人仓库，保留 14 天）
+- 安装包：`CS2 Ultimate Insight Studio_0.1.0-rc.2_x64-setup.exe`
+- 安装包大小：`39,188,332` 字节（约 37.37 MiB）
+- SHA-256：`990dd4cc590576cc2f6a01af9a802d85052e7ee3b0a84a436d3d1df34bde8dc2`
 - 内嵌 resources：87.19 MiB（预算 100 MiB）
-- 本机归档目录：`D:\CodexProject\Releases\CS2-Ultimate-Insight-Studio-0.1.0-rc.1`
+- 本机归档目录：`D:\CodexProject\Releases\CS2-Ultimate-Insight-Studio-0.1.0-rc.2`
+- 相比 rc.1，新增官匹 Demo 过期、Valve 回放服务器繁忙、Steam 未登录和 CS2 占用 Game Coordinator 的分层诊断。
 
 ## 已通过的构建门
 
 - patched demoparser wheel 构建、导入和运行时能力校验。
-- 后端 695 项测试。
+- 后端 706 项测试。
 - 前端 590 项测试与生产构建。
 - Rust fmt、clippy（warnings as errors）和 Rust tests。
 - Tauri release 编译、NSIS 生成、内嵌 Python 启动与依赖瘦身校验。
@@ -25,3 +26,7 @@
 - 原项目 R2 自动更新通道已停用，避免定制版被上游安装包覆盖。
 - 尚需在实际安装后完成首次启动、页面巡检和真实 Steam Share Code 下载验收。
 - 推荐将应用安装到 D 盘，例如 `D:\CS2-Ultimate-Insight-Studio`；持久化配置和 SQLite 仍兼容旧的 `%APPDATA%\CS2 Insight Agent\data` 路径。
+
+## 旧候选
+
+- `0.1.0-rc.1`：GitHub Actions `30727120892`，SHA-256 `48fd15f0f227ba78c9d9dc82caf96f526b7863020dd094f19e48cf7dc85aac30`。仅保留作构建链基线，不再作为安装验收版本。
