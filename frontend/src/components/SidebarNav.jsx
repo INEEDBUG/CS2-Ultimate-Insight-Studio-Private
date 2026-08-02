@@ -9,6 +9,7 @@ import {
   Sun,
   Moon,
   Crosshair,
+  Keyboard,
 } from "lucide-react";
 import { useThemeStore } from "../stores/themeStore";
 import { useReplayStore } from "../stores/replayStore";
@@ -91,6 +92,10 @@ export default function SidebarNav({ queueLength = 0, disabled = false }) {
         <NavLink to="/sensitivity-lab" className={({ isActive }) => `${linkBase} ${isActive ? linkActive : linkIdle}`}>
           <Crosshair className="h-4 w-4 shrink-0 text-cs2-orange" />
           {t("nav.sensitivityLab")}
+        </NavLink>
+        <NavLink to="/input-lab" className={({ isActive }) => `${linkBase} ${isActive ? linkActive : linkIdle}`}>
+          <Keyboard className="h-4 w-4 shrink-0 text-violet-300" />
+          {t("nav.inputLab")}
         </NavLink>
       </nav>
 
