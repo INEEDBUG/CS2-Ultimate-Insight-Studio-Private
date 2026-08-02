@@ -64,6 +64,9 @@
     <td width="50%" align="center"><b>磁轴输入实验室</b><br><a href="./docs/screenshots/magnetic-input-lab.png"><img src="./docs/screenshots/magnetic-input-lab.png" alt="磁轴输入实验室" width="100%"></a></td>
     <td width="50%" align="center"><b>设置中心与昼夜模式</b><br><a href="./docs/screenshots/settings.png"><img src="./docs/screenshots/settings.png" alt="设置中心与昼夜模式" width="100%"></a></td>
   </tr>
+  <tr>
+    <td colspan="2" align="center"><b>2D 雷达回放与轨迹复盘</b><br><a href="./docs/screenshots/2d-replay-preview.png"><img src="./docs/screenshots/2d-replay-preview.png" alt="2D 雷达回放与轨迹复盘" width="100%"></a></td>
+  </tr>
 </table>
 
 ### Demo 库维护
