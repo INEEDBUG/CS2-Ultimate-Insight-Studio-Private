@@ -128,6 +128,38 @@ def test_boiler_exit_codes_have_actionable_diagnoses(tmp_path: Path, monkeypatch
         )
 
 
+def test_boiler_runtime_falls_back_for_windows_selector_loop(tmp_path: Path, monkeypatch):
+    output_path = tmp_path / "matches.info"
+
+    async def unsupported_subprocess(*args, **kwargs):
+        raise NotImplementedError
+
+    class SuccessfulProcess:
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            output_path.write_bytes(b"match-payload")
+            return b"", b""
+
+        def kill(self):
+            raise AssertionError("process should not time out")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", unsupported_subprocess)
+    monkeypatch.setattr(resolver.subprocess, "Popen", lambda *args, **kwargs: SuccessfulProcess())
+    decoded = resolver.decode_match_share_code(USER_SHARE_CODE)
+
+    payload = asyncio.run(
+        resolver.run_boiler_runtime(
+            tmp_path / "boiler-writter.exe",
+            output_path,
+            decoded,
+        )
+    )
+
+    assert payload == b"match-payload"
+    assert not output_path.exists()
+
+
 def _runtime_archive() -> bytes:
     files = {
         source: (b"exe" if target.endswith(".exe") else target.encode("utf-8"))
