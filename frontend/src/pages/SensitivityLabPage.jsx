@@ -97,6 +97,8 @@ export default function SensitivityLabPage() {
     void loadLocalSettings();
   }, [loadLocalSettings]);
 
+  const selectedLocalAccount = localAccounts.find((account) => account.account_id === selectedAccountId);
+
   function updateSetup(key, value) {
     setSetup((current) => ({ ...current, [key]: value }));
   }
@@ -216,13 +218,25 @@ export default function SensitivityLabPage() {
                     {localAccounts.map((account) => (
                       <option key={account.account_id} value={account.account_id}>
                         {account.persona_name || account.account_name || `Steam ${account.account_id}`}
-                        {account.most_recent ? ` · ${t("training.localCfgRecent")}` : ""}
+                        {account.is_current
+                          ? ` · ${t("training.localCfgCurrent")}`
+                          : account.most_recent
+                            ? ` · ${t("training.localCfgRecent")}`
+                            : ""}
                       </option>
                     ))}
                   </select>
                   <button type="button" onClick={() => applyLocalSettings(localAccounts.find((account) => account.account_id === selectedAccountId))} className="rounded-lg bg-cs2-accent px-3.5 py-2 text-xs font-bold text-white transition-transform duration-150 active:scale-[0.97]">
                     {t("training.localCfgApply")}
                   </button>
+                </div>
+              )}
+              {selectedLocalAccount && (
+                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-cs2-text-muted">
+                  <span>SteamID64 ·•••• {String(selectedLocalAccount.steam_id64).slice(-4)}</span>
+                  <span>{selectedLocalAccount.remember_password ? t("training.localCfgRemembered") : t("training.localCfgLoginRequired")}</span>
+                  {selectedLocalAccount.settings?.m_yaw != null && <span>m_yaw {selectedLocalAccount.settings.m_yaw}</span>}
+                  {selectedLocalAccount.settings?.zoom_sensitivity_ratio != null && <span>zoom {selectedLocalAccount.settings.zoom_sensitivity_ratio}</span>}
                 </div>
               )}
               {importedAccountId && <div className="mt-2 text-[10px] leading-4 text-cs2-text-muted">{t("training.localCfgApplied")} · {t("training.localCfgDpiNote")}</div>}

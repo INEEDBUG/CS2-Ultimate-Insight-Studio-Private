@@ -74,6 +74,23 @@ def _steam_root_from_registry() -> Path | None:
     return None
 
 
+def _auto_login_user_from_registry() -> str:
+    """Return Steam's current auto-login account name without changing it."""
+    configured = (os.environ.get("CS2_INSIGHT_STEAM_AUTO_LOGIN_USER") or "").strip()
+    if configured:
+        return configured
+    if sys.platform != "win32":
+        return ""
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
+            value, _ = winreg.QueryValueEx(key, "AutoLoginUser")
+            return str(value or "").strip()
+    except (OSError, ImportError):
+        return ""
+
+
 def find_steam_root() -> Path | None:
     configured = (os.environ.get("CS2_INSIGHT_STEAM_PATH") or "").strip()
     candidates = [
@@ -112,12 +129,17 @@ def _login_user_metadata(steam_root: Path) -> dict[str, dict[str, Any]]:
             "account_name": values.get("AccountName") or "",
             "persona_name": values.get("PersonaName") or "",
             "most_recent": values.get("MostRecent") == "1",
+            "remember_password": values.get("RememberPassword") == "1",
             "login_timestamp": _as_int(values.get("Timestamp")) or 0,
         }
     return result
 
 
-def _read_account(account_dir: Path, login_meta: dict[str, Any]) -> dict[str, Any] | None:
+def _read_account(
+    account_dir: Path,
+    login_meta: dict[str, Any],
+    auto_login_user: str,
+) -> dict[str, Any] | None:
     cfg_dir = account_dir / "730" / "local" / "cfg"
     video_path = cfg_dir / "cs2_video.txt"
     convars_path = cfg_dir / "cs2_user_convars_0_slot0.vcfg"
@@ -140,6 +162,17 @@ def _read_account(account_dir: Path, login_meta: dict[str, Any]) -> dict[str, An
         "account_name": login_meta.get("account_name") or "",
         "persona_name": login_meta.get("persona_name") or "",
         "most_recent": bool(login_meta.get("most_recent")),
+        "is_current": bool(
+            auto_login_user
+            and login_meta.get("account_name")
+            and auto_login_user.casefold() == str(login_meta["account_name"]).casefold()
+        ),
+        "remember_password": bool(login_meta.get("remember_password")),
+        "last_login_at": (
+            datetime.fromtimestamp(int(login_meta["login_timestamp"]), timezone.utc).isoformat()
+            if login_meta.get("login_timestamp")
+            else None
+        ),
         "updated_at": datetime.fromtimestamp(updated_ts, timezone.utc).isoformat() if updated_ts else None,
         "settings": {
             "game_width": width,
@@ -162,17 +195,23 @@ def discover_cs2_settings(steam_root: Path | None = None) -> dict[str, Any]:
         return {"found": False, "steam_root": None, "active_account_id": None, "accounts": []}
 
     login_users = _login_user_metadata(root)
+    auto_login_user = _auto_login_user_from_registry()
     accounts: list[dict[str, Any]] = []
     userdata = root / "userdata"
     for account_dir in userdata.iterdir() if userdata.is_dir() else ():
         if not account_dir.is_dir() or not account_dir.name.isdigit():
             continue
-        account = _read_account(account_dir, login_users.get(account_dir.name, {}))
+        account = _read_account(
+            account_dir,
+            login_users.get(account_dir.name, {}),
+            auto_login_user,
+        )
         if account:
             accounts.append(account)
 
     accounts.sort(
         key=lambda item: (
+            bool(item["is_current"]),
             bool(item["most_recent"]),
             int(login_users.get(item["account_id"], {}).get("login_timestamp") or 0),
             item.get("updated_at") or "",

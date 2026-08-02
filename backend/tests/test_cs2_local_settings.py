@@ -27,7 +27,7 @@ def test_discovers_and_parses_cs2_account_settings(tmp_path: Path):
     _write(
         tmp_path / "config" / "loginusers.vdf",
         f'"users"\n{{\n"{steam_id64}"\n{{\n"AccountName" "tester"\n'
-        '"PersonaName" "Player"\n"MostRecent" "1"\n"Timestamp" "10"\n}\n}\n',
+        '"PersonaName" "Player"\n"MostRecent" "1"\n"RememberPassword" "1"\n"Timestamp" "10"\n}\n}\n',
     )
 
     result = discover_cs2_settings(tmp_path)
@@ -36,6 +36,8 @@ def test_discovers_and_parses_cs2_account_settings(tmp_path: Path):
     assert result["active_account_id"] == account_id
     account = result["accounts"][0]
     assert account["persona_name"] == "Player"
+    assert account["remember_password"] is True
+    assert account["last_login_at"] is not None
     assert account["settings"]["game_width"] == 1024
     assert account["settings"]["game_height"] == 1080
     assert account["settings"]["display_aspect"] == "4:3"
@@ -58,3 +60,23 @@ def test_prefers_loginusers_most_recent_account(tmp_path: Path):
     result = discover_cs2_settings(tmp_path)
 
     assert result["active_account_id"] == "111"
+
+
+def test_prefers_registry_auto_login_user_over_stale_most_recent(tmp_path: Path, monkeypatch):
+    blocks = []
+    for account_id, account_name, most_recent in (("111", "old", "1"), ("222", "current", "0")):
+        cfg = tmp_path / "userdata" / account_id / "730" / "local" / "cfg"
+        _write(cfg / "cs2_video.txt", '"setting.defaultres" "1920"\n"setting.defaultresheight" "1080"\n')
+        _write(cfg / "cs2_user_convars_0_slot0.vcfg", '"sensitivity" "1"\n')
+        sid64 = 76561197960265728 + int(account_id)
+        blocks.append(
+            f'"{sid64}"\n{{\n"AccountName" "{account_name}"\n'
+            f'"MostRecent" "{most_recent}"\n"RememberPassword" "1"\n}}'
+        )
+    _write(tmp_path / "config" / "loginusers.vdf", '"users"\n{\n' + "\n".join(blocks) + "\n}")
+    monkeypatch.setenv("CS2_INSIGHT_STEAM_AUTO_LOGIN_USER", "current")
+
+    result = discover_cs2_settings(tmp_path)
+
+    assert result["active_account_id"] == "222"
+    assert result["accounts"][0]["is_current"] is True
