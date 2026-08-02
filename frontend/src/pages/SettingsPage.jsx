@@ -7,7 +7,6 @@ import { useLocaleStore } from "../i18n/localeStore.js";
 import { useAppShell } from "../context/AppShellContext";
 import { desktopBridge } from "../desktop/desktopBridge.js";
 import RecordingParamsPage from "./RecordingParamsPage";
-import SponsorModal from "../components/SponsorModal";
 import ObsAiSettingsPanel from "../components/ObsAiSettingsPanel";
 import { formatFileSize } from "../utils/demoLibraryDisplay.js";
 import {
@@ -31,8 +30,6 @@ import {
   Github,
   Bug,
   Lightbulb,
-  Mail,
-  Heart,
   X,
 } from "lucide-react";
 
@@ -54,12 +51,12 @@ function openExternalLink(url) {
 
 const ISSUE_TEMPLATE_URLS = {
   zh: {
-    bug: "https://github.com/DrEAmSs59/CS2-insight-agent/issues/new?template=bug_report.yml",
-    feature: "https://github.com/DrEAmSs59/CS2-insight-agent/issues/new?template=feature_request.yml",
+    bug: "https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/issues/new?template=bug_report.yml",
+    feature: "https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/issues/new?template=feature_request.yml",
   },
   en: {
-    bug: "https://github.com/DrEAmSs59/CS2-insight-agent/issues/new?template=bug_report_en.yml",
-    feature: "https://github.com/DrEAmSs59/CS2-insight-agent/issues/new?template=feature_request_en.yml",
+    bug: "https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/issues/new?template=bug_report_en.yml",
+    feature: "https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/issues/new?template=feature_request_en.yml",
   },
 };
 
@@ -412,9 +409,6 @@ export default function SettingsPage() {
   const [statusRefreshing, setStatusRefreshing] = useState(false);
   const [calibrating, setCalibrating] = useState(false);
   const [calibrateResult, setCalibrateResult] = useState(null);
-
-  // Sponsor Modal
-  const [showSponsorModal, setShowSponsorModal] = useState(false);
 
   // Player Game Config
   const shell = useAppShell();
@@ -886,7 +880,7 @@ export default function SettingsPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => openExternalLink('https://github.com/DrEAmSs59/CS2-insight-agent')}
+                    onClick={() => openExternalLink('https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio')}
                     className="inline-flex items-center gap-1.5 rounded-md border border-cs2-border bg-cs2-bg-input px-2.5 py-1.5 text-xs font-semibold text-cs2-text-secondary transition-colors hover:border-cs2-accent/50 hover:text-cs2-accent"
                   >
                     <Github className="h-3.5 w-3.5" />
@@ -903,7 +897,7 @@ export default function SettingsPage() {
                 <div className="py-2.5 flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => openExternalLink('https://github.com/DrEAmSs59/CS2-insight-agent/issues')}
+                    onClick={() => openExternalLink('https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/issues')}
                     className="inline-flex items-center gap-1.5 rounded-md border border-cs2-border bg-cs2-bg-input px-2.5 py-1.5 text-xs font-semibold text-cs2-text-secondary transition-colors hover:border-cs2-accent/50 hover:text-cs2-accent"
                   >
                     <FolderOpen className="h-3.5 w-3.5" />
@@ -924,26 +918,6 @@ export default function SettingsPage() {
                   >
                     <Lightbulb className="h-3.5 w-3.5" />
                     {t("settings.btnRequestFeature")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const locale = useLocaleStore.getState().locale;
-                      const subject = locale === 'zh' ? 'CS2-Insight-Agent 联系' : 'CS2-Insight-Agent Contact';
-                      openExternalLink(`mailto:dreamss29_@outlook.com?subject=${encodeURIComponent(subject)}`);
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-cs2-border bg-cs2-bg-input px-2.5 py-1.5 text-xs font-semibold text-cs2-text-secondary transition-colors hover:border-cs2-accent/50 hover:text-cs2-accent"
-                  >
-                    <Mail className="h-3.5 w-3.5" />
-                    {t("settings.btnContact")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowSponsorModal(true)}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-cs2-border bg-cs2-bg-input px-2.5 py-1.5 text-xs font-semibold text-cs2-text-secondary transition-colors hover:border-cs2-accent/50 hover:text-cs2-accent"
-                  >
-                    <Heart className="h-3.5 w-3.5" />
-                    {t("settings.btnSponsor")}
                   </button>
                 </div>
               </SectionCard>
@@ -1549,8 +1523,6 @@ export default function SettingsPage() {
           </div>
         </div>
       }
-      {/* Sponsor Modal */}
-      {showSponsorModal && <SponsorModal onClose={() => setShowSponsorModal(false)} />}
     </div>
   );
 }

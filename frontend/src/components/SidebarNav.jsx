@@ -35,7 +35,7 @@ export default function SidebarNav({ queueLength = 0, disabled = false }) {
       <div className="border-b border-cs2-border px-2.5 py-3">
         <div className="flex items-center gap-2.5">
           <img
-            src="/cs2-insight-logo-new.png"
+            src="/cs2-ultimate-insight-logo.png"
             alt={t("nav.brand")}
             width={64}
             height={64}

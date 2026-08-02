@@ -29,7 +29,7 @@ export default function CustomTitleBar() {
     >
       <div className="flex items-center px-4" data-tauri-drag-region>
         <img
-          src={`${import.meta.env.BASE_URL}cs2-insight-logo.png`}
+          src={`${import.meta.env.BASE_URL}cs2-ultimate-insight-logo.png`}
           alt="Logo"
           className="mr-2 h-6 w-6"
           data-tauri-drag-region

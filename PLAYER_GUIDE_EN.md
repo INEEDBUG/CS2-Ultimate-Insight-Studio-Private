@@ -83,7 +83,7 @@ Prefer a walkthrough? Watch the community video tutorial first:
 
 ### Step 1: Download the installer
 
-Open the project's [Releases page](https://github.com/DrEAmSs59/CS2-insight-agent/releases) and download the latest **`CS2-Insight-Agent-Setup-x.x.x.exe`** installer.
+Open this project's [Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases) and download the latest **`CS2 Ultimate Insight Studio_x.x.x_x64-setup.exe`** installer.
 
 ### Step 2: Run the installer
 
@@ -111,7 +111,7 @@ Double-click the desktop shortcut. The app opens as a desktop application: you d
 
 The app checks for updates when it starts. When a new release is available, use the prompt in the upper-right corner to download and install it. Your settings and demo-library data are retained.
 
-You can also install a newer installer from the [Releases page](https://github.com/DrEAmSs59/CS2-insight-agent/releases) over the existing version.
+You can also install a newer installer from [this project's Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases) over the existing version.
 
 ---
 
@@ -339,7 +339,7 @@ Confirm the installer came from the official Releases page, then use **More info
 
 **How do I update?**
 
-Use the in-app update prompt when it appears at startup, or install the newest package from the [Releases page](https://github.com/DrEAmSs59/CS2-insight-agent/releases). Existing settings and data are retained.
+Install the newest package from [this project's Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases). Existing settings and data are retained.
 
 **OBS Configuration Check fails.**
 
@@ -445,13 +445,4 @@ Yes. Add clips from different demos to the queue. The app groups them by demo, s
 
 Have fun—and may your highlights outnumber your fails. 🔥💀
 
----
-
-## Support the Project
-
-If CS2 Insight Agent saves you editing time, you are welcome to buy the developer a coffee. Support helps cover demo parsing, recording compatibility testing, and ongoing maintenance.
-
-<img src="asset/wx.jpg" alt="Support QR code 1" style="zoom:33%;" />
-<img src="asset/ali.jpg" alt="Support QR code 2" style="zoom:33%;" />
-
-> **CS2 Insight Agent** · Made with ❤️ for CS2 Players
+> **CS2 Ultimate Insight Studio** · Local training and match-review tool

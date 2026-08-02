@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Activity, AlertTriangle, History, Keyboard, Radio, RotateCcw, ShieldCheck } from "lucide-react";
+import { Activity, AlertTriangle, History, Keyboard, Radio, RotateCcw, ShieldCheck, Square } from "lucide-react";
 import { createInputAnalysis, fetchInputHistory } from "../api/trainingApi";
 import { useT } from "../i18n/useT.js";
 
 const TRACKED_CODES = ["KeyW", "KeyA", "KeyS", "KeyD", "ShiftLeft", "ControlLeft", "Space"];
 const KEY_LABELS = { KeyW: "W", KeyA: "A", KeyS: "S", KeyD: "D", ShiftLeft: "Shift", ControlLeft: "Ctrl", Space: "Space" };
-const TEST_DURATION_MS = 15_000;
 const COUNTDOWN_MS = 3_000;
+const DURATION_OPTIONS = [15_000, 30_000, 60_000, 0];
 
 function SettingField({ label, value, onChange, min = 0.05, max = 4, step = 0.05 }) {
   return (
@@ -22,9 +22,9 @@ function SettingField({ label, value, onChange, min = 0.05, max = 4, step = 0.05
 
 export default function MagneticInputLabPage() {
   const t = useT();
-  const [setup, setSetup] = useState({ keyboard_name: "Magnetic keyboard", mode: "counter_strafe", actuation_mm: 1.0, rapid_trigger_press_mm: 0.2, rapid_trigger_release_mm: 0.2 });
+  const [setup, setSetup] = useState({ keyboard_name: "Magnetic keyboard", mode: "counter_strafe", actuation_mm: 1.0, rapid_trigger_press_mm: 0.2, rapid_trigger_release_mm: 0.2, duration_ms: 15_000 });
   const [phase, setPhase] = useState("setup");
-  const [displayMs, setDisplayMs] = useState(TEST_DURATION_MS);
+  const [displayMs, setDisplayMs] = useState(15_000);
   const [pressed, setPressed] = useState(new Set());
   const [eventCount, setEventCount] = useState(0);
   const [result, setResult] = useState(null);
@@ -51,9 +51,10 @@ export default function MagneticInputLabPage() {
     }
     setPhase("analyzing");
     try {
+      const durationMs = Math.max(3_000, Math.round(performance.now() - runtime.startAt));
       const analysis = await createInputAnalysis({
         ...setup,
-        duration_ms: TEST_DURATION_MS,
+        duration_ms: durationMs,
         events: runtime.events,
       });
       setResult(analysis);
@@ -74,15 +75,15 @@ export default function MagneticInputLabPage() {
         setDisplayMs(Math.max(0, remaining));
         if (remaining <= 0) {
           runtime.startAt = now;
-          runtime.endAt = now + TEST_DURATION_MS;
-          setDisplayMs(TEST_DURATION_MS);
+          runtime.endAt = setup.duration_ms > 0 ? now + setup.duration_ms : null;
+          setDisplayMs(setup.duration_ms > 0 ? setup.duration_ms : 0);
           setPhase("running");
           return;
         }
       } else {
-        const remaining = runtime.endAt - now;
-        setDisplayMs(Math.max(0, remaining));
-        if (remaining <= 0) {
+        const display = runtime.endAt == null ? now - runtime.startAt : Math.max(0, runtime.endAt - now);
+        setDisplayMs(display);
+        if (runtime.endAt != null && display <= 0) {
           void finish();
           return;
         }
@@ -91,7 +92,7 @@ export default function MagneticInputLabPage() {
     }
     runtimeRef.current.frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(runtimeRef.current.frame);
-  }, [finish, phase]);
+  }, [finish, phase, setup.duration_ms]);
 
   useEffect(() => {
     if (phase !== "running") return undefined;
@@ -102,6 +103,10 @@ export default function MagneticInputLabPage() {
       const timestamp = Math.max(0, performance.now() - runtimeRef.current.startAt);
       runtimeRef.current.events.push({ code: event.code, event_type: eventType, timestamp_ms: timestamp });
       setEventCount(runtimeRef.current.events.length);
+      if (runtimeRef.current.events.length >= 20_000) {
+        void finish();
+        return;
+      }
       setPressed((current) => {
         const next = new Set(current);
         if (eventType === "down") next.add(event.code); else next.delete(event.code);
@@ -116,7 +121,7 @@ export default function MagneticInputLabPage() {
       window.removeEventListener("keydown", onDown);
       window.removeEventListener("keyup", onUp);
     };
-  }, [phase]);
+  }, [finish, phase]);
 
   function begin() {
     if (!setup.keyboard_name.trim()) return;
@@ -153,6 +158,7 @@ export default function MagneticInputLabPage() {
                 <SettingField label={t("inputLab.rtRelease")} value={setup.rapid_trigger_release_mm} onChange={(value) => setSetup((current) => ({ ...current, rapid_trigger_release_mm: value }))} />
               </div>
               <label className="mt-4 block"><span className="mb-1.5 block text-xs font-semibold text-cs2-text-secondary">{t("inputLab.mode")}</span><select value={setup.mode} onChange={(event) => setSetup((current) => ({ ...current, mode: event.target.value }))} className="w-full rounded-lg border border-cs2-border bg-cs2-bg-input px-3 py-2.5 text-sm text-cs2-text-primary outline-none"><option value="counter_strafe">{t("inputLab.counterMode")}</option><option value="rapid_tap">{t("inputLab.rapidMode")}</option><option value="gameplay">{t("inputLab.gameplayMode")}</option></select></label>
+              <label className="mt-4 block"><span className="mb-1.5 block text-xs font-semibold text-cs2-text-secondary">{t("inputLab.duration")}</span><select value={setup.duration_ms} onChange={(event) => setSetup((current) => ({ ...current, duration_ms: Number(event.target.value) }))} className="w-full rounded-lg border border-cs2-border bg-cs2-bg-input px-3 py-2.5 text-sm text-cs2-text-primary outline-none">{DURATION_OPTIONS.map((value) => <option key={value} value={value}>{value === 0 ? t("inputLab.unlimitedManual") : `${value / 1000} s`}</option>)}</select></label>
               <div className="mt-4 rounded-xl border border-violet-400/20 bg-violet-400/[0.07] px-3.5 py-3 text-xs leading-5 text-violet-100">{modeHelp}</div>
               {error && <div className="mt-3 rounded-lg border border-cs2-fail/30 bg-cs2-fail/10 px-3 py-2 text-xs text-cs2-fail">{error}</div>}
               <button type="button" onClick={begin} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-violet-400 px-4 py-3 text-sm font-bold text-black transition-transform duration-150 active:scale-[0.98]"><Activity className="h-4 w-4" />{t("inputLab.start")}</button>
@@ -168,12 +174,15 @@ export default function MagneticInputLabPage() {
         {activeTest && (
           <section className="rounded-2xl border border-violet-400/30 bg-cs2-bg-card p-6 text-center">
             <div className="text-xs font-bold uppercase tracking-[0.2em] text-violet-300">{phase === "countdown" ? t("inputLab.getReady") : phase === "analyzing" ? t("inputLab.analyzing") : t("inputLab.recording")}</div>
-            <div className="mt-2 font-mono text-6xl font-bold tabular-nums text-white">{phase === "analyzing" ? "…" : phase === "countdown" ? Math.max(1, Math.ceil(displayMs / 1000)) : `${(displayMs / 1000).toFixed(1)}s`}</div>
+            <div className="mt-2 font-mono text-6xl font-bold tabular-nums text-white">{phase === "analyzing" ? "…" : phase === "countdown" ? Math.max(1, Math.ceil(displayMs / 1000)) : setup.duration_ms === 0 ? `∞ · ${(displayMs / 1000).toFixed(1)}s` : `${(displayMs / 1000).toFixed(1)}s`}</div>
             <div className="mx-auto mt-7 grid max-w-2xl grid-cols-4 gap-3 sm:grid-cols-7">
               {TRACKED_CODES.map((code) => <div key={code} className={`flex h-16 items-center justify-center rounded-xl border font-mono text-sm font-bold transition-[transform,background-color,border-color] duration-100 ${pressed.has(code) ? "scale-[0.96] border-violet-300 bg-violet-400 text-black" : "border-cs2-border bg-black/20 text-cs2-text-secondary"}`}>{KEY_LABELS[code]}</div>)}
             </div>
             <p className="mt-5 text-sm text-cs2-text-secondary">{modeHelp}</p>
             <div className="mt-3 font-mono text-xs text-cs2-text-muted">{eventCount} events</div>
+            {phase === "running" && setup.duration_ms === 0 && (
+              <button type="button" disabled={displayMs < 3_000} onClick={() => void finish()} className="mx-auto mt-5 flex items-center gap-2 rounded-xl bg-violet-400 px-4 py-2.5 text-sm font-bold text-black transition-transform duration-150 active:scale-[0.98] disabled:opacity-40"><Square className="h-4 w-4 fill-current" />{t("inputLab.finish")}</button>
+            )}
           </section>
         )}
 

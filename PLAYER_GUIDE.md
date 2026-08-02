@@ -83,7 +83,7 @@
 
 ### 第一步：下载安装包
 
-前往项目的 [Releases 页面](https://github.com/DrEAmSs59/CS2-insight-agent/releases)，找到最新版本，点击下载 **`CS2-Insight-Agent-Setup-x.x.x.exe`**，或者下载直链 baigei.pro/cia 复制到浏览器打开。
+前往本项目的 [Releases 页面](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases)，找到最新版本并下载 **`CS2 Ultimate Insight Studio_x.x.x_x64-setup.exe`**。
 
 ### 第二步：运行安装包
 
@@ -123,7 +123,7 @@
 你的配置信息和 Demo 数据库**不会**因为更新而丢失。
 
 > [!TIP]
-> 也可以随时前往 [Releases 页面](https://github.com/DrEAmSs59/CS2-insight-agent/releases) 手动下载新版安装包覆盖安装，同样不影响已有配置和数据。
+> 也可以随时前往[本项目 Releases 页面](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases)手动下载新版安装包覆盖安装，同样不影响已有配置和数据。
 
 ---
 
@@ -403,7 +403,7 @@ D:\ffmpeg\bin\ffmpeg.exe
 
 程序内置自动更新：启动后若检测到新版本，界面会弹出更新提示，点击下载并安装即可，配置和数据不会丢失。
 
-如需手动更新，也可以直接到 [Releases 页面](https://github.com/DrEAmSs59/CS2-insight-agent/releases) 下载新安装包重新安装，同样不影响已有配置和数据。
+如需手动更新，也可以直接到[本项目 Releases 页面](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases)下载新安装包重新安装，同样不影响已有配置和数据。
 
 **Q：OBS 配置检查失败？**
 
@@ -541,13 +541,4 @@ POV HUD 能够让 Demo 的画面看起来更接近实际个人游戏。
 
 祝你在 CS2 战场上大杀四方！🔥💀
 
----
-
-## 支持项目
-
-如果这个项目帮你节省了剪辑时间，欢迎请我喝一杯咖啡 ☕  
-你的支持会用于 Demo 解析、录制兼容性测试和后续功能维护。
-<img src="asset/wx.jpg" alt="赞助方式1" style="zoom:33%;" />
-<img src="asset/ali.jpg" alt="赞助方式2" style="zoom:33%;" />
-
-> **CS2 Insight Agent** v2.2.1 · Made with ❤️ for CS2 Players
+> **CS2 Ultimate Insight Studio** · 本地训练与复盘工具

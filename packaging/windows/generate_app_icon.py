@@ -1,4 +1,4 @@
-"""Build packaging/windows/app-icon.ico from frontend/public/cs2-insight-logo.png."""
+"""Build packaging/windows/app-icon.ico from the original project emblem."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,7 +8,7 @@ from PIL import Image
 
 def main() -> None:
     root = Path(__file__).resolve().parents[2]
-    png = root / "frontend" / "public" / "cs2-insight-logo.png"
+    png = root / "frontend" / "public" / "cs2-ultimate-insight-logo.png"
     out = Path(__file__).resolve().parent / "app-icon.ico"
     if not png.is_file():
         raise SystemExit(f"missing logo: {png}")

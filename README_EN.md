@@ -1,6 +1,6 @@
 <h1 align="center">
   <br>
-  <img src="./frontend/public/cs2-insight-logo.png" alt="CS2 Ultimate Insight Studio" width="140">
+  <img src="./frontend/public/cs2-ultimate-insight-logo.png" alt="CS2 Ultimate Insight Studio" width="140">
   <br>
   CS2 Ultimate Insight Studio
   <br>
@@ -13,55 +13,27 @@
 <h3 align="center"><b>A local CS2 workspace for personal training and match review</b> </h3>
 <h4 align="center">Official Demo Download · Demo Analysis · Sensitivity Lab · Magnetic Input Lab</h4>
 
-> This is a noncommercial derivative of [DrEAmSs59/CS2-insight-agent](https://github.com/DrEAmSs59/CS2-insight-agent). Original authorship, commit history, and PolyForm Noncommercial 1.0.0 notices are retained; upstream links and media below remain for attribution.
+> This repository is not software written from scratch. It is a clearly attributed, noncommercial derivative built from source-available and open-source projects. Read the source and license boundaries below before using or redistributing it.
 
 <p align="center">
-  <a href="https://github.com/DrEAmSs59/CS2-insight-agent/releases">
-    <img src="https://img.shields.io/github/v/release/DrEAmSs59/CS2-insight-agent"
-         alt="release">
-  </a>
-  <a href="https://github.com/DrEAmSs59/CS2-insight-agent/stargazers">
-    <img src="https://img.shields.io/github/stars/DrEAmSs59/CS2-insight-agent.svg"
-         alt="Stars">
-  </a>
-    <a href="https://github.com/DrEAmSs59/CS2-insight-agent/blob/main/LICENSE">
-    <img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue"
-         alt="License">
-  </a>
-
-</p>
-
-<p align="center">
-  <a href="https://github.com/DrEAmSs59/CS2-insight-agent/blob/main/PLAYER_GUIDE_EN.md">User Guide</a> •
-  <a href="https://github.com/DrEAmSs59/CS2-insight-agent/blob/main/CONTRIBUTING_EN.md">Contributing</a> •
-  <a href="https://www.bilibili.com/video/BV1PcVj69ExZ/">Video Tutorial</a> •
+  <a href="./PLAYER_GUIDE_EN.md">User Guide</a> •
+  <a href="./CONTRIBUTING_EN.md">Contributing</a> •
   <a href="#key-features">Key Features</a> •
   <a href="#installation">Installation</a> •
-  <a href="#support">Support</a> •
+  <a href="#source-code-and-attribution">Source & Attribution</a> •
   <a href="#disclaimer">Disclaimer</a> •
   <a href="#license">License</a>
 </p>
 
+## Source Code and Attribution
 
-![screenshot](./asset/output-1080.gif)
+- **Core code and desktop architecture:** [DrEAmSs59/CS2-insight-agent](https://github.com/DrEAmSs59/CS2-insight-agent). This derivative retains its commit history, authorship and PolyForm Noncommercial 1.0.0 license while adding official-match Demo retrieval, SQLite workflows, sensitivity and magnetic-input labs, and independent branding.
+- **Official Demo workflow reference:** [akiver/cs-demo-manager](https://github.com/akiver/cs-demo-manager). Its PostgreSQL data layer is not used, and the full project was not merged into this repository.
+- **Steam Game Coordinator helper:** [akiver/boiler-writter](https://github.com/akiver/boiler-writter) 1.7.0 (GPL-3.0), downloaded only after first-use consent and executed unmodified as a separate process.
+- **Share Code decoding:** a Python adaptation of [akiver/csgo-sharecode](https://github.com/akiver/csgo-sharecode) (MIT); its notice is retained at `third_party/licenses/csgo-sharecode-LICENSE.txt`.
+- See [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md) for the complete dependency and license boundaries.
 
-<p align="center">
-  <a href="https://www.bilibili.com/video/BV1PcVj69ExZ/">▶ Video Tutorial BV1PcVj69ExZ</a>
-</p>
-
-<h4 align="center">Sample Output</h4>
-
-<p align="center">
-  <a href="https://www.bilibili.com/video/BV1ZkGi6YENF/">▶ BV1ZkGi6YENF</a> ·
-  <a href="https://www.bilibili.com/video/BV1TPGq67EFS/">▶ BV1TPGq67EFS</a>
-</p>
-<p align="center"><sub>Intro/outro BGM and team logos added by the creator; game clips auto-edited by this tool</sub></p>
-
-<p align="center">
-  <a href="https://www.bilibili.com/video/BV1KF5s6nEed/">▶ BV1KF5s6nEed</a> ·
-  <a href="https://www.bilibili.com/video/BV1G198BkEHd/">▶ BV1G198BkEHd</a>
-</p>
-<p align="center"><sub>Both intro/outro BGM and game clips produced by this tool</sub></p>
+This repository does not display upstream donation QR codes or solicit money on behalf of upstream authors. The new orange crosshair/data-pulse emblem is an original project asset and does not use Valve's official CS2 mark.
 
 ---
 
@@ -112,11 +84,11 @@
 
 ## Installation
 
-Download the latest `CS2-Insight-Agent-Setup-x.x.x.exe` from the [Releases page](https://github.com/DrEAmSs59/CS2-insight-agent/releases), run the installer and follow the prompts.
+Download the latest `CS2 Ultimate Insight Studio_x.x.x_x64-setup.exe` from this repository's [Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases), run the installer and follow the prompts.
 
 After installation, launch from desktop or start menu. **No browser or manual backend start is required.** The lightweight Tauri shell starts the bundled Python backend and renders the UI with the Windows system WebView2 runtime.
 
-The app does not run a background updater. Download new versions directly from the [Releases page](https://github.com/DrEAmSs59/CS2-insight-agent/releases).
+The app does not run a background updater. Download new versions directly from [this project's Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases).
 
 > **Recommended: Installation path without Chinese characters.** e.g., `D:\CS2-Insight-Agent\` ✅, `D:\游戏工具\CS2-Insight-Agent\` ❌
 
@@ -139,10 +111,10 @@ The app does not run a background updater. Download new versions directly from t
    - [ ] Tactical Coach (Grenade Trajectory Analysis / Route Review)
 
 
-### Top contributors:
+### Upstream contributors
 
 <a href="https://github.com/DrEAmSs59/CS2-insight-agent/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=DrEAmSs59/CS2-insight-agent" alt="contrib.rocks image" />
+  View the contributors and original commit history of `DrEAmSs59/CS2-insight-agent`
 </a>
 
 
@@ -154,7 +126,6 @@ This project is released under the [PolyForm Noncommercial 1.0.0](https://polyfo
 
 - Personal learning, research, hobby, review, and other non-commercial uses are permitted. Under this license, you may read, modify, build, and distribute this project's source code and derivatives.
 - Without written authorization, commercial use is prohibited, including but not limited to: commercial software, paid services, commercial editing/recording services, commercial platform integration, sales, rental, resale, or distribution as part of commercial products.
-  - Commercial licensing inquiries: `dreamss29_@outlook.com`
 - 📦 If you distribute compiled products, installers, or modified versions of this project, please retain this project's license statement and comply with all third-party open source component licenses listed in `THIRD_PARTY_LICENSES.md`.
 
 ## Disclaimer
@@ -168,15 +139,3 @@ This project is not affiliated with, partnered with, sponsored by, authorized by
 - **Default Recording Process** launches CS2 with `-insecure` for local demo playback only; no DLL injection or hooking; does not modify `.dem` files on disk, does not connect to, modify, or interfere with any official game servers, matchmaking services, or anti-cheat systems, nor does it provide any cheating, detection bypass, or fair-play disruption features. **Do not use in parallel with a CS2 client logged into matchmaking servers** to avoid triggering unnecessary anti-cheat warnings.
 - If you **actively enable POV** in "Common Parameters → Experimental Features", the program temporarily writes `pov.vpk` to CS2's `game/csgo` directory and **incrementally modifies** `gameinfo.gi`'s `SearchPaths` to load POV HUD resources; automatically restored after recording or abnormal termination. This mode also **forces** `-insecure` when launching CS2. **Do not use to connect to VAC-secured servers**.
 - Recording temporarily modifies several CS2 archive cvars and keybinds. This project automatically backs up your original `config.cfg` / `video.txt` / `user_convars_*.vcfg` to the program data directory's `.cs2_config_backup` when starting recording, and restores them afterward; if settings were overwritten due to abnormal exit, manually retrieve original files from that directory.
-
----
-
-## Support
-
-If this project saved you editing time, consider buying me a coffee ☕
-Your support goes toward demo parsing, recording compatibility testing, and future feature maintenance.
-
-<div style="display: flex; justify-content: center; align-items: center; gap: 20px;">
-  <img src="asset/wx.jpg" alt="Support Method 1" style="height: 200px;" />
-  <img src="asset/ali.jpg" alt="Support Method 2" style="height: 200px;" />
-</div>

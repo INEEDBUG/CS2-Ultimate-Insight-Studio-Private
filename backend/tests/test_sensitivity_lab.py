@@ -79,6 +79,16 @@ def test_recommendation_requires_flick_and_tracking_trials():
         SensitivityRecommendationRequest.model_validate(payload)
 
 
+def test_manual_unlimited_round_accepts_duration_over_three_minutes():
+    payload = _request().model_dump()
+    for trial in payload["trials"]:
+        trial["duration_ms"] = 190_000
+
+    request = SensitivityRecommendationRequest.model_validate(payload)
+
+    assert all(trial.duration_ms == 190_000 for trial in request.trials)
+
+
 def test_training_db_persists_and_lists_session(tmp_path: Path):
     async def scenario():
         database = TrainingDB(tmp_path / "training.db")

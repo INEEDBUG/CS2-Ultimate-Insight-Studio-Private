@@ -9,7 +9,7 @@
     "primary": ["debugtest/debug3.mp4", "debugtest/debug2.mp4", "debugtest/debug1.mp4"],
     "secondary": ["debugtest/debug2.mp4", "debugtest/debug3.mp4", "debugtest/debug1.mp4"],
     "transparent_mov": ["debugtest/1V4-1V3样式2.mov", "debugtest/1V5-1V4样式2.mov"],
-    "images": ["debugtest/CS2-insight-agent-LOGO.png", "asset/ali.jpg", "asset/output-1080.gif"]
+    "images": ["frontend/public/cs2-ultimate-insight-logo.png", "asset/output-1080.gif"]
   },
   "filter_presets": ["none", "esports", "cold", "warm", "vintage", "highcon", "fade", "night"],
   "transform_cases": [

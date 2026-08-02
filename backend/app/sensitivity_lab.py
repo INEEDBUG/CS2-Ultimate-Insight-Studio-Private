@@ -15,7 +15,7 @@ CS2_YAW = 0.022
 class SensitivityTrial(BaseModel):
     kind: Literal["flick", "tracking"]
     multiplier: float = Field(ge=0.5, le=1.5)
-    duration_ms: int = Field(ge=3_000, le=180_000)
+    duration_ms: int = Field(ge=3_000, le=86_400_000)
     hits: int = Field(default=0, ge=0, le=100_000)
     targets: int = Field(default=0, ge=0, le=100_000)
     average_reaction_ms: float = Field(default=0, ge=0, le=30_000)

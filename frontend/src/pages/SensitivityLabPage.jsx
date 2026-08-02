@@ -14,6 +14,8 @@ const DEFAULT_SETUP = {
   scaling_mode: "stretched",
 };
 
+const DURATION_OPTIONS = [15_000, 30_000, 60_000, 0];
+
 function NumberField({ label, value, onChange, min, max, step = 1, suffix }) {
   return (
     <label className="block">
@@ -37,6 +39,7 @@ function NumberField({ label, value, onChange, min, max, step = 1, suffix }) {
 export default function SensitivityLabPage() {
   const t = useT();
   const [setup, setSetup] = useState(DEFAULT_SETUP);
+  const [roundDurationMs, setRoundDurationMs] = useState(15_000);
   const [testActive, setTestActive] = useState(false);
   const [trialIndex, setTrialIndex] = useState(0);
   const [trials, setTrials] = useState([]);
@@ -112,6 +115,7 @@ export default function SensitivityLabPage() {
           trial={trial}
           index={trialIndex}
           total={SENSITIVITY_TRIAL_SCHEDULE.length}
+          durationMs={roundDurationMs}
           onComplete={handleTrialComplete}
           onCancel={() => setTestActive(false)}
         />
@@ -132,7 +136,9 @@ export default function SensitivityLabPage() {
           </div>
           <div className="rounded-xl border border-cs2-border bg-cs2-bg-card px-4 py-3 text-right">
             <div className="text-[10px] font-bold uppercase tracking-widest text-cs2-text-muted">{t("training.protocol")}</div>
-            <div className="mt-1 font-mono text-sm font-bold text-cs2-text-primary">6 × 15s · Flick + Track</div>
+            <div className="mt-1 font-mono text-sm font-bold text-cs2-text-primary">
+              6 × {roundDurationMs === 0 ? t("training.unlimited") : `${roundDurationMs / 1000}s`} · Flick + Track
+            </div>
           </div>
         </header>
 
@@ -151,6 +157,12 @@ export default function SensitivityLabPage() {
                 <span className="mb-1.5 block text-xs font-semibold text-cs2-text-secondary">{t("training.displayAspect")}</span>
                 <select value={setup.display_aspect} onChange={(event) => updateSetup("display_aspect", event.target.value)} className="w-full rounded-lg border border-cs2-border bg-cs2-bg-input px-3 py-2.5 text-sm text-cs2-text-primary outline-none focus:border-cs2-accent">
                   {["16:9", "16:10", "4:3", "5:4", "other"].map((value) => <option key={value} value={value}>{value}</option>)}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-semibold text-cs2-text-secondary">{t("training.roundDuration")}</span>
+                <select value={roundDurationMs} onChange={(event) => setRoundDurationMs(Number(event.target.value))} className="w-full rounded-lg border border-cs2-border bg-cs2-bg-input px-3 py-2.5 text-sm text-cs2-text-primary outline-none focus:border-cs2-accent">
+                  {DURATION_OPTIONS.map((value) => <option key={value} value={value}>{value === 0 ? t("training.unlimitedManual") : `${value / 1000} s`}</option>)}
                 </select>
               </label>
               <label className="block">

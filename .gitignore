@@ -108,3 +108,5 @@ backups/
 .worktrees/
 .superpowers/
 
+# Local Codex scratch assets
+/work/

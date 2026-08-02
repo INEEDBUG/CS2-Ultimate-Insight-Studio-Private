@@ -8,7 +8,6 @@ import {
 } from "../../utils/sensitivityLab";
 import { useT } from "../../i18n/useT.js";
 
-const ROUND_DURATION_MS = 15_000;
 const COUNTDOWN_MS = 3_000;
 const TARGET_RADIUS = 27;
 
@@ -20,13 +19,14 @@ function randomTarget(width, height) {
   };
 }
 
-export default function SensitivityAimArena({ trial, index, total, onComplete, onCancel }) {
+export default function SensitivityAimArena({ trial, index, total, durationMs = 15_000, onComplete, onCancel }) {
   const t = useT();
+  const roundDurationMs = durationMs > 0 ? durationMs : null;
   const canvasRef = useRef(null);
   const frameRef = useRef(0);
   const stateRef = useRef(null);
   const [phase, setPhase] = useState("ready");
-  const [displayTime, setDisplayTime] = useState(ROUND_DURATION_MS);
+  const [displayTime, setDisplayTime] = useState(roundDurationMs ?? 0);
   const [pointerLocked, setPointerLocked] = useState(false);
 
   const requestPointerLock = useCallback(() => {
@@ -60,7 +60,7 @@ export default function SensitivityAimArena({ trial, index, total, onComplete, o
     if (!state || state.finished) return;
     state.finished = true;
     if (document.pointerLockElement) document.exitPointerLock();
-    const durationMs = Math.max(1, state.endAt - state.startAt);
+    const durationMs = Math.max(1, performance.now() - state.startAt);
     const result = trial.kind === "flick"
       ? makeFlickTrialResult({
           multiplier: trial.multiplier,
@@ -143,12 +143,12 @@ export default function SensitivityAimArena({ trial, index, total, onComplete, o
       context.fillStyle = "#071018";
       context.fill();
 
-      const left = Math.max(0, state.endAt - now);
+      const displayMs = roundDurationMs == null ? elapsed : Math.max(0, state.endAt - now);
       if (now - state.lastDisplayAt > 60) {
         state.lastDisplayAt = now;
-        setDisplayTime(left);
+        setDisplayTime(displayMs);
       }
-      if (now >= state.endAt) {
+      if (roundDurationMs != null && now >= state.endAt) {
         finishRound();
         return;
       }
@@ -174,7 +174,7 @@ export default function SensitivityAimArena({ trial, index, total, onComplete, o
     context.beginPath(); context.arc(cursor.x, cursor.y, 1.5, 0, Math.PI * 2);
     context.fillStyle = "#ff9a3d"; context.fill();
     frameRef.current = requestAnimationFrame(draw);
-  }, [finishRound, resizeCanvas, trial.kind]);
+  }, [finishRound, resizeCanvas, roundDurationMs, trial.kind]);
 
   const start = useCallback(() => {
     const surface = resizeCanvas();
@@ -202,11 +202,11 @@ export default function SensitivityAimArena({ trial, index, total, onComplete, o
       pausedAt: null,
       finished: false,
     };
-    setDisplayTime(ROUND_DURATION_MS);
+    setDisplayTime(roundDurationMs ?? 0);
     setPhase("awaiting-lock");
     requestPointerLock();
     cancelAnimationFrame(frameRef.current);
-  }, [draw, requestPointerLock, resizeCanvas]);
+  }, [requestPointerLock, resizeCanvas, roundDurationMs]);
 
   useEffect(() => {
     function onPointerLockChange() {
@@ -218,7 +218,7 @@ export default function SensitivityAimArena({ trial, index, total, onComplete, o
       if (locked && !state.timerStarted) {
         state.timerStarted = true;
         state.startAt = now + COUNTDOWN_MS;
-        state.endAt = state.startAt + ROUND_DURATION_MS;
+        state.endAt = roundDurationMs == null ? null : state.startAt + roundDurationMs;
         state.lastFrameAt = now;
         state.targetSpawnAt = now;
         setPhase("countdown");
@@ -227,7 +227,7 @@ export default function SensitivityAimArena({ trial, index, total, onComplete, o
       } else if (locked && state.pausedAt !== null) {
         const pausedFor = now - state.pausedAt;
         state.startAt += pausedFor;
-        state.endAt += pausedFor;
+        if (state.endAt != null) state.endAt += pausedFor;
         state.lastFrameAt = now;
         state.pausedAt = null;
         cancelAnimationFrame(frameRef.current);
@@ -273,7 +273,7 @@ export default function SensitivityAimArena({ trial, index, total, onComplete, o
       cancelAnimationFrame(frameRef.current);
       if (document.pointerLockElement === canvasRef.current) document.exitPointerLock();
     };
-  }, [draw, resizeCanvas, trial.kind, trial.multiplier]);
+  }, [draw, resizeCanvas, roundDurationMs, trial.kind, trial.multiplier]);
 
   return (
     <section className="overflow-hidden rounded-2xl border border-cs2-border bg-cs2-bg-card shadow-2xl shadow-black/25">
@@ -288,7 +288,7 @@ export default function SensitivityAimArena({ trial, index, total, onComplete, o
           </span>
         </div>
         <div className="font-mono text-lg font-bold tabular-nums text-cs2-text-primary">
-          {(displayTime / 1000).toFixed(1)}s
+          {roundDurationMs == null ? `∞ · ${(displayTime / 1000).toFixed(1)}s` : `${(displayTime / 1000).toFixed(1)}s`}
         </div>
       </header>
       <div className="relative h-[min(58vh,560px)] min-h-[390px] bg-black">
@@ -325,9 +325,16 @@ export default function SensitivityAimArena({ trial, index, total, onComplete, o
       </div>
       <footer className="flex items-center justify-between border-t border-cs2-border px-4 py-3 text-xs text-cs2-text-muted">
         <span>{t("training.noClickHint")}</span>
-        <button type="button" onClick={onCancel} className="flex items-center gap-1.5 rounded px-2 py-1 transition-colors duration-150 hover:bg-white/5 hover:text-cs2-text-primary active:scale-[0.97]">
-          <RotateCcw className="h-3.5 w-3.5" /> {t("training.exitTest")}
-        </button>
+        <div className="flex items-center gap-2">
+          {roundDurationMs == null && phase === "running" && (
+            <button type="button" disabled={displayTime < 3_000} onClick={finishRound} className="rounded-lg bg-cs2-orange px-3 py-1.5 font-bold text-black transition-transform duration-150 active:scale-[0.97] disabled:opacity-40">
+              {t("training.finishRound")}
+            </button>
+          )}
+          <button type="button" onClick={onCancel} className="flex items-center gap-1.5 rounded px-2 py-1 transition-colors duration-150 hover:bg-white/5 hover:text-cs2-text-primary active:scale-[0.97]">
+            <RotateCcw className="h-3.5 w-3.5" /> {t("training.exitTest")}
+          </button>
+        </div>
       </footer>
     </section>
   );

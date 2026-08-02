@@ -32,7 +32,7 @@ class InputLabRequest(BaseModel):
     actuation_mm: float = Field(ge=0.1, le=4.0)
     rapid_trigger_press_mm: float = Field(ge=0.05, le=4.0)
     rapid_trigger_release_mm: float = Field(ge=0.05, le=4.0)
-    duration_ms: int = Field(ge=3_000, le=180_000)
+    duration_ms: int = Field(ge=3_000, le=86_400_000)
     events: list[InputEvent] = Field(min_length=2, max_length=20_000)
 
     @field_validator("events")

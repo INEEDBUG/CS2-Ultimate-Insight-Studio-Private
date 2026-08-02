@@ -1,6 +1,6 @@
 <h1 align="center">
   <br>
-  <img src="./frontend/public/cs2-insight-logo.png" alt="CS2 Ultimate Insight Studio" width="140">
+  <img src="./frontend/public/cs2-ultimate-insight-logo.png" alt="CS2 Ultimate Insight Studio" width="140">
   <br>
   CS2 Ultimate Insight Studio
   <br>
@@ -13,55 +13,27 @@
 <h3 align="center"><b>面向个人训练与复盘的本地 CS2 工作台</b> </h3>
 <h4 align="center">官匹 Demo 获取 · Demo 分析 · 灵敏度实验室 · 磁轴输入实验室</h4>
 
-> 本项目是基于 [DrEAmSs59/CS2-insight-agent](https://github.com/DrEAmSs59/CS2-insight-agent) 的非商业衍生版本。原项目作者、提交历史和 PolyForm Noncommercial 1.0.0 许可声明均予以保留；下方原项目链接和展示资料用于注明来源。
+> 本仓库不是从零编写的软件，而是明确基于开源/源码可用项目继续开发的非商业衍生版本。请在使用或分发前阅读下面的代码来源与许可证说明。
 
 <p align="center">
-  <a href="https://github.com/DrEAmSs59/CS2-insight-agent/releases">
-    <img src="https://img.shields.io/github/v/release/DrEAmSs59/CS2-insight-agent"
-         alt="release">
-  </a>
-  <a href="https://github.com/DrEAmSs59/CS2-insight-agent/stargazers">
-    <img src="https://img.shields.io/github/stars/DrEAmSs59/CS2-insight-agent.svg"
-         alt="Stars">
-  </a>
-    <a href="https://github.com/DrEAmSs59/CS2-insight-agent/blob/main/LICENSE">
-    <img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue"
-         alt="License">
-  </a>
-  
-</p>
-
-<p align="center">
-  <a href="https://github.com/DrEAmSs59/CS2-insight-agent/blob/main/PLAYER_GUIDE.md">使用指南</a> •
-  <a href="https://github.com/DrEAmSs59/CS2-insight-agent/blob/main/CONTRIBUTING.md">贡献指南</a> •
-  <a href="https://www.bilibili.com/video/BV1PcVj69ExZ/">视频教程</a> •
+  <a href="./PLAYER_GUIDE.md">使用指南</a> •
+  <a href="./CONTRIBUTING.md">贡献指南</a> •
   <a href="#核心功能">核心功能</a> •
   <a href="#安装">快速安装</a> •
-  <a href="#支持项目">支持项目</a> •
+  <a href="#代码来源与致谢">代码来源</a> •
   <a href="#声明">声明</a> •
   <a href="#License">License</a>
 </p>
 
+## 代码来源与致谢
 
-![screenshot](./asset/output-1080.gif)
+- **主体代码与桌面架构**：[DrEAmSs59/CS2-insight-agent](https://github.com/DrEAmSs59/CS2-insight-agent)。本项目保留其提交历史、作者归属及 PolyForm Noncommercial 1.0.0 许可，并在此基础上增加官匹 Demo 获取、SQLite 工作流、灵敏度实验室、磁轴输入实验室和独立品牌界面。
+- **官匹 Demo 工作流参考**：[akiver/cs-demo-manager](https://github.com/akiver/cs-demo-manager)。本项目没有采用它的 PostgreSQL 数据层，也没有把整个项目代码直接合并进来。
+- **Steam Game Coordinator 辅助程序**：[akiver/boiler-writter](https://github.com/akiver/boiler-writter) 1.7.0（GPL-3.0）。它在用户首次明确同意后按需下载，并以未修改的独立进程运行。
+- **Share Code 解码代码**：[akiver/csgo-sharecode](https://github.com/akiver/csgo-sharecode)（MIT）的 Python 适配，许可证原文保存在 `third_party/licenses/csgo-sharecode-LICENSE.txt`。
+- 完整第三方依赖与许可证边界见 [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md)。
 
-<p align="center">
-  <a href="https://www.bilibili.com/video/BV1PcVj69ExZ/">▶ 视频教程 BV1PcVj69ExZ</a>
-</p>
-
-<h4 align="center">成片展示</h4>
-
-<p align="center">
-  <a href="https://www.bilibili.com/video/BV1ZkGi6YENF/">▶ BV1ZkGi6YENF</a> ·
-  <a href="https://www.bilibili.com/video/BV1TPGq67EFS/">▶ BV1TPGq67EFS</a>
-</p>
-<p align="center"><sub>片头片尾 BGM、战队 Logo 由 UP 主自行合成；游戏片段由本项目自动剪辑</sub></p>
-
-<p align="center">
-  <a href="https://www.bilibili.com/video/BV1KF5s6nEed/">▶ BV1KF5s6nEed</a> ·
-  <a href="https://www.bilibili.com/video/BV1G198BkEHd/">▶ BV1G198BkEHd</a>
-</p>
-<p align="center"><sub>片头片尾 BGM 及游戏片段均由本项目剪辑合成产出</sub></p>
+本仓库不展示任何上游作者的收款码，也不代表上游作者募集赞助。新的橙色准星/数据脉冲图标为本项目原创资产，不使用 Valve 官方 CS2 标志。
 
 ---
 
@@ -113,7 +85,7 @@
 
 ## 安装
 
-前往 [Releases 页面](https://github.com/DrEAmSs59/CS2-insight-agent/releases) 下载最新的 `CS2-Insight-Agent-Setup-x.x.x.exe`，双击运行安装包，按提示完成安装。
+前往本仓库的 [Releases 页面](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases) 下载最新的 `CS2 Ultimate Insight Studio_x.x.x_x64-setup.exe`，双击运行安装包，按提示完成安装。
 
 安装完成后从桌面或开始菜单启动程序，**无需打开浏览器，无需手动启动后端**。轻量 Tauri 桌面壳会自动启动内嵌 Python 后端，并使用 Windows 系统 WebView2 显示界面。
 
@@ -127,7 +99,7 @@
 工具链使用 `pnpm`/`pnpm-lock.yaml`，Rust 桌面壳使用 `cargo`/`Cargo.lock`；
 OBS 与 FFmpeg 仍由各自的运行时集成管理。
 
-当前不运行后台自动更新器；需要升级时，请直接从 [Releases 页面](https://github.com/DrEAmSs59/CS2-insight-agent/releases) 下载新版安装包。
+当前不运行后台自动更新器；需要升级时，请直接从[本项目 Releases 页面](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases)下载新版安装包。
 
 > **建议安装路径不含中文字符。** 例如 `D:\CS2-Insight-Agent\` ✅，`D:\游戏工具\CS2-Insight-Agent\` ❌
 
@@ -150,10 +122,10 @@ OBS 与 FFmpeg 仍由各自的运行时集成管理。
    - [ ] 战术教练（投掷物轨迹分析 / 路线复盘）
 
 
-### Top contributors:
+### 上游贡献者
 
 <a href="https://github.com/DrEAmSs59/CS2-insight-agent/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=DrEAmSs59/CS2-insight-agent" alt="contrib.rocks image" />
+  查看 `DrEAmSs59/CS2-insight-agent` 的贡献者与原始提交历史
 </a>
 
 
@@ -165,7 +137,6 @@ OBS 与 FFmpeg 仍由各自的运行时集成管理。
 
 - 允许个人学习、研究、爱好、评测及其他非商业用途使用。在遵守本协议的前提下，你可以阅读、修改、构建和分发本项目源码及其衍生版本。
 - 未经书面授权，禁止将本项目或其衍生版本用于任何商业用途，包括但不限于：商业软件、付费服务、商业代剪/代录服务、商业平台集成、对外销售、出租、转售或作为商业产品的一部分分发。
-  - 商业授权咨询：`dreamss29_@outlook.com`
 - 📦 如果你分发本项目的编译产物、安装包或修改版本，请同时保留本项目的许可证声明，并遵守 `THIRD_PARTY_LICENSES.md` 中列出的所有第三方开源组件许可证。
 
 ## 声明
@@ -179,15 +150,3 @@ Counter-Strike 2、CS2、Counter-Strike、Steam、Valve 等名称、商标和标
 - **默认录制流程**调用 CS2 时使用 `-insecure` 仅用于本地 Demo 回放，不存在 DLL 注入或 Hook；不会对磁盘上的 `.dem` 做修改，不连接、不修改、不干预任何官方游戏服务器、匹配服务或反作弊系统，也不提供任何作弊、绕过检测或破坏公平竞技的功能，**不要在已登录匹配服务器的 CS2 客户端中并行使用**，以免触发反作弊系统的不必要警示。
 - 若你在「常用参数管理 → 实验性功能」中**主动开启 POV**，程序会临时向 CS2 的 `game/csgo` 目录写入 `pov.vpk`，并**增量修改** `gameinfo.gi` 的 `SearchPaths` 以加载 POV HUD 资源；录制结束或异常收尾时会自动恢复。该模式同样**强制**使用 `-insecure` 启动 CS2，**不要用于连接 VAC 安全服务器**。
 - 录制期间会临时修改若干 CS2 archive cvar 与按键绑定。本项目会在启动录制时在程序数据目录的 `.cs2_config_backup` 中**自动备份**玩家原始的 `config.cfg` / `video.txt` / `user_convars_*.vcfg`，录制结束后会回滚；如遇异常退出导致设置被覆盖，可在该目录手动取回原始文件。
-
----
-
-## 支持项目
-
-如果这个项目帮你节省了剪辑时间，欢迎请我喝一杯咖啡 ☕  
-你的支持会用于 Demo 解析、录制兼容性测试和后续功能维护。
-
-<div style="display: flex; justify-content: center; align-items: center; gap: 20px;">
-  <img src="asset/wx.jpg" alt="赞助方式1" style="height: 200px;" />
-  <img src="asset/ali.jpg" alt="赞助方式2" style="height: 200px;" />
-</div>
