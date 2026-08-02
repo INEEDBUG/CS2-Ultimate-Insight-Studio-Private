@@ -54,10 +54,22 @@ class InputLabResult(BaseModel):
     stability_score: float
     recommendation: str
     per_key: dict[str, dict[str, float | int]]
+    diagnosis: Literal["unstable", "overlap", "inconsistent", "slow", "balanced"]
+    diagnosis_label: str
+    recommended_actuation_mm: float
+    recommended_rt_press_mm: float
+    recommended_rt_release_mm: float
+    issues: list[str]
+    action_plan: list[str]
+    safety_notes: list[str]
 
 
 def _round_or_zero(value: float) -> float:
     return round(value, 2) if math.isfinite(value) else 0.0
+
+
+def _step_mm(value: float, delta: float, low: float = 0.05) -> float:
+    return round(max(low, min(4.0, value + delta)), 2)
 
 
 def analyze_input_session(request: InputLabRequest) -> InputLabResult:
@@ -115,14 +127,64 @@ def analyze_input_session(request: InputLabRequest) -> InputLabResult:
     overlap_penalty = min(25.0, overlap_ratio * 35.0)
     stability = max(0.0, 100.0 - jitter_penalty - chatter_penalty - overlap_penalty)
 
+    recommended_actuation = request.actuation_mm
+    recommended_press = request.rapid_trigger_press_mm
+    recommended_release = request.rapid_trigger_release_mm
+    issues: list[str] = []
     if chatter > 0:
-        recommendation = "检测到异常重复/缺失边沿；先提高触发或释放行程，再重新校准键盘。"
-    elif request.mode == "counter_strafe" and overlap_ratio > 0.25:
-        recommendation = "A/D 重叠偏高；可略增释放 Rapid Trigger 行程，并练习先释放再反向按下。"
+        diagnosis = "unstable"
+        diagnosis_label = "检测到误触或重复边沿"
+        recommended_actuation = _step_mm(request.actuation_mm, 0.10, 0.1)
+        recommended_press = _step_mm(request.rapid_trigger_press_mm, 0.05)
+        recommended_release = _step_mm(request.rapid_trigger_release_mm, 0.05)
+        issues.append(f"记录到 {chatter} 次重复按下或缺失抬起，当前阈值可能过于激进或键盘需要重新校准。")
+        recommendation = "检测到异常重复边沿；先提高触发与 RT 行程来消除误触，再逐步向下寻找稳定下限。"
     elif hold_jitter > 35:
-        recommendation = "按键保持时间波动较大；当前设置可能过敏，建议每次只增加 0.05–0.10 mm 后复测。"
+        diagnosis = "inconsistent"
+        diagnosis_label = "按键边沿稳定性不足"
+        recommended_press = _step_mm(request.rapid_trigger_press_mm, 0.05)
+        recommended_release = _step_mm(request.rapid_trigger_release_mm, 0.05)
+        issues.append(f"保持时间标准差为 {hold_jitter:.1f} ms，微小手指运动可能被识别为状态变化。")
+        recommendation = "将 RT 按下/抬起距离各增加 0.05 mm，稳定后再决定是否回调。"
+    elif request.mode == "counter_strafe" and overlap_ratio > 0.25:
+        diagnosis = "overlap"
+        diagnosis_label = "A/D 同时按下偏多"
+        recommended_release = _step_mm(request.rapid_trigger_release_mm, -0.05)
+        issues.append(f"反向切换中有 {overlap_ratio * 100:.1f}% 出现 A/D 重叠，松键边沿或手法需要更干净。")
+        recommendation = "在没有抖动的前提下，将释放 RT 行程降低 0.05 mm，并练习先松开再反向按下。"
+    elif mean_transition is not None and mean_transition > 90:
+        diagnosis = "slow"
+        diagnosis_label = "方向切换偏慢"
+        recommended_actuation = _step_mm(request.actuation_mm, -0.10, 0.2)
+        recommended_press = _step_mm(request.rapid_trigger_press_mm, -0.05)
+        issues.append(f"平均方向切换为 {mean_transition:.1f} ms；在边沿稳定的前提下仍有提速空间。")
+        recommendation = "小幅降低初始触发与 RT 按下行程，每次只改一档并复测误触。"
     else:
-        recommendation = "当前事件边沿稳定。不要仅为追求更小数值继续降低行程；建议进 CS2 验证急停与误触。"
+        diagnosis = "balanced"
+        diagnosis_label = "当前参数稳定"
+        issues.append("未检测到明显重复边沿、过量 A/D 重叠或异常切换延迟。")
+        recommendation = "保持当前数值；不要仅为追求更小的毫米数牺牲稳定性。"
+
+    action_plan = []
+    if (
+        recommended_actuation != request.actuation_mm
+        or recommended_press != request.rapid_trigger_press_mm
+        or recommended_release != request.rapid_trigger_release_mm
+    ):
+        action_plan.append(
+            f"建议起点：触发 {recommended_actuation:g} mm，RT 按下 {recommended_press:g} mm，"
+            f"RT 抬起 {recommended_release:g} mm。"
+        )
+    else:
+        action_plan.append("维持当前触发与 Rapid Trigger 数值，不做无依据的激进下调。")
+    action_plan.extend([
+        "每次只调整 0.05–0.10 mm，并使用同一测试模式复测，便于判断因果。",
+        "先用 30 秒测试排除偶然波动，再进入 CS2 验证急停、长按稳定和误触。",
+    ])
+    safety_notes = [
+        "CS2 官匹中请关闭 Snap Tap、Rapid Tap、Snappy Tappy、SOCD/LKP 等自动反向输入功能。",
+        "普通 Rapid Trigger 可用于缩短按键复位，但建议只在 WASD 等确有收益的按键启用。",
+    ]
 
     per_key = {}
     for code in sorted(per_key_presses):
@@ -144,4 +206,12 @@ def analyze_input_session(request: InputLabRequest) -> InputLabResult:
         stability_score=round(stability, 1),
         recommendation=recommendation,
         per_key=per_key,
+        diagnosis=diagnosis,
+        diagnosis_label=diagnosis_label,
+        recommended_actuation_mm=recommended_actuation,
+        recommended_rt_press_mm=recommended_press,
+        recommended_rt_release_mm=recommended_release,
+        issues=issues,
+        action_plan=action_plan,
+        safety_notes=safety_notes,
     )

@@ -69,6 +69,11 @@ def test_recommendation_follows_strongest_measured_multiplier():
     assert result.console_command.startswith('sensitivity "')
     assert "1024×1080" in result.resolution_context
     assert "不对最终 sensitivity" in result.resolution_context
+    assert result.diagnosis == "too_slow"
+    assert result.adjustment_percent > 0
+    assert result.suggested_min < result.recommended_sensitivity < result.suggested_max
+    assert result.insights
+    assert len(result.action_plan) >= 3
 
 
 def test_recommendation_requires_flick_and_tracking_trials():

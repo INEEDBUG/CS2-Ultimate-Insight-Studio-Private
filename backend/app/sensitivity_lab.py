@@ -55,6 +55,14 @@ class SensitivityRecommendation(BaseModel):
     tested_scores: dict[str, float]
     resolution_context: str
     console_command: str
+    diagnosis: Literal["too_fast", "too_slow", "balanced", "mixed"]
+    diagnosis_label: str
+    adjustment_percent: float
+    suggested_min: float
+    suggested_max: float
+    insights: list[str]
+    action_plan: list[str]
+    methodology_note: str
 
 
 def sensitivity_to_cm360(dpi: int, sensitivity: float) -> float:
@@ -97,9 +105,12 @@ def _resolution_context(request: SensitivityRecommendationRequest) -> str:
 def recommend_sensitivity(request: SensitivityRecommendationRequest) -> SensitivityRecommendation:
     grouped: dict[float, list[float]] = defaultdict(list)
     kinds_by_multiplier: dict[float, set[str]] = defaultdict(set)
+    scores_by_kind: dict[float, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     for trial in request.trials:
         multiplier = round(float(trial.multiplier), 3)
-        grouped[multiplier].append(_trial_score(trial))
+        score = _trial_score(trial)
+        grouped[multiplier].append(score)
+        scores_by_kind[multiplier][trial.kind].append(score)
         kinds_by_multiplier[multiplier].add(trial.kind)
 
     aggregate: dict[float, float] = {}
@@ -131,6 +142,67 @@ def recommend_sensitivity(request: SensitivityRecommendationRequest) -> Sensitiv
     coverage = min(1.0, len(request.trials) / 10.0) * min(1.0, complete_candidates / 3.0)
     confidence = _clamp(0.35 + 0.45 * coverage + 0.20 * min(1.0, separation / 0.15), 0.0, 0.98)
 
+    kind_scores = {
+        multiplier: {
+            kind: sum(values) / len(values)
+            for kind, values in grouped_kinds.items()
+            if values
+        }
+        for multiplier, grouped_kinds in scores_by_kind.items()
+    }
+    best_flick = max(
+        (multiplier for multiplier in kind_scores if "flick" in kind_scores[multiplier]),
+        key=lambda multiplier: (kind_scores[multiplier]["flick"], -abs(1.0 - multiplier)),
+    )
+    best_tracking = max(
+        (multiplier for multiplier in kind_scores if "tracking" in kind_scores[multiplier]),
+        key=lambda multiplier: (kind_scores[multiplier]["tracking"], -abs(1.0 - multiplier)),
+    )
+    recommended_ratio = recommended / request.current_sensitivity
+    split_preference = abs(best_flick - best_tracking) >= 0.25
+    if split_preference:
+        diagnosis = "mixed"
+        diagnosis_label = "甩枪与追踪偏好不一致"
+    elif recommended_ratio < 0.94:
+        diagnosis = "too_fast"
+        diagnosis_label = "当前灵敏度偏快"
+    elif recommended_ratio > 1.06:
+        diagnosis = "too_slow"
+        diagnosis_label = "当前灵敏度偏慢"
+    else:
+        diagnosis = "balanced"
+        diagnosis_label = "当前灵敏度接近平衡区"
+
+    current_multiplier = min(aggregate, key=lambda value: abs(value - 1.0))
+    current_trials = [trial for trial in request.trials if round(float(trial.multiplier), 3) == current_multiplier]
+    current_targets = sum(trial.targets for trial in current_trials)
+    current_overshoots = sum(trial.overshoots for trial in current_trials)
+    overshoot_rate = current_overshoots / max(1, current_targets)
+    adjustment_percent = (recommended_ratio - 1.0) * 100.0
+    insights = [
+        f"当前倍率附近记录到 {overshoot_rate * 100:.1f}% 的过冲事件。",
+        f"甩枪最佳测试倍率为 ×{best_flick:g}，追踪最佳测试倍率为 ×{best_tracking:g}。",
+    ]
+    if diagnosis == "too_fast":
+        insights.append("较低倍率在命中、路径控制与过冲惩罚后的综合表现更好，建议先降速。")
+    elif diagnosis == "too_slow":
+        insights.append("较高倍率在没有明显牺牲控制的情况下完成目标更快，建议小幅提速。")
+    elif diagnosis == "mixed":
+        insights.append("不要一次大幅改动；先使用折中值，并用更长测试确认你更重视甩枪还是连续追踪。")
+    else:
+        insights.append("当前值已经落在实测平衡区，继续追求大幅变化的收益有限。")
+    if confidence < 0.65:
+        insights.append("候选成绩接近或样本较少，本次结论置信度有限。")
+
+    suggested_min = round(_clamp(recommended * 0.96, 0.01, 25.0), 4)
+    suggested_max = round(_clamp(recommended * 1.04, 0.01, 25.0), 4)
+    action_plan = [
+        f"先在 CS2 输入 sensitivity \"{recommended:g}\"，只修改这一项。",
+        f"在 {suggested_min:g}–{suggested_max:g} 范围内各复测一轮；每轮建议至少 30 秒。",
+        "若仍频繁越过目标，向区间下沿调；若总是停在目标前，向区间上沿调。",
+        "保留 DPI 不变，连续使用两到三局后再决定是否固化设置。",
+    ]
+
     return SensitivityRecommendation(
         recommended_sensitivity=recommended,
         current_sensitivity=request.current_sensitivity,
@@ -142,4 +214,15 @@ def recommend_sensitivity(request: SensitivityRecommendationRequest) -> Sensitiv
         tested_scores={f"{key:.3f}": round(value, 3) for key, value in sorted(aggregate.items())},
         resolution_context=_resolution_context(request),
         console_command=f'sensitivity "{recommended:g}"',
+        diagnosis=diagnosis,
+        diagnosis_label=diagnosis_label,
+        adjustment_percent=round(adjustment_percent, 1),
+        suggested_min=suggested_min,
+        suggested_max=suggested_max,
+        insights=insights,
+        action_plan=action_plan,
+        methodology_note=(
+            "建议来自本次甩枪与追踪的速度—精度权衡；分辨率只影响视觉感受，"
+            "不会被当作改变 CS2 实际转角的固定倍率。"
+        ),
     )

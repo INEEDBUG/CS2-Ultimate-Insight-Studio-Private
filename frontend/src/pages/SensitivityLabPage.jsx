@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, Check, Clipboard, Crosshair, Gauge, History, Monitor, Mouse, RefreshCw, UserRound } from "lucide-react";
+import { Activity, AlertTriangle, Check, Clipboard, Crosshair, Gauge, History, Lightbulb, ListChecks, Monitor, Mouse, RefreshCw, UserRound } from "lucide-react";
 import SensitivityAimArena from "../components/training/SensitivityAimArena";
 import { createSensitivityRecommendation, fetchLocalCs2Settings, fetchSensitivityHistory } from "../api/trainingApi";
 import { SENSITIVITY_TRIAL_SCHEDULE } from "../utils/sensitivityLab";
@@ -321,6 +321,29 @@ export default function SensitivityLabPage() {
                 </div>
               ))}
             </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-[0.85fr_1.15fr]">
+              <div className="rounded-xl border border-cs2-accent/25 bg-cs2-accent/[0.07] p-4">
+                <div className="flex items-center gap-2 text-xs font-bold text-cs2-accent">
+                  <AlertTriangle className="h-4 w-4" />{t("training.measuredDiagnosis")}
+                </div>
+                <div className="mt-2 text-base font-bold text-cs2-text-primary">{result.diagnosis_label || t("training.personalizedReady")}</div>
+                <div className="mt-2 font-mono text-xs text-cs2-text-secondary">
+                  {t("training.adjustment")} {Number(result.adjustment_percent || 0) >= 0 ? "+" : ""}{result.adjustment_percent || 0}% · {t("training.retestRange")} {result.suggested_min ?? result.recommended_sensitivity}–{result.suggested_max ?? result.recommended_sensitivity}
+                </div>
+                <div className="mt-3 space-y-2">
+                  {(result.insights || []).map((item) => <p key={item} className="text-xs leading-5 text-cs2-text-secondary">• {item}</p>)}
+                </div>
+              </div>
+              <div className="rounded-xl border border-emerald-300/20 bg-black/15 p-4">
+                <div className="flex items-center gap-2 text-xs font-bold text-emerald-200"><ListChecks className="h-4 w-4" />{t("training.howToAdjust")}</div>
+                <div className="mt-3 space-y-2.5">
+                  {(result.action_plan || []).map((item, index) => (
+                    <div key={item} className="flex gap-2.5 text-xs leading-5 text-cs2-text-secondary"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-300/10 font-mono text-[10px] font-bold text-emerald-200">{index + 1}</span><span>{item}</span></div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            {result.methodology_note && <p className="mt-3 flex items-start gap-2 text-[11px] leading-5 text-cs2-text-muted"><Lightbulb className="mt-0.5 h-3.5 w-3.5 shrink-0" />{result.methodology_note}</p>}
             <p className="mt-4 text-xs leading-5 text-cs2-text-secondary">{result.resolution_context}</p>
           </section>
         )}

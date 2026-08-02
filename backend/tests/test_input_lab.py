@@ -46,6 +46,24 @@ def test_analyze_detects_duplicate_edges_as_chatter():
 
     assert result.chatter_count == 2
     assert "异常重复" in result.recommendation
+    assert result.diagnosis == "unstable"
+    assert result.recommended_actuation_mm > 1.0
+    assert result.recommended_rt_press_mm > 0.2
+    assert any("Snap Tap" in note for note in result.safety_notes)
+
+
+def test_counter_strafe_overlap_recommends_faster_release_without_socd():
+    result = analyze_input_session(_request([
+        {"code": "KeyA", "event_type": "down", "timestamp_ms": 100},
+        {"code": "KeyD", "event_type": "down", "timestamp_ms": 150},
+        {"code": "KeyA", "event_type": "up", "timestamp_ms": 200},
+        {"code": "KeyD", "event_type": "up", "timestamp_ms": 250},
+    ]))
+
+    assert result.overlap_ratio == 1.0
+    assert result.diagnosis == "overlap"
+    assert result.recommended_rt_release_mm == 0.15
+    assert result.recommended_rt_press_mm == 0.2
 
 
 def test_input_session_is_stored_in_shared_sqlite(tmp_path: Path):

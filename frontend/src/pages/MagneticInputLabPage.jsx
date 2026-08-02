@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Activity, AlertTriangle, History, Keyboard, Radio, RotateCcw, ShieldCheck, Square } from "lucide-react";
+import { Activity, AlertTriangle, History, Keyboard, ListChecks, Radio, RotateCcw, ShieldAlert, ShieldCheck, Square, Wrench } from "lucide-react";
 import { createInputAnalysis, fetchInputHistory } from "../api/trainingApi";
 import { useT } from "../i18n/useT.js";
 
@@ -190,7 +190,24 @@ export default function MagneticInputLabPage() {
           <section className="rounded-2xl border border-emerald-400/25 bg-gradient-to-br from-emerald-400/[0.10] to-cs2-bg-card p-5">
             <div className="flex flex-wrap items-start justify-between gap-4"><div><div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-emerald-300"><ShieldCheck className="h-4 w-4" />{t("inputLab.resultTitle")}</div><div className="mt-2 font-mono text-5xl font-bold text-white">{result.stability_score}<span className="text-xl text-cs2-text-muted">/100</span></div></div><button type="button" onClick={() => setPhase("setup")} className="flex items-center gap-2 rounded-lg border border-cs2-border px-3 py-2 text-xs font-bold text-cs2-text-secondary active:scale-[0.97]"><RotateCcw className="h-4 w-4" />{t("inputLab.testAgain")}</button></div>
             <div className="mt-5 grid gap-3 sm:grid-cols-5">{[[t("inputLab.totalPresses"), result.total_presses],[t("inputLab.pps"), result.presses_per_second],[t("inputLab.hold"), `${result.mean_hold_ms} ms`],[t("inputLab.transition"), result.mean_transition_ms == null ? "—" : `${result.mean_transition_ms} ms`],[t("inputLab.chatter"), result.chatter_count]].map(([label,value]) => <div key={label} className="rounded-xl border border-white/10 bg-black/15 px-3 py-3"><div className="text-[10px] font-bold uppercase tracking-wider text-cs2-text-muted">{label}</div><div className="mt-1 font-mono text-lg font-bold text-cs2-text-primary">{value}</div></div>)}</div>
-            <p className="mt-4 rounded-xl border border-emerald-300/15 bg-emerald-300/[0.06] px-3.5 py-3 text-xs leading-5 text-emerald-100">{result.recommendation}</p>
+            <div className="mt-4 grid gap-3 lg:grid-cols-[0.9fr_1.1fr]">
+              <div className="rounded-xl border border-violet-300/20 bg-violet-300/[0.06] p-4">
+                <div className="flex items-center gap-2 text-xs font-bold text-violet-200"><Wrench className="h-4 w-4" />{t("inputLab.optimization")}</div>
+                <div className="mt-2 text-base font-bold text-cs2-text-primary">{result.diagnosis_label || result.recommendation}</div>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  {[[t("inputLab.actuationShort"), result.recommended_actuation_mm],[t("inputLab.rtPressShort"), result.recommended_rt_press_mm],[t("inputLab.rtReleaseShort"), result.recommended_rt_release_mm]].map(([label,value]) => <div key={label} className="rounded-lg border border-white/10 bg-black/15 px-2.5 py-2"><div className="text-[9px] font-bold text-cs2-text-muted">{label}</div><div className="mt-1 font-mono text-sm font-bold text-violet-100">{value ?? "—"} mm</div></div>)}
+                </div>
+                <div className="mt-3 space-y-2">{(result.issues || []).map((item) => <p key={item} className="text-xs leading-5 text-cs2-text-secondary">• {item}</p>)}</div>
+              </div>
+              <div className="rounded-xl border border-emerald-300/20 bg-black/15 p-4">
+                <div className="flex items-center gap-2 text-xs font-bold text-emerald-200"><ListChecks className="h-4 w-4" />{t("inputLab.adjustAndRetest")}</div>
+                <div className="mt-3 space-y-2.5">{(result.action_plan || [result.recommendation]).map((item,index) => <div key={item} className="flex gap-2.5 text-xs leading-5 text-cs2-text-secondary"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-300/10 font-mono text-[10px] font-bold text-emerald-200">{index + 1}</span><span>{item}</span></div>)}</div>
+              </div>
+            </div>
+            <div className="mt-3 rounded-xl border border-amber-300/20 bg-amber-300/[0.05] px-3.5 py-3">
+              <div className="flex items-center gap-2 text-xs font-bold text-amber-200"><ShieldAlert className="h-4 w-4" />{t("inputLab.officialSafety")}</div>
+              <div className="mt-2 space-y-1">{(result.safety_notes || []).map((item) => <p key={item} className="text-[11px] leading-5 text-amber-100/80">• {item}</p>)}</div>
+            </div>
           </section>
         )}
 
