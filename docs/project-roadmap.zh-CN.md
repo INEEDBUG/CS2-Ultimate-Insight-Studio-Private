@@ -82,3 +82,17 @@
 - 在用户关闭 CS2 并于界面确认 GPL helper 后，用真实 Steam 登录态完成一次端到端下载。
 - 补充过期比赛、Steam 未登录和 Game Coordinator 忙碌时的分层诊断。
 - 进入统一品牌、首次启动引导和 Windows 桌面打包阶段。
+
+## 2026-08-02：阶段 5 — 品牌与首次启动引导
+
+已完成：
+
+- 用户可见名称统一为 `CS2 Ultimate Insight Studio`，桌面窗口标题和侧栏品牌同步更新。
+- 新增首次启动引导，直接提供 Demo 库、官匹下载、灵敏度实验室和磁轴输入实验室四个入口。
+- 引导完成状态仅写入本机 `localStorage`，不联网、不收集账户或测试数据。
+- 保留旧 Tauri identifier 与 `%APPDATA%\\CS2 Insight Agent\\data` 数据目录，避免品牌升级导致已有 SQLite、配置和备份丢失。
+- README 明确说明本项目是原 `DrEAmSs59/CS2-insight-agent` 的非商业衍生版本，并保留许可与作者归属。
+
+验证：
+
+- 前端全套 589 项测试通过，生产构建通过。

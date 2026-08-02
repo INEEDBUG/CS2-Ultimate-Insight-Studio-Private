@@ -1,8 +1,8 @@
 <h1 align="center">
   <br>
-  <a href="https://github.com/DrEAmSs59/CS2-insight-agent/"><img src="https://raw.githubusercontent.com/DrEAmSs59/CS2-insight-agent/main/frontend/public/cs2-insight-logo.png" alt="CS2-Insight-Agent" width="140"></a>
+  <img src="./frontend/public/cs2-insight-logo.png" alt="CS2 Ultimate Insight Studio" width="140">
   <br>
-  CS2-Insight-Agent
+  CS2 Ultimate Insight Studio
   <br>
 </h1>
 
@@ -10,8 +10,10 @@
   <a href="./README.md"><img src="./asset/icon-cn.svg" alt="" width="20" height="20" style="vertical-align: middle;"> 简体中文</a> | <img src="./asset/icon-en.svg" alt="" width="20" height="20" style="vertical-align: middle;"> English
 </p>
 
-<h3 align="center"><b>CS2 Insight Agent: Desktop Intelligent Esports Terminal for CS2 Players</b> </h3>
-<h4 align="center">Demo Management, Highlight Extraction, Auto-Editing, LLM Commentary</h4>
+<h3 align="center"><b>A local CS2 workspace for personal training and match review</b> </h3>
+<h4 align="center">Official Demo Download · Demo Analysis · Sensitivity Lab · Magnetic Input Lab</h4>
+
+> This is a noncommercial derivative of [DrEAmSs59/CS2-insight-agent](https://github.com/DrEAmSs59/CS2-insight-agent). Original authorship, commit history, and PolyForm Noncommercial 1.0.0 notices are retained; upstream links and media below remain for attribution.
 
 <p align="center">
   <a href="https://github.com/DrEAmSs59/CS2-insight-agent/releases">

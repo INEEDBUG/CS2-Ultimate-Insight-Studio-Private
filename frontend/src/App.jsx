@@ -52,6 +52,7 @@ import { Loader2 } from "lucide-react";
 import API, { BACKEND_CONNECT_LABEL, getDemosStreamUrl } from "./api/api";
 
 import CustomTitleBar from "./components/CustomTitleBar";
+import FirstRunWelcome, { shouldShowFirstRunWelcome } from "./components/FirstRunWelcome";
 
 const GuidePage = lazy(() => import("./pages/GuidePage"));
 const DemoLibraryPage = lazy(() => import("./pages/DemoLibraryPage"));
@@ -84,6 +85,7 @@ export default function App() {
   const t = useT();
   const locale = useLocaleStore((s) => s.locale);
   const [backendReady, setBackendReady] = useState(false);
+  const [showFirstRunWelcome] = useState(() => shouldShowFirstRunWelcome());
   /** 后端就绪后的启动流程：先检查更新，再拉取首页配置检查 */
   const [startupInitDone, setStartupInitDone] = useState(false);
   const [startupInitPhase, setStartupInitPhase] = useState(/** @type {"update" | "config" | null} */ (null));
@@ -3197,6 +3199,10 @@ export default function App() {
       <div className="relative flex flex-col h-screen overflow-hidden bg-cs2-bg-dark">
         <CustomTitleBar />
         <div className="relative flex flex-1 overflow-hidden">
+          <FirstRunWelcome
+            open={backendReady && startupInitDone && showFirstRunWelcome && !isStandalonePreview}
+            onNavigate={navigate}
+          />
           {libraryLoadingOverlay && (
             <div className="absolute inset-0 z-[70] flex items-center justify-center bg-black/55 backdrop-blur-[1px]">
               <div className="flex items-center gap-3 rounded-lg border border-white/10 bg-cs2-bg-card px-4 py-3 shadow-2xl">
