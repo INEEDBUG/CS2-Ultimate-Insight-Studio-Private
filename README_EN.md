@@ -47,10 +47,20 @@ This repository does not display upstream donation QR codes or solicit money on 
 ### Highlight Parsing & Clip Discovery
 
 - **Batch Demo Parsing** — Parse highlights from multiple demos simultaneously; highlights from the same player across different matches are organized by match.
+- **Open Straight into 2D Replay** — After base analysis completes, the app opens the 2D radar replay directly, with round-by-round positions, movement paths, kills, smokes, and fire areas.
 - **Target Player Lock** — Automatically identify all players in a match and locate targets by Steam ID, platform ID, or nickname; compatible with different demo export conventions from 5E, Perfect World, and Official Matchmaking.
 - **Fine-grained Highlight Analysis** — Automatically categorizes **Highlights** (multi-kills, one-taps, clutches, knife kills, jump shots, defuses), **Fails** (taser, Deagle, team kills, "human magnet", "human tracing", "shoulder-to-shoulder" moments), **Cross-round Compilations** (favorite victim, nemesis, kill/death montage, continuous round recording), and **Meme Rounds** (211/o/i/z series with AI round commentary). See [Clip Types & Tags](./docs/highlight_tags.md) for tag descriptions.
 - **Round Timeline** — Beyond auto-extracted clip cards, browse kill/death timelines by round to add specific shots, deaths, or entire rounds to the recording queue.
 - **Continuous Round Recording** — Record from round start to death or round end; select multiple rounds to combine into a longer clip.
+
+> **First-run performance:** base Demo analysis and 2D replay cache generation are separate stages. The first visit to a match's 2D replay also creates the whole-match Parquet cache, round binary trajectories, and smoke/fire effect cache, so it can take longer than reopening the same match. Cache hits read the local result directly. Upgrades do not delete existing replay caches under `%APPDATA%\CS2 Insight Agent\data\cache\demo-replay`.
+
+### Training & Input Labs
+
+- **Personal Sensitivity Diagnosis** — Combines no-click flick and continuous tracking results to identify a sensitivity that is too fast, too slow, balanced, or split between flick and tracking preferences. It returns an exact adjustment percentage, a CS2-ready `sensitivity` command, and a retest range.
+- **Local CS2 CFG Prefill** — Read-only discovery of local Steam CS2 settings can prefill sensitivity, resolution, and aspect ratio. DPI and GPU scaling still require user confirmation.
+- **Magnetic-key Optimization** — Uses duplicate edges, hold jitter, A/D overlap, and direction-transition latency to recommend starting values for actuation, RT press, and RT release, followed by controlled `0.05–0.10 mm` retests.
+- **Official Matchmaking Input Safety** — Regular Rapid Trigger can shorten key reset, while Snap Tap, Rapid Tap, Snappy Tappy, SOCD/LKP, and similar automated counter-direction features should be disabled for CS2 official matchmaking.
 
 ### Auto Recording
 
@@ -84,11 +94,11 @@ This repository does not display upstream donation QR codes or solicit money on 
 
 ## Installation
 
-Download the latest `CS2 Ultimate Insight Studio_x.x.x_x64-setup.exe` from this repository's [Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases), run the installer and follow the prompts.
+Download the latest `CS2 Ultimate Insight Studio_x.x.x_x64-setup.exe` from this repository's [Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases), run the installer and follow the prompts.
 
 After installation, launch from desktop or start menu. **No browser or manual backend start is required.** The lightweight Tauri shell starts the bundled Python backend and renders the UI with the Windows system WebView2 runtime.
 
-The app does not run a background updater. Download new versions directly from [this project's Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases).
+The app does not run a background updater. Download new versions directly from [this project's Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases).
 
 > **Recommended: Installation path without Chinese characters.** e.g., `D:\CS2-Insight-Agent\` ✅, `D:\游戏工具\CS2-Insight-Agent\` ❌
 
