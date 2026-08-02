@@ -3196,7 +3196,7 @@ export default function App() {
 
   return (
     <AppShellProvider value={shell}>
-      <div className="relative flex flex-col h-screen overflow-hidden bg-cs2-bg-dark">
+      <div className="app-shell relative flex h-screen flex-col overflow-hidden bg-cs2-bg-page text-cs2-text-primary">
         <CustomTitleBar />
         <div className="relative flex flex-1 overflow-hidden">
           <FirstRunWelcome

@@ -11,6 +11,7 @@ from .sensitivity_lab import (
 )
 from .training_db import TrainingDB
 from .input_lab import InputLabRequest, analyze_input_session
+from .cs2_local_settings import discover_cs2_settings
 
 
 router = APIRouter(prefix="/api/training", tags=["training"])
@@ -36,6 +37,12 @@ async def create_sensitivity_recommendation(body: SensitivityRecommendationReque
 @router.get("/sensitivity/history")
 async def list_sensitivity_history(limit: int = Query(default=20, ge=1, le=100)):
     return {"items": await get_training_db().list_sensitivity_sessions(limit)}
+
+
+@router.get("/cs2-settings")
+async def read_local_cs2_settings():
+    """Read Steam's local CS2 cfg files without modifying them."""
+    return discover_cs2_settings()
 
 
 @router.post("/input/analyze")

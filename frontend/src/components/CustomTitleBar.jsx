@@ -22,19 +22,18 @@ export default function CustomTitleBar() {
 
   return (
     <div
-      className="flex w-full shrink-0 items-center justify-between bg-[#111111] text-white z-50"
-      style={{ height: "50px" }}
+      className="z-50 flex h-11 w-full shrink-0 items-center justify-between border-b border-cs2-border-subtle bg-cs2-bg-sidebar/88 text-cs2-text-primary backdrop-blur-2xl"
       data-tauri-drag-region
       data-testid="custom-titlebar"
     >
-      <div className="flex items-center px-4" data-tauri-drag-region>
+      <div className="flex items-center px-3.5" data-tauri-drag-region>
         <img
           src={`${import.meta.env.BASE_URL}cs2-ultimate-insight-logo.png`}
           alt="Logo"
-          className="mr-2 h-6 w-6"
+          className="mr-2 h-5 w-5"
           data-tauri-drag-region
         />
-        <span className="text-sm font-semibold" data-tauri-drag-region>CS2 Ultimate Insight Studio</span>
+        <span className="text-[12px] font-semibold tracking-[-0.01em]" data-tauri-drag-region>CS2 Ultimate Insight Studio</span>
       </div>
 
       <div className="flex h-full">
@@ -43,7 +42,7 @@ export default function CustomTitleBar() {
           aria-label="打开日志目录"
           title="打开日志目录（%APPDATA%\\CS2 Insight Agent\\data\\logs）"
           onClick={() => runWindowAction(() => API.post("config/open-logs"))}
-          className="flex h-full w-12 items-center justify-center transition-colors hover:bg-white/10"
+          className="flex h-full w-11 items-center justify-center text-cs2-text-secondary transition-[background-color,color,transform] duration-150 hover:bg-cs2-bg-hover hover:text-cs2-text-primary active:scale-[0.94]"
         >
           <FileText size={15} />
         </button>
@@ -51,7 +50,7 @@ export default function CustomTitleBar() {
           type="button"
           aria-label="Minimize"
           onClick={() => runWindowAction(() => desktopBridge.minimize())}
-          className="flex h-full w-12 items-center justify-center transition-colors hover:bg-white/10"
+          className="flex h-full w-11 items-center justify-center text-cs2-text-secondary transition-[background-color,color,transform] duration-150 hover:bg-cs2-bg-hover hover:text-cs2-text-primary active:scale-[0.94]"
         >
           <Minus size={16} />
         </button>
@@ -59,7 +58,7 @@ export default function CustomTitleBar() {
           type="button"
           aria-label="Toggle maximize"
           onClick={() => runWindowAction(() => desktopBridge.toggleMaximize())}
-          className="flex h-full w-12 items-center justify-center transition-colors hover:bg-white/10"
+          className="flex h-full w-11 items-center justify-center text-cs2-text-secondary transition-[background-color,color,transform] duration-150 hover:bg-cs2-bg-hover hover:text-cs2-text-primary active:scale-[0.94]"
         >
           {isMaximized ? <Copy size={14} /> : <Square size={14} />}
         </button>
@@ -67,7 +66,7 @@ export default function CustomTitleBar() {
           type="button"
           aria-label="Close"
           onClick={() => runWindowAction(() => desktopBridge.close())}
-          className="flex h-full w-12 items-center justify-center transition-colors hover:bg-red-600"
+          className="flex h-full w-11 items-center justify-center text-cs2-text-secondary transition-[background-color,color,transform] duration-150 hover:bg-red-500 hover:text-white active:scale-[0.94]"
         >
           <X size={16} />
         </button>

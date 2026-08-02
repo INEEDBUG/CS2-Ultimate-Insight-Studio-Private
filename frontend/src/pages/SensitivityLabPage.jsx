@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, Check, Clipboard, Crosshair, Gauge, History, Monitor, Mouse } from "lucide-react";
+import { Activity, Check, Clipboard, Crosshair, Gauge, History, Monitor, Mouse, RefreshCw, UserRound } from "lucide-react";
 import SensitivityAimArena from "../components/training/SensitivityAimArena";
-import { createSensitivityRecommendation, fetchSensitivityHistory } from "../api/trainingApi";
+import { createSensitivityRecommendation, fetchLocalCs2Settings, fetchSensitivityHistory } from "../api/trainingApi";
 import { SENSITIVITY_TRIAL_SCHEDULE } from "../utils/sensitivityLab";
 import { useT } from "../i18n/useT.js";
 
@@ -48,6 +48,11 @@ export default function SensitivityLabPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [localAccounts, setLocalAccounts] = useState([]);
+  const [selectedAccountId, setSelectedAccountId] = useState("");
+  const [localSettingsLoading, setLocalSettingsLoading] = useState(true);
+  const [localSettingsError, setLocalSettingsError] = useState("");
+  const [importedAccountId, setImportedAccountId] = useState("");
 
   const loadHistory = useCallback(() => {
     fetchSensitivityHistory(12)
@@ -56,6 +61,41 @@ export default function SensitivityLabPage() {
   }, []);
 
   useEffect(loadHistory, [loadHistory]);
+
+  const applyLocalSettings = useCallback((account) => {
+    const detected = account?.settings;
+    if (!detected) return;
+    setSetup((current) => ({
+      ...current,
+      current_sensitivity: detected.current_sensitivity ?? current.current_sensitivity,
+      game_width: detected.game_width ?? current.game_width,
+      game_height: detected.game_height ?? current.game_height,
+      display_aspect: detected.display_aspect ?? current.display_aspect,
+    }));
+    setImportedAccountId(account.account_id);
+  }, []);
+
+  const loadLocalSettings = useCallback(async () => {
+    setLocalSettingsLoading(true);
+    setLocalSettingsError("");
+    try {
+      const data = await fetchLocalCs2Settings();
+      const accounts = data.accounts || [];
+      setLocalAccounts(accounts);
+      const active = accounts.find((item) => item.account_id === data.active_account_id) || accounts[0];
+      setSelectedAccountId(active?.account_id || "");
+      if (active) applyLocalSettings(active);
+    } catch {
+      setLocalAccounts([]);
+      setLocalSettingsError(t("training.localCfgReadFailed"));
+    } finally {
+      setLocalSettingsLoading(false);
+    }
+  }, [applyLocalSettings, t]);
+
+  useEffect(() => {
+    void loadLocalSettings();
+  }, [loadLocalSettings]);
 
   function updateSetup(key, value) {
     setSetup((current) => ({ ...current, [key]: value }));
@@ -147,6 +187,46 @@ export default function SensitivityLabPage() {
             <div className="flex items-center gap-2">
               <Mouse className="h-5 w-5 text-cs2-orange" />
               <h2 className="text-base font-bold text-cs2-text-primary">{t("training.setupTitle")}</h2>
+            </div>
+            <div className="mt-4 rounded-xl border border-cs2-accent/20 bg-cs2-accent/[0.06] p-3.5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-2.5">
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-cs2-accent/15 text-cs2-accent">
+                    <UserRound className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-cs2-text-primary">{t("training.localCfgTitle")}</div>
+                    <div className="mt-0.5 text-[11px] leading-4 text-cs2-text-muted">
+                      {localSettingsLoading
+                        ? t("training.localCfgReading")
+                        : localAccounts.length
+                          ? t("training.localCfgFound", { count: localAccounts.length })
+                          : t("training.localCfgNotFound")}
+                    </div>
+                  </div>
+                </div>
+                <button type="button" onClick={() => void loadLocalSettings()} disabled={localSettingsLoading} className="inline-flex items-center gap-1.5 rounded-lg border border-cs2-border-subtle bg-cs2-bg-input px-2.5 py-1.5 text-[11px] font-semibold text-cs2-text-secondary transition-[background-color,transform] duration-150 hover:bg-cs2-bg-hover active:scale-[0.97] disabled:opacity-50">
+                  <RefreshCw className={`h-3.5 w-3.5 ${localSettingsLoading ? "animate-spin" : ""}`} />
+                  {t("training.localCfgRefresh")}
+                </button>
+              </div>
+              {localAccounts.length > 0 && (
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                  <select value={selectedAccountId} onChange={(event) => setSelectedAccountId(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-cs2-border bg-cs2-bg-input px-3 py-2 text-xs text-cs2-text-primary outline-none focus:border-cs2-accent">
+                    {localAccounts.map((account) => (
+                      <option key={account.account_id} value={account.account_id}>
+                        {account.persona_name || account.account_name || `Steam ${account.account_id}`}
+                        {account.most_recent ? ` · ${t("training.localCfgRecent")}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <button type="button" onClick={() => applyLocalSettings(localAccounts.find((account) => account.account_id === selectedAccountId))} className="rounded-lg bg-cs2-accent px-3.5 py-2 text-xs font-bold text-white transition-transform duration-150 active:scale-[0.97]">
+                    {t("training.localCfgApply")}
+                  </button>
+                </div>
+              )}
+              {importedAccountId && <div className="mt-2 text-[10px] leading-4 text-cs2-text-muted">{t("training.localCfgApplied")} · {t("training.localCfgDpiNote")}</div>}
+              {localSettingsError && <div className="mt-2 text-[11px] text-cs2-fail">{localSettingsError}</div>}
             </div>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <NumberField label={t("training.dpi")} value={setup.dpi} min={100} max={32000} suffix="DPI" onChange={(value) => updateSetup("dpi", value)} />

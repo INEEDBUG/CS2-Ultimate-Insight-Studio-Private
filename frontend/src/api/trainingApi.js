@@ -10,6 +10,11 @@ export async function fetchSensitivityHistory(limit = 20) {
   return data;
 }
 
+export async function fetchLocalCs2Settings() {
+  const { data } = await API.get("/training/cs2-settings");
+  return data;
+}
+
 export async function createInputAnalysis(payload) {
   const { data } = await API.post("/training/input/analyze", payload);
   return data;

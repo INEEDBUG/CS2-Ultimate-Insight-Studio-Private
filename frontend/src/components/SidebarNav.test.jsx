@@ -7,7 +7,11 @@ globalThis.__APP_VERSION__ = "test";
 
 vi.mock("../i18n/useT.js", () => ({ useT: () => (key) => key }));
 vi.mock("../stores/themeStore", () => ({
-  useThemeStore: (selector) => selector({ theme: "dark", toggleTheme: vi.fn() }),
+  useThemeStore: (selector) => selector({
+    mode: "system",
+    resolvedTheme: "dark",
+    setMode: vi.fn(),
+  }),
 }));
 vi.mock("../stores/replayStore", () => ({
   useReplayStore: { getState: () => ({ requestSuspendPlayback: vi.fn() }) },
