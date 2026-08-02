@@ -9,7 +9,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import httpx
 
@@ -215,7 +215,14 @@ def _decompress_download(compressed_path: Path, destination: Path) -> None:
         compressed_path.unlink(missing_ok=True)
 
 
-async def download_demo(demo_url: str, dest_dir: Path, filename: str) -> Path:
+async def download_demo(
+    demo_url: str,
+    dest_dir: Path,
+    filename: str,
+    *,
+    progress_callback: Callable[[int, int | None], None] | None = None,
+    cancel_event: asyncio.Event | None = None,
+) -> Path:
     """Download a .bz2 demo and decompress into dest_dir. Returns the .dem path."""
     dest_dir.mkdir(parents=True, exist_ok=True)
     dem_path = dest_dir / filename
@@ -228,12 +235,21 @@ async def download_demo(demo_url: str, dest_dir: Path, filename: str) -> Path:
         async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
             async with client.stream("GET", demo_url) as resp:
                 resp.raise_for_status()
+                total = int(resp.headers["content-length"]) if resp.headers.get("content-length", "").isdigit() else None
+                downloaded = 0
                 with compressed_path.open("wb") as writer:
                     async for chunk in resp.aiter_bytes(chunk_size=1024 * 1024):
+                        if cancel_event is not None and cancel_event.is_set():
+                            raise asyncio.CancelledError
                         await asyncio.to_thread(writer.write, chunk)
+                        downloaded += len(chunk)
+                        if progress_callback is not None:
+                            progress_callback(downloaded, total)
                     await asyncio.to_thread(writer.flush)
                     await asyncio.to_thread(os.fsync, writer.fileno())
 
+        if cancel_event is not None and cancel_event.is_set():
+            raise asyncio.CancelledError
         await asyncio.to_thread(_decompress_download, compressed_path, dem_path)
         return dem_path
     finally:

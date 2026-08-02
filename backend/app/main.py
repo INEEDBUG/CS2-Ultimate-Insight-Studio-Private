@@ -88,6 +88,7 @@ from .session_auth import authorize_websocket_protocols
 from .recording.api import router as recording_router
 from .lite_cut.api import router as lite_cut_router
 from .training_api import get_training_db, router as training_router
+from .demo_download_jobs import DemoDownloadJob, DemoDownloadJobManager
 from .lite_cut.db import LiteCutDB
 from .lite_cut.stream import stream_file_with_range, validate_recorded_clip_path
 from .cs2_config_backup import (
@@ -150,6 +151,7 @@ demo_db = DemoDB(DB_PATH)
 montage_db = MontageDB(DB_PATH)
 lite_cut_db = LiteCutDB(DB_PATH)
 demo_watcher: DemoWatcher | None = None
+demo_download_jobs = DemoDownloadJobManager()
 _demo_roster_locks: weakref.WeakValueDictionary[int, asyncio.Lock] = (
     weakref.WeakValueDictionary()
 )
@@ -2711,6 +2713,94 @@ async def download_match_demo_from_share_code(body: MatchShareCodeDownloadBody):
         "match_id": str(resolved.match_id),
         "share_code": resolved.share_code,
     }
+
+
+async def _run_share_code_download_job(job: DemoDownloadJob) -> dict:
+    cfg = load_config()
+    watch_paths = [p for p in cfg.demo_watch_paths if p.strip()]
+    if not watch_paths:
+        raise RuntimeError("未配置 Demo 库监听目录，请先在「Demo 库」设置监听路径")
+
+    runtime_parent = resolve_config_path().parent / "third_party" / "boiler-writter"
+    job.update(stage="resolving", progress=0.08, message="正在连接本机 Steam Game Coordinator")
+    try:
+        resolved = await resolve_valve_demo(job.share_code, runtime_parent)
+    except (InvalidShareCodeError, BoilerProcessError, BoilerRuntimeError, MatchInfoDecodeError) as exc:
+        raise RuntimeError(str(exc)) from exc
+
+    filename = f"match730_{resolved.match_id}.dem"
+    job.update(stage="downloading", progress=0.15, message="已获取真实 Valve 地址，正在下载")
+
+    def report_download(downloaded: int, total: int | None) -> None:
+        if total and total > 0:
+            progress = 0.15 + 0.68 * min(1.0, downloaded / total)
+            message = f"正在下载 {downloaded / 1048576:.1f} / {total / 1048576:.1f} MB"
+        else:
+            progress = min(0.80, 0.15 + downloaded / (256 * 1048576))
+            message = f"正在下载 {downloaded / 1048576:.1f} MB"
+        job.update(stage="downloading", progress=progress, message=message)
+
+    try:
+        dem_path = await download_demo(
+            resolved.demo_url,
+            Path(watch_paths[0]),
+            filename,
+            progress_callback=report_download,
+            cancel_event=job.cancel_event,
+        )
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(f"下载失败，HTTP {exc.response.status_code}") from exc
+    except httpx.RequestError as exc:
+        raise RuntimeError(f"下载超时或网络错误: {exc}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Demo 写入或解压失败: {exc}") from exc
+
+    job.update(stage="ingesting", progress=0.92, message="下载与解压完成，正在加入 Demo 库")
+    await _enqueue_demo_path(dem_path)
+    return {
+        "ok": True,
+        "path": str(dem_path),
+        "filename": filename,
+        "match_id": str(resolved.match_id),
+        "share_code": resolved.share_code,
+    }
+
+
+@app.post("/api/match-history/download-share-code/jobs")
+async def start_share_code_download_job(body: MatchShareCodeDownloadBody):
+    if not body.accept_gpl_sidecar:
+        raise HTTPException(400, "首次使用前请确认允许下载并运行独立的 GPL-3.0 Game Coordinator 组件")
+    cfg = load_config()
+    if not any(path.strip() for path in cfg.demo_watch_paths):
+        raise HTTPException(400, "未配置 Demo 库监听目录，请先在「Demo 库」设置监听路径")
+    return demo_download_jobs.start(body.share_code, True, _run_share_code_download_job)
+
+
+@app.get("/api/match-history/download-share-code/jobs/{job_id}")
+async def get_share_code_download_job(job_id: str):
+    snapshot = demo_download_jobs.get(job_id)
+    if snapshot is None:
+        raise HTTPException(404, "下载任务不存在或已清理")
+    return snapshot
+
+
+@app.delete("/api/match-history/download-share-code/jobs/{job_id}")
+async def cancel_share_code_download_job(job_id: str):
+    snapshot = demo_download_jobs.cancel(job_id)
+    if snapshot is None:
+        raise HTTPException(404, "下载任务不存在或已清理")
+    return snapshot
+
+
+@app.post("/api/match-history/download-share-code/jobs/{job_id}/retry")
+async def retry_share_code_download_job(job_id: str):
+    try:
+        snapshot = demo_download_jobs.retry(job_id, _run_share_code_download_job)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if snapshot is None:
+        raise HTTPException(404, "下载任务不存在或已清理")
+    return snapshot
 
 
 @app.get("/api/demos/discovered")
