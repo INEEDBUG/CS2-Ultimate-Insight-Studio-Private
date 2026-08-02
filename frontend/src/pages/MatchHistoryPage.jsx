@@ -1,7 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Trophy, RefreshCw, Download, Info, Loader2 } from "lucide-react";
-import { fetchMatchHistory, downloadMatchDemo, saveMatchCredentials } from "../api/matchHistoryApi";
+import { Trophy, RefreshCw, Download, Info, Loader2, Link2 } from "lucide-react";
+import {
+  fetchMatchHistory,
+  downloadMatchDemo,
+  downloadMatchDemoFromShareCode,
+  saveMatchCredentials,
+} from "../api/matchHistoryApi";
 import CredentialPanel from "../components/matchHistory/CredentialPanel";
 import PlayerOverviewPanel from "../components/matchHistory/PlayerOverviewPanel";
 import MatchHistoryFilterBar from "../components/matchHistory/MatchHistoryFilterBar";
@@ -68,6 +73,10 @@ export default function MatchHistoryPage() {
   const [viewMode, setViewMode] = useState("list");
   const [page, setPage] = useState(1);
   const [localLibrary, setLocalLibrary] = useState({});
+  const [shareCode, setShareCode] = useState("");
+  const [shareCodeConsent, setShareCodeConsent] = useState(false);
+  const [shareCodeBusy, setShareCodeBusy] = useState(false);
+  const [shareCodeStatus, setShareCodeStatus] = useState(null);
 
   const doFetch = useCallback(async () => {
     setLoading(true);
@@ -103,6 +112,24 @@ export default function MatchHistoryPage() {
   async function handleDownload(demoUrl, matchId, filename) {
     await downloadMatchDemo(demoUrl, matchId, filename);
     setLocalLibrary((prev) => ({ ...prev, [matchId]: true }));
+  }
+
+  async function handleShareCodeDownload(event) {
+    event.preventDefault();
+    setShareCodeBusy(true);
+    setShareCodeStatus(null);
+    try {
+      const result = await downloadMatchDemoFromShareCode(shareCode.trim(), shareCodeConsent);
+      setLocalLibrary((prev) => ({ ...prev, [result.match_id]: true }));
+      setShareCodeStatus({ ok: true, text: t("match.shareCodeSuccess", { filename: result.filename }) });
+    } catch (e) {
+      setShareCodeStatus({
+        ok: false,
+        text: e?.response?.data?.detail || t("match.shareCodeFail"),
+      });
+    } finally {
+      setShareCodeBusy(false);
+    }
   }
 
   function handleGoToLibrary() {
@@ -169,6 +196,54 @@ export default function MatchHistoryPage() {
           {t("match.demoRetentionBody", { days: 8 })}
         </span>
       </div>
+
+
+      <form
+        onSubmit={handleShareCodeDownload}
+        className="rounded-[10px] border border-cs2-border bg-cs2-surface px-4 py-4"
+      >
+        <div className="flex items-start gap-3">
+          <Link2 className="mt-0.5 h-5 w-5 shrink-0 text-cs2-accent" />
+          <div className="min-w-0 flex-1">
+            <div className="text-[14px] font-semibold text-cs2-text-primary">
+              {t("match.shareCodeTitle")}
+            </div>
+            <p className="mt-1 text-[12.5px] leading-5 text-cs2-text-secondary">
+              {t("match.shareCodeDescription")}
+            </p>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <input
+                value={shareCode}
+                onChange={(event) => setShareCode(event.target.value)}
+                placeholder={t("match.shareCodePlaceholder")}
+                className="min-w-0 flex-1 rounded-[7px] border border-cs2-border bg-cs2-bg px-3 py-2 text-[13px] text-cs2-text-primary outline-none focus:border-cs2-accent"
+              />
+              <button
+                type="submit"
+                disabled={!shareCode.trim() || !shareCodeConsent || shareCodeBusy}
+                className="flex items-center justify-center gap-1.5 rounded-[7px] bg-cs2-accent px-4 py-2 text-[13px] font-semibold text-black disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {shareCodeBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {shareCodeBusy ? t("match.shareCodeDownloading") : t("match.shareCodeDownload")}
+              </button>
+            </div>
+            <label className="mt-2 flex cursor-pointer items-start gap-2 text-[12px] leading-5 text-cs2-text-muted">
+              <input
+                type="checkbox"
+                checked={shareCodeConsent}
+                onChange={(event) => setShareCodeConsent(event.target.checked)}
+                className="mt-1"
+              />
+              <span>{t("match.shareCodeConsent")}</span>
+            </label>
+            {shareCodeStatus && (
+              <div className={`mt-2 text-[12.5px] ${shareCodeStatus.ok ? "text-cs2-success" : "text-cs2-fail"}`}>
+                {shareCodeStatus.text}
+              </div>
+            )}
+          </div>
+        </div>
+      </form>
 
       {/* Credential panel */}
       {(credOpen || !configured) && (

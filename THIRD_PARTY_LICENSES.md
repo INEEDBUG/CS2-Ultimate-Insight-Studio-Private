@@ -1,6 +1,6 @@
 # Third-Party Licenses
 
-CS2 Insight Agent 在编译与运行时依赖以下开源组件。所有依赖均使用宽松型许可证（MIT / BSD / Apache-2.0 / ISC），与本项目使用的 **PolyForm Noncommercial 1.0.0** 兼容。
+CS2 Insight Agent 在编译与运行时依赖以下开源组件。常规编译依赖主要使用 MIT / BSD / Apache-2.0 / ISC 等宽松型许可证；另有下文单独列出的可选 GPL 工具。项目主体仍使用 **PolyForm Noncommercial 1.0.0**。
 
 分发本项目编译产物（便携包 / 安装包 / Docker 镜像等）时，请保留各自的版权声明与许可证全文。具体许可证文本可在每个依赖包源码中的 `LICENSE` 文件查阅。
 
@@ -46,3 +46,8 @@ CS2 Insight Agent 在编译与运行时依赖以下开源组件。所有依赖�
 
 - **CPython Windows runtime** (installer and portable zip): sourced from the Astral `python-build-standalone` project (`install_only` tarball), Python Software Foundation license. See `packaging/windows/python-runtime.json` for the pinned URL.
 - **Optional FFmpeg** (GPL): when the user selects the matching Inno task, the installer downloads `ffmpeg-8.1.1-essentials_build.zip` from the GyanD `codexffmpeg` GitHub release (see `packaging/windows/ffmpeg-redist.json`). FFmpeg is a trademark of the FFmpeg project.
+- **Optional @akiver/boiler-writter 1.7.0** (GPL-3.0): downloaded from the npm registry only after the user explicitly accepts the first-use notice. It remains an unmodified, separately executed Windows helper used to ask the locally signed-in Steam Game Coordinator for the real demo URL. Its package integrity is pinned by SHA-512, and its complete license is installed next to the executable. Source: https://github.com/akiver/boiler-writter
+
+## Adapted source
+
+- The match share-code decoder in `backend/app/valve_demo_resolver.py` is a Python adaptation of `akiver/csgo-sharecode` (MIT). Source: https://github.com/akiver/csgo-sharecode. The required notice is retained in `third_party/licenses/csgo-sharecode-LICENSE.txt`.
