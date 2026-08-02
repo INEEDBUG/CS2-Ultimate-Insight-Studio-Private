@@ -85,7 +85,7 @@
 
 ## 安装
 
-前往本仓库的 [Releases 页面](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases) 下载最新的 `CS2 Ultimate Insight Studio_x.x.x_x64-setup.exe`，双击运行安装包，按提示完成安装。
+前往本仓库的 [Releases 页面](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases) 下载最新的 `CS2 Ultimate Insight Studio_x.x.x_x64-setup.exe`，双击运行安装包，按提示完成安装。
 
 安装完成后从桌面或开始菜单启动程序，**无需打开浏览器，无需手动启动后端**。轻量 Tauri 桌面壳会自动启动内嵌 Python 后端，并使用 Windows 系统 WebView2 显示界面。
 
@@ -99,7 +99,7 @@
 工具链使用 `pnpm`/`pnpm-lock.yaml`，Rust 桌面壳使用 `cargo`/`Cargo.lock`；
 OBS 与 FFmpeg 仍由各自的运行时集成管理。
 
-当前不运行后台自动更新器；需要升级时，请直接从[本项目 Releases 页面](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases)下载新版安装包。
+当前不运行后台自动更新器；需要升级时，请直接从[本项目 Releases 页面](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases)下载新版安装包。
 
 > **建议安装路径不含中文字符。** 例如 `D:\CS2-Insight-Agent\` ✅，`D:\游戏工具\CS2-Insight-Agent\` ❌
 
