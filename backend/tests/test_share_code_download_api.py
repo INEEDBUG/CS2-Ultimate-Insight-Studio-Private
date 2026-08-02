@@ -118,3 +118,19 @@ def test_share_code_download_job_endpoint_rejects_missing_consent():
         asyncio.run(main.start_share_code_download_job(body))
 
     assert exc_info.value.status_code == 400
+
+
+@pytest.mark.parametrize("status_code", [403, 404, 410])
+def test_valve_expired_download_status_has_actionable_diagnosis(status_code):
+    status, message = main._valve_demo_download_http_error(status_code)
+
+    assert status == 410
+    assert "可能已经过期" in message
+
+
+@pytest.mark.parametrize("status_code", [429, 500, 503])
+def test_valve_busy_download_status_is_retryable(status_code):
+    status, message = main._valve_demo_download_http_error(status_code)
+
+    assert status == 503
+    assert "稍后重试" in message
