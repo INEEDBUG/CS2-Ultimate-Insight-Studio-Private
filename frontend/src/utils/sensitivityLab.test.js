@@ -1,0 +1,45 @@
+import { describe, expect, it } from "vitest";
+import {
+  SENSITIVITY_TRIAL_SCHEDULE,
+  makeFlickTrialResult,
+  makeTrackingTrialResult,
+  pointDistance,
+} from "./sensitivityLab";
+
+describe("sensitivityLab", () => {
+  it("covers flick and tracking at every candidate multiplier", () => {
+    for (const multiplier of [0.8, 1, 1.2]) {
+      const kinds = SENSITIVITY_TRIAL_SCHEDULE
+        .filter((trial) => trial.multiplier === multiplier)
+        .map((trial) => trial.kind);
+      expect(kinds).toEqual(["flick", "tracking"]);
+    }
+  });
+
+  it("calculates touch-trigger flick metrics", () => {
+    const result = makeFlickTrialResult({
+      multiplier: 1,
+      durationMs: 15_000,
+      reactions: [300, 500],
+      efficiencies: [0.8, 1],
+      overshoots: 1,
+    });
+    expect(result.hits).toBe(2);
+    expect(result.targets).toBe(3);
+    expect(result.average_reaction_ms).toBe(400);
+    expect(result.path_efficiency).toBeCloseTo(0.9);
+  });
+
+  it("clamps tracking ratios and distance scoring", () => {
+    const result = makeTrackingTrialResult({
+      multiplier: 1.2,
+      durationMs: 10_000,
+      onTargetMs: 12_000,
+      distanceSamples: [0.1, 0.3],
+      overshoots: 2,
+    });
+    expect(result.on_target_ratio).toBe(1);
+    expect(result.path_efficiency).toBeCloseTo(0.8);
+    expect(pointDistance({ x: 0, y: 0 }, { x: 3, y: 4 })).toBe(5);
+  });
+});
