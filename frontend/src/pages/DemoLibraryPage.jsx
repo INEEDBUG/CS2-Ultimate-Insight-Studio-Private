@@ -3,7 +3,6 @@ import API from "../api/api";
 import { LayoutGrid, List } from "lucide-react";
 import PageContainer from "../components/PageContainer";
 import { useAppShell } from "../context/AppShellContext";
-import { useRecordingQueue } from "../stores/recordingQueueStore";
 import DemoAdvancedFilters from "../components/demoLibrary/DemoAdvancedFilters";
 import DemoBatchActionBar from "../components/demoLibrary/DemoBatchActionBar";
 import DemoLibraryQueryBar from "../components/demoLibrary/DemoLibraryQueryBar";
@@ -11,7 +10,6 @@ import DemoLibraryToolbar from "../components/demoLibrary/DemoLibraryToolbar";
 import DemoWatchPathsModal from "../components/demoLibrary/DemoWatchPathsModal";
 import DemoPagination from "../components/demoLibrary/DemoPagination";
 import MatchCard, { MatchListRow } from "../components/MatchCard";
-import DemoInfoModal from "../components/DemoInfoModal";
 import IngestModal from "../components/IngestModal";
 import Modal from "../components/ui/Modal";
 import Button from "../components/ui/Button";
@@ -44,34 +42,19 @@ const INITIAL_ADV_FILTERS = {
 export default function DemoLibraryPage() {
   const t = useT();
   const s = useAppShell();
-  const addToQueue = useRecordingQueue((st) => st.addToQueue);
-  const removeByClientClipUid = useRecordingQueue((st) => st.removeByClientClipUid);
-  const queue = useRecordingQueue((st) => st.queue);
-
   const [viewMode, setViewMode] = useState("grid"); // "grid" | "list"
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [sortKey, setSortKey] = useState("library");
   const [sortDir, setSortDir] = useState("desc");
   const [watchPathsModalOpen, setWatchPathsModalOpen] = useState(false);
-  const [demoInfoModalId, setDemoInfoModalId] = useState(null);
   const [ingestModalOpen, setIngestModalOpen] = useState(false);
   const [batchDeleteCount, setBatchDeleteCount] = useState(0);
   const { requestPlayDemo, DemoPlaybackUi } = useDemoPlaybackDialog();
-
-  const queuedClientClipUids = useMemo(
-    () => new Set(queue.map((q) => q.clientClipUid).filter(Boolean)),
-    [queue]
-  );
 
   const expectedPlayers = useMemo(() => {
     const raw = s.expectedParsePlayersText || "";
     return raw.split(/[\n,]+/).map((p) => p.trim()).filter(Boolean);
   }, [s.expectedParsePlayersText]);
-
-  const handleAddToQueue = useCallback((clips) => {
-    if (!clips?.length) return;
-    addToQueue(clips);
-  }, [addToQueue]);
 
   const handleBatchIngest = useCallback(async (ids) => {
     const { data } = await API.post("/demos/batch-ingest", { demo_ids: ids });
@@ -96,6 +79,10 @@ export default function DemoLibraryPage() {
     const label = (item?.display_name && String(item.display_name).trim()) || item?.filename || `#${demoId}`;
     void requestPlayDemo({ id: demoId, label });
   }, [requestPlayDemo, s.demoLibraryItems]);
+
+  const handleOpenAnalysis = useCallback((demoId) => {
+    void s.handleLoadSelectedLibraryDemos([demoId]);
+  }, [s.handleLoadSelectedLibraryDemos]);
 
   const handleOpenFile = useCallback(
     async (demoId) => {
@@ -314,7 +301,7 @@ export default function DemoLibraryPage() {
                   onOpenFile={handleOpenFile}
                   onDelete={(id, filename) => s.setLibraryDeletePrompt({ id, label: filename || `#${id}` })}
                   onUpdateRemark={handleUpdateRemark}
-                  onOpenInfo={(id) => setDemoInfoModalId(id)}
+                  onOpenInfo={handleOpenAnalysis}
                   expectedPlayers={expectedPlayers}
                 />
               ))}
@@ -337,7 +324,7 @@ export default function DemoLibraryPage() {
                   onOpenFile={handleOpenFile}
                   onDelete={(id, filename) => s.setLibraryDeletePrompt({ id, label: filename || `#${id}` })}
                   onUpdateRemark={handleUpdateRemark}
-                  onOpenInfo={(id) => setDemoInfoModalId(id)}
+                  onOpenInfo={handleOpenAnalysis}
                   expectedPlayers={expectedPlayers}
                 />
               ))}
@@ -526,19 +513,6 @@ export default function DemoLibraryPage() {
           </div>
         </div>
       ) : null}
-
-      <DemoInfoModal
-        open={demoInfoModalId !== null}
-        onClose={() => setDemoInfoModalId(null)}
-        demoId={demoInfoModalId}
-        onAddToQueue={handleAddToQueue}
-        onEnqueueNotice={(msg, meta) => s.setProgressText(msg, meta)}
-        expectedPlayers={expectedPlayers}
-        aiMode={s.aiMode}
-        queuedClientClipUids={queuedClientClipUids}
-        queueLength={queue.length}
-        onDequeue={removeByClientClipUid}
-      />
 
       <IngestModal
         isOpen={ingestModalOpen}

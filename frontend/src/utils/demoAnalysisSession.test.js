@@ -1,5 +1,9 @@
 import { describe, expect, test, vi } from "vitest";
-import { demoAnalysisSessionIdentity, resetDemoAnalysisDefaultView } from "./demoAnalysisSession";
+import {
+  demoAnalysisSessionIdentity,
+  resetDemoAnalysisDefaultView,
+  setDemoAnalysisDefaultView,
+} from "./demoAnalysisSession";
 
 describe("demoAnalysisSession", () => {
   test("resets a Demo-library re-entry to Highlights", () => {
@@ -10,6 +14,18 @@ describe("demoAnalysisSession", () => {
 
     expect(storage.removeItem).toHaveBeenCalledWith(
       `cs2-session-demo-analysis:${demoAnalysisSessionIdentity(demo)}:tab`,
+    );
+  });
+
+  test("opens a freshly parsed Demo directly on 2D replay", () => {
+    const storage = { setItem: vi.fn() };
+    const demo = { id: 7, path: "C:/demos/cached.dem" };
+
+    setDemoAnalysisDefaultView([demo], "replay", storage);
+
+    expect(storage.setItem).toHaveBeenCalledWith(
+      `cs2-session-demo-analysis:${demoAnalysisSessionIdentity(demo)}:tab`,
+      JSON.stringify("replay"),
     );
   });
 });

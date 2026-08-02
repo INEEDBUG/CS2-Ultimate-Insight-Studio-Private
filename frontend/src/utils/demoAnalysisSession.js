@@ -17,3 +17,15 @@ export function resetDemoAnalysisDefaultView(demos, storage = globalThis.session
     storage.removeItem(`${SESSION_PREFIX}demo-analysis:${identity}:tab`);
   }
 }
+
+export function setDemoAnalysisDefaultView(demos, view = "replay", storage = globalThis.sessionStorage) {
+  if (!storage) return;
+  const normalizedView = String(view || "replay").trim() || "replay";
+  for (const [index, demo] of (Array.isArray(demos) ? demos : [demos]).entries()) {
+    const identity = demoAnalysisSessionIdentity(demo, `demo-${index}`);
+    storage.setItem(
+      `${SESSION_PREFIX}demo-analysis:${identity}:tab`,
+      JSON.stringify(normalizedView),
+    );
+  }
+}

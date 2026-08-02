@@ -38,7 +38,7 @@ import {
   demoBatchFailureMessage,
   normalizeDemoBatchFailures,
 } from "./utils/demoBatchFailures";
-import { resetDemoAnalysisDefaultView } from "./utils/demoAnalysisSession";
+import { setDemoAnalysisDefaultView } from "./utils/demoAnalysisSession";
 import {
   recordingAbortToastKind,
   recordingQueueHadUnexpectedCs2Exit,
@@ -701,9 +701,9 @@ export default function App() {
           };
         })
       );
-      // A fresh selection from the Demo library is a new analysis entry. Keep
-      // in-page navigation restorable, but always enter this flow on Highlights.
-      resetDemoAnalysisDefaultView(loaded);
+      // A fresh Demo analysis should surface the most spatially useful result
+      // immediately. The loading gate remains visible until parsing is complete.
+      setDemoAnalysisDefaultView(loaded, "replay");
       setUploadedDemos(loaded);
       setParsedMatches(
         loaded.map((d) => {
@@ -833,8 +833,10 @@ export default function App() {
     }
   }, [navigate, t]);
 
-  const handleLoadSelectedLibraryDemos = useCallback(async () => {
-    const ids = Array.from(selectedLibraryDemoIds);
+  const handleLoadSelectedLibraryDemos = useCallback(async (requestedIds = null) => {
+    const ids = Array.isArray(requestedIds)
+      ? requestedIds.map(Number).filter(Number.isFinite)
+      : Array.from(selectedLibraryDemoIds);
     if (!ids.length) return;
     setLibraryLoadingOverlay(true);
     setLibraryLoadingText(t("app.libraryLoadingDemo"));
@@ -1129,6 +1131,7 @@ export default function App() {
         return;
       }
       setUploadedDemos(uploads);
+      setDemoAnalysisDefaultView(uploads, "replay");
       setParsedMatches(uploads.map(() => null));
       setLibraryDemoIdsByIndex({});
       setCurrentMatchIndex(0);
