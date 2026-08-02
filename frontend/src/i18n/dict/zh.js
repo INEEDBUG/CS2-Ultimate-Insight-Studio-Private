@@ -2047,7 +2047,7 @@ export default {
   "match.shareCodeConsent": "我同意首次使用时从 npm 下载并运行独立的 @akiver/boiler-writter 1.7.0 组件（GPL-3.0）；组件只用于和本机 Steam Game Coordinator 通信。",
   "match.shareCodeDownload": "解析并下载",
   "match.shareCodeDownloading": "正在解析…",
-  "match.shareCodeSuccess": "已下载 {filename}，正在加入 Demo 库。",
+  "match.shareCodeSuccess": "已下载 {filename} 并加入 Demo 库。",
   "match.shareCodeFail": "无法通过分享代码下载 Demo",
   "match.shareCodePollFail": "无法获取下载进度，请稍后重试。",
   "match.shareCodeCancelFail": "无法取消下载任务。",
