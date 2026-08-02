@@ -35,6 +35,7 @@ export default {
   "nav.sectionWorkflow": "Workflow",
   "nav.guide": "Getting Started",
   "nav.demoLibrary": "Demo Library",
+  "nav.officialDemos": "Official Demo Download",
   "nav.analysis": "Analysis",
   "nav.recordQueue": "Record Queue",
   "nav.montage": "Montage Studio",
