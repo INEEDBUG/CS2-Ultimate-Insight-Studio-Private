@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Trophy, RefreshCw, Download, Info, Loader2, Link2 } from "lucide-react";
+import { Trophy, RefreshCw, Download, Info, Loader2, Link2, RotateCcw, X } from "lucide-react";
 import {
   fetchMatchHistory,
   downloadMatchDemo,
-  downloadMatchDemoFromShareCode,
-  saveMatchCredentials,
+  startShareCodeDownloadJob,
+  fetchShareCodeDownloadJob,
+  cancelShareCodeDownloadJob,
+  retryShareCodeDownloadJob,
 } from "../api/matchHistoryApi";
 import CredentialPanel from "../components/matchHistory/CredentialPanel";
 import PlayerOverviewPanel from "../components/matchHistory/PlayerOverviewPanel";
@@ -75,8 +77,8 @@ export default function MatchHistoryPage() {
   const [localLibrary, setLocalLibrary] = useState({});
   const [shareCode, setShareCode] = useState("");
   const [shareCodeConsent, setShareCodeConsent] = useState(false);
-  const [shareCodeBusy, setShareCodeBusy] = useState(false);
-  const [shareCodeStatus, setShareCodeStatus] = useState(null);
+  const [shareCodeJob, setShareCodeJob] = useState(null);
+  const [shareCodeError, setShareCodeError] = useState("");
 
   const doFetch = useCallback(async () => {
     setLoading(true);
@@ -103,6 +105,36 @@ export default function MatchHistoryPage() {
     }).catch(() => setCredOpen(true));
   }, [doFetch]);
 
+  useEffect(() => {
+    if (!shareCodeJob?.job_id || shareCodeJob.status !== "running") return undefined;
+
+    let active = true;
+    let timer;
+    const poll = async () => {
+      try {
+        const next = await fetchShareCodeDownloadJob(shareCodeJob.job_id);
+        if (!active) return;
+        setShareCodeError("");
+        setShareCodeJob(next);
+        if (next.status === "complete" && next.result?.match_id) {
+          setLocalLibrary((prev) => ({ ...prev, [next.result.match_id]: true }));
+        } else if (next.status === "running") {
+          timer = window.setTimeout(poll, 500);
+        }
+      } catch (error) {
+        if (!active) return;
+        setShareCodeError(error?.response?.data?.detail || t("match.shareCodePollFail"));
+        timer = window.setTimeout(poll, 1500);
+      }
+    };
+
+    timer = window.setTimeout(poll, 350);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [shareCodeJob?.job_id, shareCodeJob?.status, t]);
+
   async function handleCredSaved() {
     const { data: cfg } = await API.get("/config");
     setConfig(cfg);
@@ -116,19 +148,31 @@ export default function MatchHistoryPage() {
 
   async function handleShareCodeDownload(event) {
     event.preventDefault();
-    setShareCodeBusy(true);
-    setShareCodeStatus(null);
+    setShareCodeError("");
     try {
-      const result = await downloadMatchDemoFromShareCode(shareCode.trim(), shareCodeConsent);
-      setLocalLibrary((prev) => ({ ...prev, [result.match_id]: true }));
-      setShareCodeStatus({ ok: true, text: t("match.shareCodeSuccess", { filename: result.filename }) });
+      const job = await startShareCodeDownloadJob(shareCode.trim(), shareCodeConsent);
+      setShareCodeJob(job);
     } catch (e) {
-      setShareCodeStatus({
-        ok: false,
-        text: e?.response?.data?.detail || t("match.shareCodeFail"),
-      });
-    } finally {
-      setShareCodeBusy(false);
+      setShareCodeError(e?.response?.data?.detail || t("match.shareCodeFail"));
+    }
+  }
+
+  async function handleCancelShareCodeDownload() {
+    if (!shareCodeJob?.job_id) return;
+    try {
+      setShareCodeJob(await cancelShareCodeDownloadJob(shareCodeJob.job_id));
+    } catch (e) {
+      setShareCodeError(e?.response?.data?.detail || t("match.shareCodeCancelFail"));
+    }
+  }
+
+  async function handleRetryShareCodeDownload() {
+    if (!shareCodeJob?.job_id) return;
+    setShareCodeError("");
+    try {
+      setShareCodeJob(await retryShareCodeDownloadJob(shareCodeJob.job_id));
+    } catch (e) {
+      setShareCodeError(e?.response?.data?.detail || t("match.shareCodeRetryFail"));
     }
   }
 
@@ -146,6 +190,8 @@ export default function MatchHistoryPage() {
   const pageMatches = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const configured = !!(config?.steam_api_key);
+  const shareCodeBusy = shareCodeJob?.status === "running";
+  const shareCodeProgress = Math.round((shareCodeJob?.progress ?? 0) * 100);
 
   return (
     <div className="flex flex-col gap-5 p-7">
@@ -236,10 +282,43 @@ export default function MatchHistoryPage() {
               />
               <span>{t("match.shareCodeConsent")}</span>
             </label>
-            {shareCodeStatus && (
-              <div className={`mt-2 text-[12.5px] ${shareCodeStatus.ok ? "text-cs2-success" : "text-cs2-fail"}`}>
-                {shareCodeStatus.text}
+            {shareCodeJob && (
+              <div className="mt-3 rounded-[8px] border border-cs2-border bg-cs2-bg/70 px-3 py-3">
+                <div className="flex items-center justify-between gap-3 text-[12.5px]">
+                  <span className={shareCodeJob.status === "complete" ? "text-cs2-success" : shareCodeJob.status === "failed" ? "text-cs2-fail" : "text-cs2-text-secondary"}>
+                    {shareCodeJob.status === "complete"
+                      ? t("match.shareCodeSuccess", { filename: shareCodeJob.result?.filename || "Demo" })
+                      : t(`match.shareCodeStage.${shareCodeJob.stage}`)}
+                  </span>
+                  <span className="shrink-0 tabular-nums text-cs2-text-muted">{shareCodeProgress}%</span>
+                </div>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-cs2-border">
+                  <div
+                    className={`h-full rounded-full transition-[width] duration-300 ${shareCodeJob.status === "failed" ? "bg-cs2-fail" : "bg-cs2-accent"}`}
+                    style={{ width: `${shareCodeProgress}%` }}
+                  />
+                </div>
+                {(shareCodeJob.error || shareCodeError) && (
+                  <div className="mt-2 text-[12px] text-cs2-fail">{shareCodeJob.error || shareCodeError}</div>
+                )}
+                <div className="mt-2 flex gap-2">
+                  {shareCodeJob.status === "running" && (
+                    <button type="button" onClick={handleCancelShareCodeDownload} className="flex items-center gap-1 rounded-[6px] border border-cs2-border px-2.5 py-1 text-[12px] text-cs2-text-secondary hover:text-cs2-text-primary">
+                      <X className="h-3.5 w-3.5" />
+                      {t("match.shareCodeCancel")}
+                    </button>
+                  )}
+                  {["failed", "cancelled"].includes(shareCodeJob.status) && (
+                    <button type="button" onClick={handleRetryShareCodeDownload} className="flex items-center gap-1 rounded-[6px] border border-cs2-accent/40 px-2.5 py-1 text-[12px] text-cs2-accent hover:bg-cs2-accent/10">
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      {t("match.shareCodeRetry")}
+                    </button>
+                  )}
+                </div>
               </div>
+            )}
+            {!shareCodeJob && shareCodeError && (
+              <div className="mt-2 text-[12.5px] text-cs2-fail">{shareCodeError}</div>
             )}
           </div>
         </div>

@@ -23,6 +23,29 @@ export async function downloadMatchDemoFromShareCode(share_code, accept_gpl_side
   return data;
 }
 
+export async function startShareCodeDownloadJob(share_code, accept_gpl_sidecar) {
+  const { data } = await API.post("/match-history/download-share-code/jobs", {
+    share_code,
+    accept_gpl_sidecar,
+  });
+  return data;
+}
+
+export async function fetchShareCodeDownloadJob(jobId) {
+  const { data } = await API.get(`/match-history/download-share-code/jobs/${jobId}`);
+  return data;
+}
+
+export async function cancelShareCodeDownloadJob(jobId) {
+  const { data } = await API.delete(`/match-history/download-share-code/jobs/${jobId}`);
+  return data;
+}
+
+export async function retryShareCodeDownloadJob(jobId) {
+  const { data } = await API.post(`/match-history/download-share-code/jobs/${jobId}/retry`);
+  return data;
+}
+
 export function saveMatchCredentials(steam_api_key, steam_id64, match_mode, match_count) {
   return API.put("/config", { steam_api_key, steam_id64, match_mode, match_count });
 }
