@@ -2046,7 +2046,7 @@ export default {
   "match.shareCodeConsent": "I agree to the first-use download and execution of the separate @akiver/boiler-writter 1.7.0 component (GPL-3.0), used only to communicate with the local Steam Game Coordinator.",
   "match.shareCodeDownload": "Resolve & download",
   "match.shareCodeDownloading": "Resolving…",
-  "match.shareCodeSuccess": "Downloaded {filename}; adding it to the Demo Library.",
+  "match.shareCodeSuccess": "Downloaded {filename} and added it to the Demo Library.",
   "match.shareCodeFail": "Could not download the demo from this share code",
   "match.shareCodePollFail": "Could not refresh download progress. Please try again.",
   "match.shareCodeCancelFail": "Could not cancel the download job.",
