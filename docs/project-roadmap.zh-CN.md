@@ -96,3 +96,19 @@
 验证：
 
 - 前端全套 589 项测试通过，生产构建通过。
+
+## 2026-08-02：阶段 6 — 私人 Windows 发布候选
+
+已完成：
+
+- 本机未安装 Rust/MSVC；为避免占用 C 盘，将正式构建迁移到 GitHub 托管的 Windows runner。
+- `Release Windows` 支持手动输入候选版本，手动运行只上传私人 artifact，不创建公开 Release。
+- 安装包品牌更新为 `CS2 Ultimate Insight Studio`，并停用原项目 R2 自动更新通道。
+- 已生成 `0.1.0-rc.1`：安装包 39,185,971 字节，内嵌 resources 87.19 MiB。
+- 本机 D 盘复核 SHA-256：`48fd15f0f227ba78c9d9dc82caf96f526b7863020dd094f19e48cf7dc85aac30`，与云端 `SHA256SUMS` 一致。
+
+验证：
+
+- 后端 695 项、前端 590 项、Rust fmt/clippy/tests、内嵌 Python 导入、NSIS 生成和体积预算全部通过。
+- 候选包未配置 Authenticode，当前仅用于私人验收；正式公开前必须补签名与独立更新通道。
+- 详见 [`private-release-candidate.zh-CN.md`](./private-release-candidate.zh-CN.md)。
