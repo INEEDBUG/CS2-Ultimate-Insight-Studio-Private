@@ -40,6 +40,26 @@ class TrainingDB:
                 "CREATE INDEX IF NOT EXISTS idx_sensitivity_sessions_created "
                 "ON sensitivity_sessions(created_at DESC, id DESC)",
             )
+            await conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS input_lab_sessions (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at     TEXT NOT NULL,
+                    keyboard_name  TEXT NOT NULL,
+                    mode           TEXT NOT NULL,
+                    actuation_mm   REAL NOT NULL,
+                    rt_press_mm    REAL NOT NULL,
+                    rt_release_mm  REAL NOT NULL,
+                    stability_score REAL NOT NULL,
+                    request_json   TEXT NOT NULL,
+                    result_json    TEXT NOT NULL
+                )
+                """,
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_input_lab_sessions_created "
+                "ON input_lab_sessions(created_at DESC, id DESC)",
+            )
             await conn.commit()
 
     async def save_sensitivity_session(
@@ -107,3 +127,57 @@ class TrainingDB:
                 "cm_per_360": result.get("cm_per_360"),
             })
         return output
+
+    async def save_input_session(self, request: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+        created_at = utc_now_iso()
+        async with aiosqlite.connect(self.db_path) as conn:
+            cursor = await conn.execute(
+                """
+                INSERT INTO input_lab_sessions(
+                    created_at, keyboard_name, mode, actuation_mm, rt_press_mm,
+                    rt_release_mm, stability_score, request_json, result_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    created_at,
+                    str(request["keyboard_name"]),
+                    str(request["mode"]),
+                    float(request["actuation_mm"]),
+                    float(request["rapid_trigger_press_mm"]),
+                    float(request["rapid_trigger_release_mm"]),
+                    float(result["stability_score"]),
+                    json.dumps(request, ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(result, ensure_ascii=False, separators=(",", ":")),
+                ),
+            )
+            await conn.commit()
+            return {"id": int(cursor.lastrowid), "created_at": created_at, **result}
+
+    async def list_input_sessions(self, limit: int = 20) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            cursor = await conn.execute(
+                """
+                SELECT id, created_at, keyboard_name, mode, actuation_mm,
+                       rt_press_mm, rt_release_mm, stability_score, result_json
+                FROM input_lab_sessions
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (max(1, min(int(limit), 100)),),
+            )
+            rows = await cursor.fetchall()
+        return [
+            {
+                "id": int(row["id"]),
+                "created_at": str(row["created_at"]),
+                "keyboard_name": str(row["keyboard_name"]),
+                "mode": str(row["mode"]),
+                "actuation_mm": float(row["actuation_mm"]),
+                "rapid_trigger_press_mm": float(row["rt_press_mm"]),
+                "rapid_trigger_release_mm": float(row["rt_release_mm"]),
+                "stability_score": float(row["stability_score"]),
+                **json.loads(str(row["result_json"])),
+            }
+            for row in rows
+        ]

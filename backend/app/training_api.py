@@ -10,6 +10,7 @@ from .sensitivity_lab import (
     recommend_sensitivity,
 )
 from .training_db import TrainingDB
+from .input_lab import InputLabRequest, analyze_input_session
 
 
 router = APIRouter(prefix="/api/training", tags=["training"])
@@ -35,3 +36,17 @@ async def create_sensitivity_recommendation(body: SensitivityRecommendationReque
 @router.get("/sensitivity/history")
 async def list_sensitivity_history(limit: int = Query(default=20, ge=1, le=100)):
     return {"items": await get_training_db().list_sensitivity_sessions(limit)}
+
+
+@router.post("/input/analyze")
+async def create_input_analysis(body: InputLabRequest):
+    result = analyze_input_session(body)
+    return await get_training_db().save_input_session(
+        body.model_dump(mode="json"),
+        result.model_dump(mode="json"),
+    )
+
+
+@router.get("/input/history")
+async def list_input_history(limit: int = Query(default=20, ge=1, le=100)):
+    return {"items": await get_training_db().list_input_sessions(limit)}
