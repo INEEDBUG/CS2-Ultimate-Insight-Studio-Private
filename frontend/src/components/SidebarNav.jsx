@@ -8,6 +8,7 @@ import {
   Settings,
   Sun,
   Moon,
+  Crosshair,
 } from "lucide-react";
 import { useThemeStore } from "../stores/themeStore";
 import { useReplayStore } from "../stores/replayStore";
@@ -86,6 +87,10 @@ export default function SidebarNav({ queueLength = 0, disabled = false }) {
         >
           <Clapperboard className="h-4 w-4 shrink-0 opacity-90 text-amber-400" />
           LiteCut
+        </NavLink>
+        <NavLink to="/sensitivity-lab" className={({ isActive }) => `${linkBase} ${isActive ? linkActive : linkIdle}`}>
+          <Crosshair className="h-4 w-4 shrink-0 text-cs2-orange" />
+          {t("nav.sensitivityLab")}
         </NavLink>
       </nav>
 

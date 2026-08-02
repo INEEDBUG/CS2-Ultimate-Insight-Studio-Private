@@ -87,6 +87,7 @@ from .obs_bootstrap import ObsBootstrapRequest, bootstrap_obs_environment
 from .session_auth import authorize_websocket_protocols
 from .recording.api import router as recording_router
 from .lite_cut.api import router as lite_cut_router
+from .training_api import get_training_db, router as training_router
 from .lite_cut.db import LiteCutDB
 from .lite_cut.stream import stream_file_with_range, validate_recorded_clip_path
 from .cs2_config_backup import (
@@ -299,6 +300,7 @@ async def lifespan(_: FastAPI):
     await demo_db.init_db()
     await montage_db.init_tables()
     await lite_cut_db.init_tables()
+    await get_training_db().init_tables()
     stale_lite_cut_outputs = await lite_cut_db.recover_interrupted_exports()
     if stale_lite_cut_outputs:
         from .lite_cut.export_preflight import cleanup_stale_export_artifacts
@@ -343,6 +345,7 @@ app = FastAPI(title="CS2 Insight Agent", version=APP_VERSION, lifespan=lifespan)
 
 app.include_router(recording_router)
 app.include_router(lite_cut_router)
+app.include_router(training_router)
 
 app.add_middleware(
     CORSMiddleware,
