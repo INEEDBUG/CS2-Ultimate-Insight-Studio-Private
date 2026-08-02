@@ -39,6 +39,33 @@
 
 ## 核心功能
 
+### 功能截图
+
+以下截图来自当前桌面端源码的本地演示环境。演示账号与空数据状态仅用于展示界面，不包含真实 SteamID、比赛记录或本机路径。点击图片可查看原图。
+
+<table>
+  <tr>
+    <td width="50%" align="center"><b>上手指南</b><br><a href="./docs/screenshots/getting-started.png"><img src="./docs/screenshots/getting-started.png" alt="上手指南" width="100%"></a></td>
+    <td width="50%" align="center"><b>本地 Demo 库</b><br><a href="./docs/screenshots/demo-library.png"><img src="./docs/screenshots/demo-library.png" alt="本地 Demo 库" width="100%"></a></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><b>官匹 Demo 下载</b><br><a href="./docs/screenshots/official-demo-download.png"><img src="./docs/screenshots/official-demo-download.png" alt="官匹 Demo 下载" width="100%"></a></td>
+    <td width="50%" align="center"><b>Demo 解析分析</b><br><a href="./docs/screenshots/demo-analysis.png"><img src="./docs/screenshots/demo-analysis.png" alt="Demo 解析分析" width="100%"></a></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><b>OBS 录制队列</b><br><a href="./docs/screenshots/recording-queue.png"><img src="./docs/screenshots/recording-queue.png" alt="OBS 录制队列" width="100%"></a></td>
+    <td width="50%" align="center"><b>合辑工作台</b><br><a href="./docs/screenshots/montage-workbench.png"><img src="./docs/screenshots/montage-workbench.png" alt="合辑工作台" width="100%"></a></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><b>LiteCut 剪辑器</b><br><a href="./docs/screenshots/litecut.png"><img src="./docs/screenshots/litecut.png" alt="LiteCut 剪辑器" width="100%"></a></td>
+    <td width="50%" align="center"><b>灵敏度实验室与本地 Steam CFG 预填</b><br><a href="./docs/screenshots/sensitivity-lab.png"><img src="./docs/screenshots/sensitivity-lab.png" alt="灵敏度实验室与本地 Steam CFG 预填" width="100%"></a></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><b>磁轴输入实验室</b><br><a href="./docs/screenshots/magnetic-input-lab.png"><img src="./docs/screenshots/magnetic-input-lab.png" alt="磁轴输入实验室" width="100%"></a></td>
+    <td width="50%" align="center"><b>设置中心与昼夜模式</b><br><a href="./docs/screenshots/settings.png"><img src="./docs/screenshots/settings.png" alt="设置中心与昼夜模式" width="100%"></a></td>
+  </tr>
+</table>
+
 ### Demo 库维护
 
 - **本地库记录展示** — 列表、缩略图展示 Demo 的比赛来源、记分板、关注玩家、展示名、备注等关键信息。
