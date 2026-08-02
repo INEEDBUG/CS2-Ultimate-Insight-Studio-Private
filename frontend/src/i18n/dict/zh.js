@@ -811,7 +811,7 @@ export default {
   "settings.btnUpdate": "立即更新",
   "settings.btnCheckUpdates": "检查更新",
   "settings.btnCheckUpdatesLong": "检查版本更新",
-  "settings.updateDevModeError": "开发模式下不支持检查更新",
+  "settings.updateDevModeError": "私人定制版已停用原项目自动更新，请从私人 GitHub 构建记录获取新版。",
   "settings.updateChecking": "正在检查更新...",
   // FFmpeg & montage card
   "settings.cardFfmpeg": "FFmpeg 与合辑",

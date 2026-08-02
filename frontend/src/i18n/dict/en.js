@@ -810,7 +810,7 @@ export default {
   "settings.btnUpdate": "Update now",
   "settings.btnCheckUpdates": "Check for updates",
   "settings.btnCheckUpdatesLong": "Check for updates",
-  "settings.updateDevModeError": "Update check not supported in dev mode",
+  "settings.updateDevModeError": "Upstream auto-update is disabled for this private build. Get newer builds from the private GitHub workflow.",
   "settings.updateChecking": "Checking for updates...",
   // FFmpeg & montage card
   "settings.cardFfmpeg": "FFmpeg & Montage",
