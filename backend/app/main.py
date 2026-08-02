@@ -276,6 +276,23 @@ async def _enqueue_demo_path(path: Path, origin_zip: str | None = None) -> None:
     await demo_library_hub.notify("enqueue")
 
 
+async def _enqueue_and_ingest_demo_path(path: Path) -> int:
+    """Add a downloaded Demo to staging and immediately finish library ingestion."""
+
+    await _enqueue_demo_path(path)
+    resolved_path = str(path.resolve())
+    row = await demo_db.get_demo_by_path(resolved_path)
+    if not row:
+        raise RuntimeError("Demo 下载完成，但未能建立本地库记录")
+    demo_id = int(row["id"])
+    if (row.get("status") or "") == "pending":
+        result = await _ingest_pending_demo_ids([demo_id])
+        if result["failed"]:
+            error = result["failed"][0].get("error") or "未知错误"
+            raise RuntimeError(f"Demo 下载完成，但自动入库失败：{error}")
+    return demo_id
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """
@@ -2666,7 +2683,7 @@ async def download_match_demo(body: MatchHistoryDownloadBody):
     except Exception as e:
         raise HTTPException(500, f"解压失败: {e}")
 
-    await _enqueue_demo_path(dem_path)
+    await _enqueue_and_ingest_demo_path(dem_path)
     return {"ok": True, "path": str(dem_path), "filename": filename}
 
 
@@ -2708,7 +2725,7 @@ async def download_match_demo_from_share_code(body: MatchShareCodeDownloadBody):
     except OSError as exc:
         raise HTTPException(500, f"Demo 写入或解压失败: {exc}") from exc
 
-    await _enqueue_demo_path(dem_path)
+    await _enqueue_and_ingest_demo_path(dem_path)
     return {
         "ok": True,
         "path": str(dem_path),
@@ -2768,13 +2785,14 @@ async def _run_share_code_download_job(job: DemoDownloadJob) -> dict:
         raise RuntimeError(f"Demo 写入或解压失败: {exc}") from exc
 
     job.update(stage="ingesting", progress=0.92, message="下载与解压完成，正在加入 Demo 库")
-    await _enqueue_demo_path(dem_path)
+    demo_id = await _enqueue_and_ingest_demo_path(dem_path)
     return {
         "ok": True,
         "path": str(dem_path),
         "filename": filename,
         "match_id": str(resolved.match_id),
         "share_code": resolved.share_code,
+        "demo_id": demo_id,
     }
 
 
@@ -3821,14 +3839,19 @@ class BatchIngestBody(BaseModel):
 @app.post("/api/demos/batch-ingest")
 async def batch_ingest_demos(body: BatchIngestBody):
     """批量入库：对每个 pending demo 运行轻量元数据提取，状态改为 loaded。"""
+    return await _ingest_pending_demo_ids(body.demo_ids)
+
+
+async def _ingest_pending_demo_ids(demo_ids: list[int]) -> dict[str, Any]:
+    """Run the shared pending-to-library pipeline for UI batches and downloads."""
     ingested = 0
     failed: list[dict[str, Any]] = []
     rows_by_id = {
         int(row["id"]): row
-        for row in await demo_db.get_demo_list_items(body.demo_ids)
+        for row in await demo_db.get_demo_list_items(demo_ids)
     }
     candidates: list[tuple[int, dict[str, Any], str]] = []
-    for demo_id in body.demo_ids:
+    for demo_id in demo_ids:
         row = rows_by_id.get(int(demo_id))
         if not row:
             failed.append({"demo_id": demo_id, "error": "Demo 不存在"})

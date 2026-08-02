@@ -24,7 +24,7 @@ def test_share_code_download_requires_sidecar_consent():
     assert exc_info.value.status_code == 400
 
 
-def test_share_code_download_resolves_downloads_and_enqueues(tmp_path: Path, monkeypatch):
+def test_share_code_download_resolves_downloads_and_ingests(tmp_path: Path, monkeypatch):
     library = tmp_path / "library"
     config_file = tmp_path / "config" / "config.json"
     downloaded = library / "match730_3833252925791010941.dem"
@@ -51,12 +51,13 @@ def test_share_code_download_resolves_downloads_and_enqueues(tmp_path: Path, mon
         calls["download"] = (url, dest_dir, filename)
         return downloaded
 
-    async def enqueue(path):
-        calls["enqueue"] = path
+    async def ingest(path):
+        calls["ingest"] = path
+        return 73
 
     monkeypatch.setattr(main, "resolve_valve_demo", resolve)
     monkeypatch.setattr(main, "download_demo", download)
-    monkeypatch.setattr(main, "_enqueue_demo_path", enqueue)
+    monkeypatch.setattr(main, "_enqueue_and_ingest_demo_path", ingest)
 
     body = main.MatchShareCodeDownloadBody(
         share_code="steam://rungame/example",
@@ -69,9 +70,60 @@ def test_share_code_download_resolves_downloads_and_enqueues(tmp_path: Path, mon
         config_file.parent / "third_party" / "boiler-writter",
     )
     assert calls["download"][1:] == (library, downloaded.name)
-    assert calls["enqueue"] == downloaded
+    assert calls["ingest"] == downloaded
     assert result["match_id"] == "3833252925791010941"
     assert result["filename"] == downloaded.name
+
+
+def test_downloaded_demo_runs_shared_pending_ingest_pipeline(tmp_path: Path, monkeypatch):
+    demo_path = tmp_path / "match730_42.dem"
+    demo_path.write_bytes(b"demo")
+    calls = {}
+
+    async def enqueue(path):
+        calls["enqueue"] = path
+
+    async def get_by_path(path):
+        calls["lookup"] = path
+        return {"id": 42, "status": "pending"}
+
+    async def ingest(demo_ids):
+        calls["ingest"] = demo_ids
+        return {"ingested": 1, "failed": []}
+
+    monkeypatch.setattr(main, "_enqueue_demo_path", enqueue)
+    monkeypatch.setattr(main, "demo_db", SimpleNamespace(get_demo_by_path=get_by_path))
+    monkeypatch.setattr(main, "_ingest_pending_demo_ids", ingest)
+
+    demo_id = asyncio.run(main._enqueue_and_ingest_demo_path(demo_path))
+
+    assert demo_id == 42
+    assert calls == {
+        "enqueue": demo_path,
+        "lookup": str(demo_path.resolve()),
+        "ingest": [42],
+    }
+
+
+def test_downloaded_demo_reports_metadata_ingest_failure(tmp_path: Path, monkeypatch):
+    demo_path = tmp_path / "match730_42.dem"
+    demo_path.write_bytes(b"demo")
+
+    async def enqueue(_path):
+        return None
+
+    async def get_by_path(_path):
+        return {"id": 42, "status": "pending"}
+
+    async def ingest(_demo_ids):
+        return {"ingested": 0, "failed": [{"demo_id": 42, "error": "bad header"}]}
+
+    monkeypatch.setattr(main, "_enqueue_demo_path", enqueue)
+    monkeypatch.setattr(main, "demo_db", SimpleNamespace(get_demo_by_path=get_by_path))
+    monkeypatch.setattr(main, "_ingest_pending_demo_ids", ingest)
+
+    with pytest.raises(RuntimeError, match="自动入库失败：bad header"):
+        asyncio.run(main._enqueue_and_ingest_demo_path(demo_path))
 
 
 def test_share_code_download_job_endpoint_completes(monkeypatch):
