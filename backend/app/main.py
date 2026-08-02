@@ -2692,14 +2692,17 @@ async def download_match_demo_from_share_code(body: MatchShareCodeDownloadBody):
         raise HTTPException(400, str(exc)) from exc
     except BoilerProcessError as exc:
         raise HTTPException(409 if exc.exit_code in {4, 5, 6, 7} else 502, str(exc)) from exc
-    except (BoilerRuntimeError, MatchInfoDecodeError) as exc:
+    except BoilerRuntimeError as exc:
         raise HTTPException(502, str(exc)) from exc
+    except MatchInfoDecodeError as exc:
+        raise HTTPException(410 if "过期" in str(exc) else 502, str(exc)) from exc
 
     filename = f"match730_{resolved.match_id}.dem"
     try:
         dem_path = await download_demo(resolved.demo_url, Path(watch_paths[0]), filename)
     except httpx.HTTPStatusError as exc:
-        raise HTTPException(502, f"下载失败，HTTP {exc.response.status_code}") from exc
+        status, message = _valve_demo_download_http_error(exc.response.status_code)
+        raise HTTPException(status, message) from exc
     except httpx.RequestError as exc:
         raise HTTPException(502, f"下载超时或网络错误: {exc}") from exc
     except OSError as exc:
@@ -2713,6 +2716,14 @@ async def download_match_demo_from_share_code(body: MatchShareCodeDownloadBody):
         "match_id": str(resolved.match_id),
         "share_code": resolved.share_code,
     }
+
+
+def _valve_demo_download_http_error(status_code: int) -> tuple[int, str]:
+    if status_code in {403, 404, 410}:
+        return 410, "Valve 下载地址已失效，官匹 Demo 可能已经过期"
+    if status_code == 429 or status_code >= 500:
+        return 503, f"Valve 回放服务器暂时繁忙（HTTP {status_code}），请稍后重试"
+    return 502, f"下载失败，HTTP {status_code}"
 
 
 async def _run_share_code_download_job(job: DemoDownloadJob) -> dict:
@@ -2749,7 +2760,8 @@ async def _run_share_code_download_job(job: DemoDownloadJob) -> dict:
             cancel_event=job.cancel_event,
         )
     except httpx.HTTPStatusError as exc:
-        raise RuntimeError(f"下载失败，HTTP {exc.response.status_code}") from exc
+        _, message = _valve_demo_download_http_error(exc.response.status_code)
+        raise RuntimeError(message) from exc
     except httpx.RequestError as exc:
         raise RuntimeError(f"下载超时或网络错误: {exc}") from exc
     except OSError as exc:

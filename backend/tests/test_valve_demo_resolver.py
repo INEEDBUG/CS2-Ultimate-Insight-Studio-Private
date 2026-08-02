@@ -83,6 +83,51 @@ def test_parse_match_list_demo_url_rejects_non_valve_host():
         resolver.parse_match_list_demo_url(payload, decoded.match_id)
 
 
+def test_missing_match_has_expired_diagnosis():
+    decoded = resolver.decode_match_share_code(USER_SHARE_CODE)
+
+    with pytest.raises(resolver.MatchInfoDecodeError, match="可能已经过期"):
+        resolver.parse_match_list_demo_url(b"", decoded.match_id)
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "diagnosis"),
+    [
+        (3, "稍后重试"),
+        (4, "关闭游戏后重试"),
+        (6, "Steam 未运行"),
+        (8, "可能已经过期"),
+    ],
+)
+def test_boiler_exit_codes_have_actionable_diagnoses(tmp_path: Path, monkeypatch, exit_code, diagnosis):
+    class FailedProcess:
+        returncode = exit_code
+
+        async def communicate(self):
+            return b"", b""
+
+        def kill(self):
+            raise AssertionError("process should not time out")
+
+        async def wait(self):
+            return exit_code
+
+    async def create_process(*args, **kwargs):
+        return FailedProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    decoded = resolver.decode_match_share_code(USER_SHARE_CODE)
+
+    with pytest.raises(resolver.BoilerProcessError, match=diagnosis):
+        asyncio.run(
+            resolver.run_boiler_runtime(
+                tmp_path / "boiler-writter.exe",
+                tmp_path / "matches.info",
+                decoded,
+            )
+        )
+
+
 def _runtime_archive() -> bytes:
     files = {
         source: (b"exe" if target.endswith(".exe") else target.encode("utf-8"))
