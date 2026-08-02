@@ -10,6 +10,7 @@ import {
   Moon,
   Crosshair,
   Keyboard,
+  Download,
 } from "lucide-react";
 import { useThemeStore } from "../stores/themeStore";
 import { useReplayStore } from "../stores/replayStore";
@@ -60,6 +61,10 @@ export default function SidebarNav({ queueLength = 0, disabled = false }) {
         <NavLink to="/library" className={({ isActive }) => `${linkBase} ${isActive ? linkActive : linkIdle}`}>
           <Library className="h-4 w-4 shrink-0 opacity-90" />
           {t("nav.demoLibrary")}
+        </NavLink>
+        <NavLink to="/match-history" className={({ isActive }) => `${linkBase} ${isActive ? linkActive : linkIdle}`}>
+          <Download className="h-4 w-4 shrink-0 text-cs2-orange" />
+          {t("nav.officialDemos")}
         </NavLink>
         <NavLink to="/analysis" className={({ isActive }) => `${linkBase} ${isActive ? linkActive : linkIdle}`}>
           <BarChart3 className="h-4 w-4 shrink-0 opacity-90" />

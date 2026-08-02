@@ -36,6 +36,7 @@ export default {
   "nav.sectionWorkflow": "工作流",
   "nav.guide": "上手指南",
   "nav.demoLibrary": "Demo 库",
+  "nav.officialDemos": "官匹 Demo 下载",
   "nav.analysis": "解析分析",
   "nav.recordQueue": "录制队列",
   "nav.montage": "合辑工作台",
