@@ -27,6 +27,7 @@ class SensitivityTrial(BaseModel):
 class SensitivityRecommendationRequest(BaseModel):
     dpi: int = Field(ge=100, le=32_000)
     current_sensitivity: float = Field(gt=0, le=25)
+    m_yaw: float = Field(default=CS2_YAW, gt=0, le=1)
     game_width: int = Field(ge=320, le=16_384)
     game_height: int = Field(ge=240, le=16_384)
     display_aspect: Literal["16:9", "16:10", "4:3", "5:4", "other"] = "16:9"
@@ -50,6 +51,8 @@ class SensitivityRecommendation(BaseModel):
     multiplier: float
     edpi: float
     cm_per_360: float
+    current_cm_per_360: float
+    m_yaw: float
     confidence: float
     score: float
     tested_scores: dict[str, float]
@@ -65,8 +68,8 @@ class SensitivityRecommendation(BaseModel):
     methodology_note: str
 
 
-def sensitivity_to_cm360(dpi: int, sensitivity: float) -> float:
-    return 360.0 * 2.54 / (float(dpi) * float(sensitivity) * CS2_YAW)
+def sensitivity_to_cm360(dpi: int, sensitivity: float, m_yaw: float = CS2_YAW) -> float:
+    return 360.0 * 2.54 / (float(dpi) * float(sensitivity) * float(m_yaw))
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -91,13 +94,14 @@ def _trial_score(trial: SensitivityTrial) -> float:
 def _resolution_context(request: SensitivityRecommendationRequest) -> str:
     game_ratio = request.game_width / request.game_height
     ratio_label = f"{request.game_width}×{request.game_height} ({game_ratio:.3f}:1)"
+    yaw_label = f"m_yaw {request.m_yaw:g}"
     if request.scaling_mode == "stretched":
         return (
             f"测试已记录游戏分辨率 {ratio_label}，并按 {request.display_aspect} 拉伸显示理解视觉速度；"
-            "CS2 的角度旋转不由分辨率直接改变，因此不对最终 sensitivity 做虚假的固定倍率修正。"
+            f"角度与 cm/360 按 {yaw_label} 计算。分辨率不直接改变 CS2 转角，因此不会套用虚假的固定倍率修正。"
         )
     return (
-        f"测试已记录游戏分辨率 {ratio_label}、{request.scaling_mode} 显示；"
+        f"测试已记录游戏分辨率 {ratio_label}、{request.scaling_mode} 显示，并按 {yaw_label} 计算；"
         "结果由实际鼠标测试表现决定，分辨率只作为视觉与准星移动背景。"
     )
 
@@ -208,7 +212,12 @@ def recommend_sensitivity(request: SensitivityRecommendationRequest) -> Sensitiv
         current_sensitivity=request.current_sensitivity,
         multiplier=round(recommended / request.current_sensitivity, 4),
         edpi=round(request.dpi * recommended, 1),
-        cm_per_360=round(sensitivity_to_cm360(request.dpi, recommended), 2),
+        cm_per_360=round(sensitivity_to_cm360(request.dpi, recommended, request.m_yaw), 2),
+        current_cm_per_360=round(
+            sensitivity_to_cm360(request.dpi, request.current_sensitivity, request.m_yaw),
+            2,
+        ),
+        m_yaw=round(request.m_yaw, 6),
         confidence=round(confidence, 3),
         score=round(best_score, 3),
         tested_scores={f"{key:.3f}": round(value, 3) for key, value in sorted(aggregate.items())},
@@ -222,7 +231,7 @@ def recommend_sensitivity(request: SensitivityRecommendationRequest) -> Sensitiv
         insights=insights,
         action_plan=action_plan,
         methodology_note=(
-            "建议来自本次甩枪与追踪的速度—精度权衡；分辨率只影响视觉感受，"
-            "不会被当作改变 CS2 实际转角的固定倍率。"
+            "建议来自本次甩枪与追踪的速度—精度权衡；测试场按当前 sensitivity 与 m_yaw 生成候选增益，"
+            "DPI、sensitivity 和 m_yaw 用于 eDPI 与 cm/360。浏览器指针锁定仍是相对模拟，最终请在 CS2 内复测确认。"
         ),
     )

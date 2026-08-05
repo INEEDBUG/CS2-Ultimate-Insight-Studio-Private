@@ -69,7 +69,7 @@ This repository does not display upstream donation QR codes or solicit money on 
 
 ### Training & Input Labs
 
-- **Personal Sensitivity Diagnosis** — Combines no-click flick and continuous tracking results to identify a sensitivity that is too fast, too slow, balanced, or split between flick and tracking preferences. It returns an exact adjustment percentage, a CS2-ready `sensitivity` command, and a retest range.
+- **Personal Sensitivity Diagnosis** — Opens a touch-to-hit target arena plus continuous tracking rounds, showing each candidate from the configured `sensitivity`, `m_yaw`, and DPI. Completion automatically reveals the too-fast/too-slow diagnosis, exact adjustment percentage, CS2-ready command, and retest range.
 - **Local CS2 CFG Prefill** — Read-only discovery of local Steam CS2 settings can prefill sensitivity, resolution, and aspect ratio. DPI and GPU scaling still require user confirmation.
 - **Magnetic-key Optimization** — Uses duplicate edges, hold jitter, A/D overlap, and direction-transition latency to recommend starting values for actuation, RT press, and RT release, followed by controlled `0.05–0.10 mm` retests.
 - **Official Matchmaking Input Safety** — Regular Rapid Trigger can shorten key reset, while Snap Tap, Rapid Tap, Snappy Tappy, SOCD/LKP, and similar automated counter-direction features should be disabled for CS2 official matchmaking.

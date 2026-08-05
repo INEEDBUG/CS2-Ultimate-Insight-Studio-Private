@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Activity, AlertTriangle, Check, Clipboard, Crosshair, Gauge, History, Lightbulb, ListChecks, Monitor, Mouse, RefreshCw, UserRound } from "lucide-react";
 import SensitivityAimArena from "../components/training/SensitivityAimArena";
 import { createSensitivityRecommendation, fetchLocalCs2Settings, fetchSensitivityHistory } from "../api/trainingApi";
@@ -8,6 +8,7 @@ import { useT } from "../i18n/useT.js";
 const DEFAULT_SETUP = {
   dpi: 800,
   current_sensitivity: 1,
+  m_yaw: 0.022,
   game_width: 1024,
   game_height: 1080,
   display_aspect: "16:9",
@@ -53,6 +54,8 @@ export default function SensitivityLabPage() {
   const [localSettingsLoading, setLocalSettingsLoading] = useState(true);
   const [localSettingsError, setLocalSettingsError] = useState("");
   const [importedAccountId, setImportedAccountId] = useState("");
+  const setupRef = useRef(null);
+  const resultRef = useRef(null);
 
   const loadHistory = useCallback(() => {
     fetchSensitivityHistory(12)
@@ -68,6 +71,7 @@ export default function SensitivityLabPage() {
     setSetup((current) => ({
       ...current,
       current_sensitivity: detected.current_sensitivity ?? current.current_sensitivity,
+      m_yaw: detected.m_yaw ?? current.m_yaw,
       game_width: detected.game_width ?? current.game_width,
       game_height: detected.game_height ?? current.game_height,
       display_aspect: detected.display_aspect ?? current.display_aspect,
@@ -97,6 +101,14 @@ export default function SensitivityLabPage() {
     void loadLocalSettings();
   }, [loadLocalSettings]);
 
+  useEffect(() => {
+    if (!result || !resultRef.current) return;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    window.requestAnimationFrame(() => {
+      resultRef.current?.scrollIntoView?.({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+    });
+  }, [result]);
+
   const selectedLocalAccount = localAccounts.find((account) => account.account_id === selectedAccountId);
 
   function updateSetup(key, value) {
@@ -104,7 +116,7 @@ export default function SensitivityLabPage() {
   }
 
   function beginTest() {
-    if (setup.dpi < 100 || setup.current_sensitivity <= 0 || setup.game_width < 320 || setup.game_height < 240) {
+    if (setup.dpi < 100 || setup.current_sensitivity <= 0 || setup.m_yaw <= 0 || setup.game_width < 320 || setup.game_height < 240) {
       setError(t("training.invalidSetup"));
       return;
     }
@@ -155,6 +167,7 @@ export default function SensitivityLabPage() {
         <SensitivityAimArena
           key={`${trialIndex}-${trial.kind}-${trial.multiplier}`}
           trial={trial}
+          setup={setup}
           index={trialIndex}
           total={SENSITIVITY_TRIAL_SCHEDULE.length}
           durationMs={roundDurationMs}
@@ -185,7 +198,7 @@ export default function SensitivityLabPage() {
         </header>
 
         <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
-          <section className="rounded-2xl border border-cs2-border bg-cs2-bg-card p-5">
+          <section ref={setupRef} className="rounded-2xl border border-cs2-border bg-cs2-bg-card p-5">
             <div className="flex items-center gap-2">
               <Mouse className="h-5 w-5 text-cs2-orange" />
               <h2 className="text-base font-bold text-cs2-text-primary">{t("training.setupTitle")}</h2>
@@ -245,6 +258,7 @@ export default function SensitivityLabPage() {
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <NumberField label={t("training.dpi")} value={setup.dpi} min={100} max={32000} suffix="DPI" onChange={(value) => updateSetup("dpi", value)} />
               <NumberField label={t("training.currentSens")} value={setup.current_sensitivity} min={0.01} max={25} step={0.001} onChange={(value) => updateSetup("current_sensitivity", value)} />
+              <NumberField label={t("training.mYaw")} value={setup.m_yaw} min={0.001} max={1} step={0.001} onChange={(value) => updateSetup("m_yaw", value)} />
               <NumberField label={t("training.gameWidth")} value={setup.game_width} min={320} max={16384} suffix="px" onChange={(value) => updateSetup("game_width", value)} />
               <NumberField label={t("training.gameHeight")} value={setup.game_height} min={240} max={16384} suffix="px" onChange={(value) => updateSetup("game_height", value)} />
               <label className="block">
@@ -291,29 +305,47 @@ export default function SensitivityLabPage() {
                 </div>
               ))}
             </div>
+            <div className="mt-4 rounded-xl border border-cs2-accent/20 bg-cs2-accent/[0.06] p-3.5">
+              <div className="flex items-center gap-3">
+                <span className="relative grid h-12 w-12 shrink-0 place-items-center rounded-full border border-cs2-orange/40 bg-cs2-orange/15">
+                  <span className="h-6 w-6 rounded-full bg-cs2-orange shadow-[0_0_18px_rgba(255,154,61,0.35)]" />
+                  <Crosshair className="absolute -bottom-1 -right-1 h-5 w-5 text-white" />
+                </span>
+                <div>
+                  <div className="text-xs font-bold text-cs2-text-primary">{t("training.targetPreviewTitle")}</div>
+                  <p className="mt-1 text-[11px] leading-5 text-cs2-text-muted">{t("training.targetPreviewBody")}</p>
+                </div>
+              </div>
+            </div>
             <p className="mt-4 text-xs leading-5 text-cs2-text-muted">{t("training.scienceNote")}</p>
           </section>
         </div>
 
         {result && (
-          <section className="rounded-2xl border border-emerald-400/25 bg-gradient-to-br from-emerald-400/[0.10] to-cs2-bg-card p-5">
+          <section ref={resultRef} className="scroll-mt-5 rounded-2xl border border-emerald-400/25 bg-gradient-to-br from-emerald-400/[0.10] to-cs2-bg-card p-5">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <div className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-300">{t("training.resultTitle")}</div>
                 <div className="mt-2 font-mono text-5xl font-bold tracking-tight text-white">{result.recommended_sensitivity}</div>
                 <div className="mt-1 text-xs text-cs2-text-muted">CS2 sensitivity</div>
               </div>
-              <button type="button" onClick={copyCommand} className="flex items-center gap-2 rounded-lg border border-emerald-300/30 bg-emerald-300/10 px-3 py-2 text-xs font-bold text-emerald-200 transition-transform duration-150 active:scale-[0.97]">
-                {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-                {copied ? t("training.copied") : result.console_command}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => { setResult(null); setupRef.current?.scrollIntoView?.({ block: "start" }); }} className="flex items-center gap-2 rounded-lg border border-cs2-border bg-black/10 px-3 py-2 text-xs font-bold text-cs2-text-secondary transition-[background-color,transform] duration-150 hover:bg-white/5 active:scale-[0.97]">
+                  <RefreshCw className="h-4 w-4" />{t("training.adjustAndRetest")}
+                </button>
+                <button type="button" onClick={copyCommand} className="flex items-center gap-2 rounded-lg border border-emerald-300/30 bg-emerald-300/10 px-3 py-2 text-xs font-bold text-emerald-200 transition-transform duration-150 active:scale-[0.97]">
+                  {copied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                  {copied ? t("training.copied") : result.console_command}
+                </button>
+              </div>
             </div>
-            <div className="mt-5 grid gap-3 sm:grid-cols-4">
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
               {[
                 [t("training.edpi"), result.edpi],
                 [t("training.cm360"), `${result.cm_per_360} cm`],
                 [t("training.multiplier"), `×${result.multiplier}`],
                 [t("training.confidence"), `${Math.round(result.confidence * 100)}%`],
+                ["m_yaw", result.m_yaw],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-xl border border-white/10 bg-black/15 px-3.5 py-3">
                   <div className="text-[10px] font-bold uppercase tracking-wider text-cs2-text-muted">{label}</div>

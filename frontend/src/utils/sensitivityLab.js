@@ -7,12 +7,25 @@ export const SENSITIVITY_TRIAL_SCHEDULE = [
   { kind: "tracking", multiplier: 1.2 },
 ];
 
+export const DEFAULT_CS2_YAW = 0.022;
+
 export function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
 export function pointDistance(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+export function sensitivityToCm360(dpi, sensitivity, mYaw = DEFAULT_CS2_YAW) {
+  return (360 * 2.54) / (Number(dpi) * Number(sensitivity) * Number(mYaw));
+}
+
+export function cs2CursorGain(currentSensitivity, mYaw, multiplier) {
+  // Pointer Lock supplies the incoming mouse delta; apply the same relative
+  // sensitivity/yaw gain used by the configured CS2 baseline and candidates.
+  const relativeYaw = Number(mYaw) / DEFAULT_CS2_YAW;
+  return clamp(Number(currentSensitivity) * relativeYaw * Number(multiplier), 0.08, 4);
 }
 
 export function makeFlickTrialResult({ multiplier, durationMs, reactions, efficiencies, overshoots }) {

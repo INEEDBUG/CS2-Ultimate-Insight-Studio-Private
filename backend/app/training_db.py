@@ -125,6 +125,7 @@ class TrainingDB:
                 "confidence": float(row["confidence"]),
                 "edpi": result.get("edpi"),
                 "cm_per_360": result.get("cm_per_360"),
+                "m_yaw": result.get("m_yaw", 0.022),
             })
         return output
 

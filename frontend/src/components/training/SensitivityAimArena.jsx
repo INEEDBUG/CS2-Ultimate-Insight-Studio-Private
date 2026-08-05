@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Crosshair, MousePointer2, Play, RotateCcw } from "lucide-react";
 import {
   clamp,
+  cs2CursorGain,
   makeFlickTrialResult,
   makeTrackingTrialResult,
   pointDistance,
+  sensitivityToCm360,
 } from "../../utils/sensitivityLab";
 import { useT } from "../../i18n/useT.js";
 
@@ -19,9 +21,16 @@ function randomTarget(width, height) {
   };
 }
 
-export default function SensitivityAimArena({ trial, index, total, durationMs = 15_000, onComplete, onCancel }) {
+export default function SensitivityAimArena({ trial, setup, index, total, durationMs = 15_000, onComplete, onCancel }) {
   const t = useT();
   const roundDurationMs = durationMs > 0 ? durationMs : null;
+  const currentSensitivity = Number(setup?.current_sensitivity || 1);
+  const dpi = Number(setup?.dpi || 800);
+  const mYaw = Number(setup?.m_yaw || 0.022);
+  const candidateSensitivity = currentSensitivity * trial.multiplier;
+  const candidateEdpi = dpi * candidateSensitivity;
+  const candidateCm360 = sensitivityToCm360(dpi, candidateSensitivity, mYaw);
+  const cursorGain = cs2CursorGain(currentSensitivity, mYaw, trial.multiplier);
   const canvasRef = useRef(null);
   const frameRef = useRef(0);
   const stateRef = useRef(null);
@@ -242,8 +251,8 @@ export default function SensitivityAimArena({ trial, index, total, durationMs = 
       const surface = resizeCanvas();
       if (!state || !surface || state.finished || !state.running) return;
       const previous = { ...state.cursor };
-      state.cursor.x = clamp(state.cursor.x + event.movementX * trial.multiplier, 0, surface.width);
-      state.cursor.y = clamp(state.cursor.y + event.movementY * trial.multiplier, 0, surface.height);
+      state.cursor.x = clamp(state.cursor.x + event.movementX * cursorGain, 0, surface.width);
+      state.cursor.y = clamp(state.cursor.y + event.movementY * cursorGain, 0, surface.height);
       const moved = pointDistance(previous, state.cursor);
       if (trial.kind === "flick") {
         state.pathDistance += moved;
@@ -273,7 +282,7 @@ export default function SensitivityAimArena({ trial, index, total, durationMs = 
       cancelAnimationFrame(frameRef.current);
       if (document.pointerLockElement === canvasRef.current) document.exitPointerLock();
     };
-  }, [draw, resizeCanvas, roundDurationMs, trial.kind, trial.multiplier]);
+  }, [cursorGain, draw, resizeCanvas, roundDurationMs, trial.kind]);
 
   return (
     <section className="overflow-hidden rounded-2xl border border-cs2-border bg-cs2-bg-card shadow-2xl shadow-black/25">
@@ -285,6 +294,9 @@ export default function SensitivityAimArena({ trial, index, total, durationMs = 
           </span>
           <span className="rounded bg-white/5 px-2 py-0.5 font-mono text-[11px] text-cs2-text-muted">
             {index + 1}/{total} · ×{trial.multiplier.toFixed(1)}
+          </span>
+          <span className="hidden rounded border border-cs2-accent/20 bg-cs2-accent/[0.08] px-2 py-0.5 font-mono text-[11px] text-cs2-accent sm:inline">
+            sensitivity {candidateSensitivity.toFixed(4)} · {Math.round(candidateEdpi)} eDPI · m_yaw {mYaw}
           </span>
         </div>
         <div className="font-mono text-lg font-bold tabular-nums text-cs2-text-primary">
@@ -302,6 +314,18 @@ export default function SensitivityAimArena({ trial, index, total, durationMs = 
               <p className="mt-2 text-sm leading-6 text-zinc-300">
                 {trial.kind === "flick" ? t("training.flickHelp") : t("training.trackingHelp")}
               </p>
+              <div className="mt-4 grid grid-cols-3 gap-2 text-left">
+                {[
+                  ["Sensitivity", candidateSensitivity.toFixed(4)],
+                  ["eDPI", Math.round(candidateEdpi)],
+                  ["cm/360", candidateCm360.toFixed(1)],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-lg border border-white/10 bg-black/25 px-2.5 py-2">
+                    <div className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">{label}</div>
+                    <div className="mt-0.5 font-mono text-sm font-bold text-white">{value}</div>
+                  </div>
+                ))}
+              </div>
               <button
                 type="button"
                 onClick={start}

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   SENSITIVITY_TRIAL_SCHEDULE,
+  cs2CursorGain,
   makeFlickTrialResult,
   makeTrackingTrialResult,
   pointDistance,
+  sensitivityToCm360,
 } from "./sensitivityLab";
 
 describe("sensitivityLab", () => {
@@ -41,5 +43,15 @@ describe("sensitivityLab", () => {
     expect(result.on_target_ratio).toBe(1);
     expect(result.path_efficiency).toBeCloseTo(0.8);
     expect(pointDistance({ x: 0, y: 0 }, { x: 3, y: 4 })).toBe(5);
+  });
+
+  it("uses the configured CS2 sensitivity and m_yaw for arena gain", () => {
+    expect(cs2CursorGain(0.35, 0.022, 1)).toBeCloseTo(0.35);
+    expect(cs2CursorGain(0.35, 0.044, 1.2)).toBeCloseTo(0.84);
+  });
+
+  it("calculates cm/360 with the configured m_yaw", () => {
+    expect(sensitivityToCm360(800, 1, 0.022)).toBeCloseTo(51.9545, 4);
+    expect(sensitivityToCm360(800, 1, 0.044)).toBeCloseTo(25.9773, 4);
   });
 });

@@ -42,6 +42,7 @@ def _request() -> SensitivityRecommendationRequest:
     return SensitivityRecommendationRequest(
         dpi=800,
         current_sensitivity=1.0,
+        m_yaw=0.022,
         game_width=1024,
         game_height=1080,
         display_aspect="16:9",
@@ -59,6 +60,7 @@ def _request() -> SensitivityRecommendationRequest:
 
 def test_cm360_uses_cs2_yaw_formula():
     assert sensitivity_to_cm360(800, 1.0) == pytest.approx(51.9545, rel=1e-4)
+    assert sensitivity_to_cm360(800, 1.0, 0.044) == pytest.approx(25.9773, rel=1e-4)
 
 
 def test_recommendation_follows_strongest_measured_multiplier():
@@ -66,9 +68,12 @@ def test_recommendation_follows_strongest_measured_multiplier():
 
     assert result.recommended_sensitivity > 1.1
     assert result.edpi == pytest.approx(800 * result.recommended_sensitivity)
+    assert result.m_yaw == pytest.approx(0.022)
+    assert result.current_cm_per_360 == pytest.approx(51.95)
     assert result.console_command.startswith('sensitivity "')
     assert "1024×1080" in result.resolution_context
-    assert "不对最终 sensitivity" in result.resolution_context
+    assert "m_yaw 0.022" in result.resolution_context
+    assert "不会套用虚假的固定倍率" in result.resolution_context
     assert result.diagnosis == "too_slow"
     assert result.adjustment_percent > 0
     assert result.suggested_min < result.recommended_sensitivity < result.suggested_max
@@ -114,3 +119,4 @@ def test_training_db_persists_and_lists_session(tmp_path: Path):
     assert rows[0]["recommended_sensitivity"] == saved["recommended_sensitivity"]
     assert rows[0]["game_width"] == 1024
     assert rows[0]["game_height"] == 1080
+    assert rows[0]["m_yaw"] == pytest.approx(0.022)
