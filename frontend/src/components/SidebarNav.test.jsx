@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import SidebarNav from "./SidebarNav";
 
@@ -28,5 +28,17 @@ describe("SidebarNav", () => {
     expect(screen.getByRole("link", { name: "nav.officialDemos" }).getAttribute("href")).toBe(
       "/match-history",
     );
+  });
+
+  test("keeps the appearance popover above the main workspace layer", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <SidebarNav />
+      </MemoryRouter>,
+    );
+
+    expect(container.querySelector("aside")?.className).toContain("z-[60]");
+    fireEvent.click(screen.getByRole("button", { name: "nav.themeSystem" }));
+    expect(screen.getByRole("menu", { name: "nav.appearance" })).toBeTruthy();
   });
 });

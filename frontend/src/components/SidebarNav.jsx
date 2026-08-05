@@ -148,7 +148,7 @@ export default function SidebarNav({ queueLength = 0, disabled = false }) {
   const t = useT();
 
   return (
-    <aside className="relative flex w-56 shrink-0 flex-col border-r border-cs2-border-subtle bg-cs2-bg-sidebar/88 px-2.5 pb-2.5 backdrop-blur-2xl">
+    <aside className="relative z-[60] flex w-56 shrink-0 flex-col border-r border-cs2-border-subtle bg-cs2-bg-sidebar/88 px-2.5 pb-2.5 backdrop-blur-2xl">
       <div className="flex items-center gap-2.5 px-1.5 py-4">
         <img src="/cs2-ultimate-insight-logo.png" alt={t("nav.brand")} width={42} height={42} decoding="async" className="h-10 w-10 shrink-0 object-contain drop-shadow-sm" />
         <div className="min-w-0">

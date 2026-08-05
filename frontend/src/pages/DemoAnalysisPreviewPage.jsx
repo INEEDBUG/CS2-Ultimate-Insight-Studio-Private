@@ -374,8 +374,14 @@ export default function DemoAnalysisPreviewPage() {
   const [selectedRound, setSelectedRound] = useSessionState(`${sessionPrefix}:round`, null);
   const [replayRound, setReplayRound] = useSessionState(`${sessionPrefix}:replay-round`, null);
   const [statsPlayer, setStatsPlayer] = useSessionState(`${sessionPrefix}:stats-player`, "");
-  const [analysisElapsedSeconds, setAnalysisElapsedSeconds] = useState(0);
   const uploadedDemoCount = s.uploadedDemos?.length || 0;
+  const analysisBatchIdentity = useMemo(() => JSON.stringify(
+    (s.uploadedDemos || []).map((demo, index) => ({
+      id: demo?.id ?? null,
+      source: demo?.path || demo?.filename || `demo-${index}`,
+    })),
+  ), [s.uploadedDemos]);
+  const [analysisElapsedSeconds, setAnalysisElapsedSeconds] = useState(0);
   const parsedDemoCount = matches.filter((match) => match?.parsed).length;
   const allDemosParsed = uploadedDemoCount > 0
     && matches.length === uploadedDemoCount
@@ -392,16 +398,48 @@ export default function DemoAnalysisPreviewPage() {
       : `尚有 ${Math.max(0, uploadedDemoCount - parsedDemoCount)} 个 Demo 未完成解析`);
   useEffect(() => {
     if (!analysisGateActive) {
+      try {
+        window.sessionStorage.removeItem("cs2:demo-analysis-run-clock");
+      } catch {
+        // The timer still works when session storage is unavailable.
+      }
       setAnalysisElapsedSeconds(0);
       return undefined;
     }
-    const startedAt = Date.now();
-    setAnalysisElapsedSeconds(0);
+
+    const now = Date.now();
+    let startedAt = now;
+    try {
+      const saved = JSON.parse(
+        window.sessionStorage.getItem("cs2:demo-analysis-run-clock") || "null",
+      );
+      const savedStartedAt = Number(saved?.startedAt);
+      if (
+        saved?.batchIdentity === analysisBatchIdentity
+        && Number.isFinite(savedStartedAt)
+        && savedStartedAt > 0
+        && savedStartedAt <= now
+      ) {
+        startedAt = savedStartedAt;
+      } else {
+        window.sessionStorage.setItem("cs2:demo-analysis-run-clock", JSON.stringify({
+          batchIdentity: analysisBatchIdentity,
+          startedAt,
+        }));
+      }
+    } catch {
+      // Fall back to an in-memory clock for restricted WebView sessions.
+    }
+
+    const updateElapsed = () => {
+      setAnalysisElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    };
+    updateElapsed();
     const timer = window.setInterval(() => {
-      setAnalysisElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
-    }, 1000);
+      updateElapsed();
+    }, 250);
     return () => window.clearInterval(timer);
-  }, [analysisGateActive]);
+  }, [analysisBatchIdentity, analysisGateActive]);
   const meta = s.matchMeta || currentUpload?.match_meta || matches[s.currentMatchIndex]?.match_meta || {};
   const teams = useMemo(() => splitTeams(s.players), [s.players]);
   const teamAName = meta.team_a_name || firstTeamName(teams.a, "Team A");

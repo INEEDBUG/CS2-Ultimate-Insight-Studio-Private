@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { AppShellProvider } from "../context/AppShellContext";
@@ -247,6 +247,42 @@ describe("DemoAnalysisPreviewPage Insight Agent flow", () => {
     expect(screen.queryByRole("button", { name: "2D 回放" })).toBeNull();
     expect(screen.queryByText("13")).toBeNull();
     expect(screen.queryByText(/DAK|analysis-kit|数据包/i)).toBeNull();
+  });
+
+  test("keeps the batch elapsed clock running when the analysis page remounts", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-06T04:00:00Z"));
+    const shell = buildShell({
+      parsingByIndex: { 0: true },
+      anyDemoParsing: true,
+      analysisInlineProgress: { active: true, text: "正在批量解析 Demo" },
+      matchTabsData: [
+        { filename: "one.dem", parsed: true },
+        { filename: "two.dem", parsed: false },
+      ],
+    });
+
+    try {
+      const firstView = renderPage(shell);
+      await act(async () => Promise.resolve());
+      act(() => {
+        vi.advanceTimersByTime(3_250);
+      });
+      expect(screen.getByText(/已运行 3 秒/)).toBeTruthy();
+
+      firstView.unmount();
+      const secondView = renderPage(shell);
+      await act(async () => Promise.resolve());
+      expect(screen.getByText(/已运行 3 秒/)).toBeTruthy();
+
+      act(() => {
+        vi.advanceTimersByTime(2_000);
+      });
+      expect(screen.getByText(/已运行 5 秒/)).toBeTruthy();
+      secondView.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("removes the preview label and resets the loaded demo set from the header", () => {
