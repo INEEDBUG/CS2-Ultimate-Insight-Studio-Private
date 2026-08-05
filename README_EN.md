@@ -47,13 +47,22 @@ This repository does not display upstream donation QR codes or solicit money on 
 ### Highlight Parsing & Clip Discovery
 
 - **Batch Demo Parsing** — Parse highlights from multiple demos simultaneously; highlights from the same player across different matches are organized by match.
-- **Open Straight into 2D Replay** — After base analysis completes, the app opens the 2D radar replay directly, with round-by-round positions, movement paths, kills, smokes, and fire areas.
+- **Persistent Analysis History** — Completed analysis is stored in the local SQLite database. Recent results can be reopened from the analysis page without reparsing the Demo.
+- **Scoreboard First** — Base analysis now opens on the full-match scoreboard with K/D/A, ADR, KAST, headshot rate, openings, AWP and utility damage, plus an S–D grade and improvement notes for every player.
+- **Per-round Player Assessment** — The round explorer and completed 2D replay state grade every player from kills, deaths, openings, headshots and objective events.
+- **Interactive 2D Replay** — Review round-by-round positions, paths, kills, smokes and fire areas. Click either side roster or a radar marker to select a player, with selection shared across the replay and assessment cards.
+- **Single-team Tactical View** — Switch between global, Team A only and Team B only to filter opponent positions, paths, shots and utility. This is a review filter, not simulated geometric line-of-sight.
 - **Target Player Lock** — Automatically identify all players in a match and locate targets by Steam ID, platform ID, or nickname; compatible with different demo export conventions from 5E, Perfect World, and Official Matchmaking.
 - **Fine-grained Highlight Analysis** — Automatically categorizes **Highlights** (multi-kills, one-taps, clutches, knife kills, jump shots, defuses), **Fails** (taser, Deagle, team kills, "human magnet", "human tracing", "shoulder-to-shoulder" moments), **Cross-round Compilations** (favorite victim, nemesis, kill/death montage, continuous round recording), and **Meme Rounds** (211/o/i/z series with AI round commentary). See [Clip Types & Tags](./docs/highlight_tags.md) for tag descriptions.
 - **Round Timeline** — Beyond auto-extracted clip cards, browse kill/death timelines by round to add specific shots, deaths, or entire rounds to the recording queue.
 - **Continuous Round Recording** — Record from round start to death or round end; select multiple rounds to combine into a longer clip.
 
 > **First-run performance:** base Demo analysis and 2D replay cache generation are separate stages. The first visit to a match's 2D replay also creates the whole-match Parquet cache, round binary trajectories, and smoke/fire effect cache, so it can take longer than reopening the same match. Cache hits read the local result directly. Upgrades do not delete existing replay caches under `%APPDATA%\CS2 Insight Agent\data\cache\demo-replay`.
+
+### Product Video
+
+- [Watch the 3–5 minute Chinese product tour (MP4)](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases/download/v2.4.6/CS2-Ultimate-Insight-Studio-v2.4.6-intro.mp4)
+- 1920×1080, H.264 + AAC, ready for Bilibili and reusable as a horizontal Douyin upload.
 
 ### Training & Input Labs
 
@@ -117,7 +126,8 @@ The app does not run a background updater. Download new versions directly from [
    - [X] Round Timeline Browse & Queue Recording
    - [X] Pre-recording Spectator Warm-up / Victim POV / Virtual Keyboard OBS Overlay
 - **V3**
-   - [ ] Demo Heatmap Analysis
+   - [X] Demo Analysis, History, and Player/Round Assessments
+   - [X] 2D Player Selection and Single-team Tactical View
    - [ ] Tactical Coach (Grenade Trajectory Analysis / Route Review)
 
 

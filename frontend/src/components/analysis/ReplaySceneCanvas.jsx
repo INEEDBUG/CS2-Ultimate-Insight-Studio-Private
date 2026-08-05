@@ -68,6 +68,10 @@ function replaySideForTeamKey(teamKey, round) {
   return String(teamKey === "a" ? round?.team_a_side : round?.team_b_side).trim().toUpperCase();
 }
 
+export function replayTeamVisible(teamKey, fogTeam = "all") {
+  return fogTeam === "all" || teamKey === fogTeam;
+}
+
 function isBlueReplaySide(side, fallback = false) {
   const normalized = String(side || "").trim().toUpperCase();
   return normalized ? normalized === "CT" : fallback;
@@ -290,6 +294,9 @@ export default function ReplaySceneCanvas({
   effectTracks,
   effectCapabilities,
   smokeDebugLayer = "off",
+  selectedPlayerName = "",
+  onSelectPlayer,
+  fogTeam = "all",
 }) {
   const playhead = useSyncExternalStore(playheadStore.subscribe, playheadStore.getSnapshot);
   const fallbackTick = selectedRound?.freeze_end_tick || selectedRound?.start_tick || 0;
@@ -571,7 +578,7 @@ export default function ReplaySceneCanvas({
       team_key: meta?.team_key || fallbackTeamKey,
       position: worldToPercent(player, transform),
     };
-  }).filter((player) => player.position && pointMatchesMapLayer(player, transform, mapLayer));
+  }).filter((player) => player.position && pointMatchesMapLayer(player, transform, mapLayer) && replayTeamVisible(player.team_key, fogTeam));
 
   const teamKeyByName = useMemo(() => {
     const result = new Map(
@@ -588,6 +595,10 @@ export default function ReplaySceneCanvas({
   }, [eventFrame.players, selectedRound?.team_a_side, workspacePlayers]);
   const teamKeyForPlayerName = (name) => teamKeyByName.get(safeLabel(name).toLowerCase()) || "";
   const sideForPlayerName = (name) => replaySideForTeamKey(teamKeyForPlayerName(name), selectedRound);
+  const visibleEffectTracks = useMemo(() => effectTracks.filter((track) => {
+    const teamKey = track?.team_key || teamKeyForPlayerName(track?.actor || track?.player_name || track?.thrower);
+    return !teamKey || replayTeamVisible(teamKey, fogTeam);
+  }), [effectTracks, fogTeam, teamKeyByName]);
 
   const traces = useMemo(() => {
     if (!layers.traces || !frames.length) return [];
@@ -814,7 +825,7 @@ export default function ReplaySceneCanvas({
         .demo-shot-tracer { filter:none; }
         .demo-grenade-trajectory { filter:drop-shadow(0 0 .35px rgba(255,255,255,.5)); }
       `}</style>
-      <div className="pointer-events-none absolute right-3 top-3 z-20 flex w-[min(84%,390px)] flex-col items-end gap-1.5" aria-live="polite">{killFeed.map((kill) => {
+      <div className="pointer-events-none absolute right-3 top-3 z-20 flex w-[min(84%,390px)] flex-col items-end gap-1.5" aria-live="polite">{killFeed.filter((kill) => fogTeam === "all" || replayTeamVisible(teamKeyForPlayerName(kill.actor), fogTeam)).map((kill) => {
         const weapon = safeWeapon(kill.weapon, "武器");
         const actorSide = sideForPlayerName(kill.actor);
         const targetSide = sideForPlayerName(kill.target);
@@ -845,7 +856,7 @@ export default function ReplaySceneCanvas({
         >
           <img src={getDemoRadarMapUrl(mapName, hasMapLayers ? mapLayer : "")} alt={`${mapName}${hasMapLayers ? ` ${mapLayer === "upper" ? "上层" : "下层"}` : ""} 雷达地图`} className="h-full w-full object-contain opacity-80" draggable={false} />
           <ReplayAreaEffectsCanvas
-            tracks={effectTracks}
+            tracks={visibleEffectTracks}
             currentTick={currentTick}
             hideAfterTick={replayEndTick > 0 ? replayEndTick : null}
             tickRate={tickRate}
@@ -857,12 +868,12 @@ export default function ReplaySceneCanvas({
             smokeDebugLayer={smokeDebugLayer}
           />
           <svg viewBox="0 0 100 100" className="replay-trajectory-layer pointer-events-none absolute inset-0 z-[10] h-full w-full overflow-visible" shapeRendering="geometricPrecision">
-            {traces.map((trace) => <polyline key={trace.id} data-player-trace={trace.name} className="demo-player-trace" points={trace.points.map((point) => `${point.x},${point.y}`).join(" ")} fill="none" stroke={isBlueReplaySide(replaySideForTeamKey(trace.team_key, selectedRound), trace.team_key === "a") ? "#38bdf8" : "#fbbf24"} strokeWidth="1.8" strokeOpacity="0.58" vectorEffect="non-scaling-stroke" />)}
-            {recentEvents.kills.map((kill) => <g key={`kill-${kill.tick}-${kill.actor}-${kill.target}`} opacity={Math.max(0.2, kill.opacity)}><line className="demo-death-line" x1={kill.actor.x} y1={kill.actor.y} x2={kill.target.x} y2={kill.target.y} stroke="#fb7185" strokeWidth="1.6" strokeDasharray="6 4" vectorEffect="non-scaling-stroke" /><circle className="demo-death-circle" cx={kill.target.x} cy={kill.target.y} r="1.2" fill="none" stroke="#fb7185" strokeWidth="1.3" vectorEffect="non-scaling-stroke" /><path className="demo-death-x" d={`M${kill.target.x - 0.8},${kill.target.y - 0.8} L${kill.target.x + 0.8},${kill.target.y + 0.8} M${kill.target.x + 0.8},${kill.target.y - 0.8} L${kill.target.x - 0.8},${kill.target.y + 0.8}`} stroke="#fb7185" strokeWidth="1.2" vectorEffect="non-scaling-stroke" /></g>)}
-            {recentShots.map((shot, index) => { const teamKey = teamKeyForPlayerName(shot.actor); return <line key={`shot-${shot.tick}-${shot.actor}-${index}`} className="demo-shot-tracer" x1={shot.origin.x} y1={shot.origin.y} x2={shot.target.x} y2={shot.target.y} stroke={isBlueReplaySide(replaySideForTeamKey(teamKey, selectedRound), teamKey === "a") ? "#bae6fd" : "#fde68a"} strokeWidth="1.8" strokeLinecap="round" opacity="1" vectorEffect="non-scaling-stroke" />; })}
-            {recentEvents.grenades.filter((grenade) => grenade.showTrajectory && grenade.renderedPath.length > 1).map((grenade) => <polyline key={`trajectory-${grenade.tick}-${grenade.actor}-${grenade.kind}`} className="demo-grenade-trajectory" data-inferred={grenade.trajectoryInferred ? "true" : undefined} data-side={grenade.side || undefined} points={grenade.renderedPath.map((point) => `${point.x},${point.y}`).join(" ")} fill="none" stroke={grenade.teamColor} strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" opacity="1" vectorEffect="non-scaling-stroke" />)}
+            {traces.filter((trace) => replayTeamVisible(trace.team_key, fogTeam)).map((trace) => <polyline key={trace.id} data-player-trace={trace.name} className="demo-player-trace" points={trace.points.map((point) => `${point.x},${point.y}`).join(" ")} fill="none" stroke={isBlueReplaySide(replaySideForTeamKey(trace.team_key, selectedRound), trace.team_key === "a") ? "#38bdf8" : "#fbbf24"} strokeWidth="1.8" strokeOpacity="0.58" vectorEffect="non-scaling-stroke" />)}
+            {recentEvents.kills.filter((kill) => fogTeam === "all" || (replayTeamVisible(teamKeyForPlayerName(kill.actor), fogTeam) && replayTeamVisible(teamKeyForPlayerName(kill.target), fogTeam))).map((kill) => <g key={`kill-${kill.tick}-${kill.actor}-${kill.target}`} opacity={Math.max(0.2, kill.opacity)}><line className="demo-death-line" x1={kill.actor.x} y1={kill.actor.y} x2={kill.target.x} y2={kill.target.y} stroke="#fb7185" strokeWidth="1.6" strokeDasharray="6 4" vectorEffect="non-scaling-stroke" /><circle className="demo-death-circle" cx={kill.target.x} cy={kill.target.y} r="1.2" fill="none" stroke="#fb7185" strokeWidth="1.3" vectorEffect="non-scaling-stroke" /><path className="demo-death-x" d={`M${kill.target.x - 0.8},${kill.target.y - 0.8} L${kill.target.x + 0.8},${kill.target.y + 0.8} M${kill.target.x + 0.8},${kill.target.y - 0.8} L${kill.target.x - 0.8},${kill.target.y + 0.8}`} stroke="#fb7185" strokeWidth="1.2" vectorEffect="non-scaling-stroke" /></g>)}
+            {recentShots.filter((shot) => replayTeamVisible(teamKeyForPlayerName(shot.actor), fogTeam)).map((shot, index) => { const teamKey = teamKeyForPlayerName(shot.actor); return <line key={`shot-${shot.tick}-${shot.actor}-${index}`} className="demo-shot-tracer" x1={shot.origin.x} y1={shot.origin.y} x2={shot.target.x} y2={shot.target.y} stroke={isBlueReplaySide(replaySideForTeamKey(teamKey, selectedRound), teamKey === "a") ? "#bae6fd" : "#fde68a"} strokeWidth="1.8" strokeLinecap="round" opacity="1" vectorEffect="non-scaling-stroke" />; })}
+            {recentEvents.grenades.filter((grenade) => replayTeamVisible(teamKeyForPlayerName(grenade.actor), fogTeam) && grenade.showTrajectory && grenade.renderedPath.length > 1).map((grenade) => <polyline key={`trajectory-${grenade.tick}-${grenade.actor}-${grenade.kind}`} className="demo-grenade-trajectory" data-inferred={grenade.trajectoryInferred ? "true" : undefined} data-side={grenade.side || undefined} points={grenade.renderedPath.map((point) => `${point.x},${point.y}`).join(" ")} fill="none" stroke={grenade.teamColor} strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" opacity="1" vectorEffect="non-scaling-stroke" />)}
           </svg>
-          {recentEvents.grenades.map((grenade) => {
+          {recentEvents.grenades.filter((grenade) => replayTeamVisible(teamKeyForPlayerName(grenade.actor), fogTeam)).map((grenade) => {
             const isSmoke = /烟|smoke/i.test(grenade.kind);
             const isFire = /燃烧|molotov|inferno|incendiary/i.test(grenade.kind);
             const useAreaFallback = !(
@@ -896,9 +907,14 @@ export default function ReplaySceneCanvas({
               ? (displayName.slice(0, 1).toUpperCase() || "?")
               : (Number.isInteger(playerNumber) ? playerNumber : "?");
             return (
-              <div
+              <button
+                type="button"
+                data-no-pan
+                aria-label={`选择玩家 ${displayName}`}
+                aria-pressed={selectedPlayerName === displayName}
+                onClick={() => onSelectPlayer?.(displayName)}
                 key={player.steamid64 || displayName}
-                className={`absolute transition-[left,top] ease-linear ${alive ? "z-[12]" : "z-[4]"}`}
+                className={`absolute transition-[left,top,opacity] ease-linear active:scale-[0.96] ${alive ? "z-[12]" : "z-[4]"} ${selectedPlayerName && selectedPlayerName !== displayName ? "opacity-45" : "opacity-100"}`}
                 style={{ left: `${player.position.x}%`, top: `${player.position.y}%`, transitionDuration: MOTION_DURATION }}
                 title={markerTitle}
               >
@@ -909,7 +925,7 @@ export default function ReplaySceneCanvas({
                   <div
                     data-player-number={Number.isInteger(playerNumber) ? playerNumber : undefined}
                     data-player-label-mode={playerLabelMode}
-                    className={`demo-player-marker absolute inset-0 flex items-center justify-center rounded-full border border-white/80 font-mono font-black leading-none text-white ${isBlue ? "bg-sky-500" : "bg-amber-500"} ${alive ? "" : "opacity-35 grayscale"}`}
+                    className={`demo-player-marker absolute inset-0 flex items-center justify-center rounded-full border font-mono font-black leading-none text-white ${selectedPlayerName === displayName ? "border-white ring-2 ring-cs2-accent ring-offset-1 ring-offset-black/70" : "border-white/80"} ${isBlue ? "bg-sky-500" : "bg-amber-500"} ${alive ? "" : "opacity-35 grayscale"}`}
                     style={{ fontSize: Math.max(7, playerMarkerSizePx * 0.46) }}
                   >
                     <span className="demo-player-direction-arrow pointer-events-none absolute inset-0" style={{ transform: `rotate(${yawToCssRotation(yaw)}deg)` }}>
@@ -947,7 +963,7 @@ export default function ReplaySceneCanvas({
                     </span>
                   )}
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>

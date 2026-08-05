@@ -35,6 +35,7 @@ import {
 } from "../../utils/replayPlayback";
 import { useReplayStore, REPLAY_STORE_CACHE_VERSION } from "../../stores/replayStore";
 import { replayUtilityExposureByName, roundEnemyKillCounts } from "../../utils/replayHudState";
+import { buildRoundPlayerAssessments } from "../../utils/playerPerformance";
 import {
   MAX_SMOKE_TRAJECTORY_SECONDS,
   grenadeTrajectoryTimingIsValid,
@@ -333,6 +334,8 @@ const ReplayRosterSlot = memo(function ReplayRosterSlot({
   liveStats,
   roundKillStars = 0,
   utilityExposure,
+  selected = false,
+  onSelect,
 }) {
   const displayName = safeLabel(player.name, `玩家 ${index + 1}`);
   const alive = state.is_alive !== false;
@@ -395,14 +398,18 @@ const ReplayRosterSlot = memo(function ReplayRosterSlot({
     : <>{utilitiesRow}{specialGear}</>;
 
   return (
-    <div
+    <button
+      type="button"
+      aria-pressed={selected}
+      aria-label={`选择回放玩家 ${displayName}`}
+      onClick={() => onSelect?.(displayName)}
       data-replay-roster-slot={displayName}
       data-alive={alive ? "true" : "false"}
       data-side={isT ? "T" : "CT"}
       data-smoked={smoked ? "true" : "false"}
       data-burning={burning ? "true" : "false"}
       data-blinded={blinded ? "true" : "false"}
-      className={`replay-observer-slot relative isolate h-[84px] overflow-hidden rounded-[3px] border shadow-[0_5px_12px_rgba(0,0,0,0.35)] ${
+      className={`replay-observer-slot relative isolate h-[84px] w-full overflow-hidden rounded-[3px] border text-left shadow-[0_5px_12px_rgba(0,0,0,0.35)] active:scale-[0.99] ${selected ? "ring-2 ring-cs2-accent ring-offset-1 ring-offset-[#07090c]" : ""} ${
         isT
           ? "border-amber-200/45 bg-[#1b1707]"
           : "border-sky-300/45 bg-[#07182a]"
@@ -527,7 +534,7 @@ const ReplayRosterSlot = memo(function ReplayRosterSlot({
           ) : null}
         </div>
       </div>
-    </div>
+    </button>
   );
 });
 
@@ -541,6 +548,8 @@ const ReplayRoster = memo(function ReplayRoster({
   liveStatsByName,
   roundKillStarsByName,
   utilityExposureByName,
+  selectedPlayerName,
+  onSelectPlayer,
 }) {
   const byName = new Map((framePlayers || []).map((player) => [safeLabel(player.name).toLowerCase(), player]));
   const sideName = safeLabel(side, teamKey === "a" ? "T" : "CT").toUpperCase();
@@ -574,6 +583,8 @@ const ReplayRoster = memo(function ReplayRoster({
               liveStats={liveStatsByName?.[displayName.toLowerCase()]}
               roundKillStars={roundKillStarsByName?.[displayName.toLowerCase()] || 0}
               utilityExposure={utilityExposureByName?.[displayName.toLowerCase()]}
+              selected={displayName === selectedPlayerName}
+              onSelect={onSelectPlayer}
             />
           );
         })}
@@ -612,6 +623,8 @@ export default function Demo2DReplayPreview({
   const [error, setError] = useState("");
   const [mapLayer, setMapLayer] = useSessionState(`${sessionPrefix}:map-layer`, "upper");
   const [playerLabelMode, setPlayerLabelMode] = useSessionState(`${sessionPrefix}:label-mode`, "number");
+  const [selectedPlayerName, setSelectedPlayerName] = useSessionState(`${sessionPrefix}:selected-player`, "");
+  const [fogTeam, setFogTeam] = useSessionState(`${sessionPrefix}:fog-team`, "all");
   const [responseTransform, setResponseTransform] = useState(null);
   const [replayFps, setReplayFps] = useState(SAMPLE_HZ);
   const [layers, setLayers] = useSessionState(`${sessionPrefix}:layers`, DEFAULT_REPLAY_LAYERS);
@@ -717,6 +730,9 @@ export default function Demo2DReplayPreview({
   ), [workspace?.players, players]);
   const teamAPlayers = workspacePlayers.filter((player) => player.team_key === "a").slice(0, 5);
   const teamBPlayers = workspacePlayers.filter((player) => player.team_key === "b").slice(0, 5);
+  useEffect(() => {
+    if (selectedPlayerName && !workspacePlayers.some((player) => safeLabel(player.name) === selectedPlayerName)) setSelectedPlayerName("");
+  }, [selectedPlayerName, setSelectedPlayerName, workspacePlayers]);
 
   useEffect(() => {
     if (!selectedRound || !demoPath) return undefined;
@@ -1068,6 +1084,11 @@ export default function Demo2DReplayPreview({
     ? 0
     : Math.max(0, ROUND_CLOCK_SECONDS - activeRoundElapsed);
   const eventMarkers = roundEvents.filter((event) => event.type === "kill" || event.type === "grenade" || event.type === "plant");
+  const roundFinished = Boolean(frames.length && (uiSampleIndex >= frames.length - 1 || (roundEndTick > 0 && uiTick >= roundEndTick)));
+  const roundAssessments = useMemo(
+    () => buildRoundPlayerAssessments(selectedRound, workspacePlayers),
+    [selectedRound, workspacePlayers],
+  );
 
   const seekToFrameIndex = (index, { pause = false } = {}) => {
     if (!frames.length) return;
@@ -1155,6 +1176,7 @@ export default function Demo2DReplayPreview({
             {[{ key: "traces", icon: Route, label: "走位轨迹" }, { key: "kills", icon: Swords, label: "击杀连线" }, { key: "shots", icon: Crosshair, label: "射击弹道" }, { key: "grenades", icon: Bomb, label: "投掷物" }, { key: "utilityAreas", icon: MapIcon, label: "烟火区域" }].map(({ key, icon: Icon, label }) => <button key={key} type="button" aria-pressed={layers[key]} onClick={() => toggleLayer(key)} className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[9px] font-semibold ${layers[key] ? "border-cs2-accent/50 bg-cs2-accent-soft text-cs2-accent" : "border-cs2-border text-cs2-text-muted"}`}><Icon className="h-3 w-3" />{label}</button>)}
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            <div role="group" aria-label="单队视角" title="仅隐藏另一队的位置、轨迹和动作标记；不模拟真实视线遮挡。" className="flex items-center rounded-md border border-cs2-border bg-cs2-bg-input p-0.5">{[["all", "全局"], ["a", teamAName], ["b", teamBName]].map(([value, label]) => <button key={value} type="button" aria-label={value === "all" ? label : `仅 ${label}`} aria-pressed={fogTeam === value} onClick={() => setFogTeam(value)} className={`max-w-24 truncate rounded px-2 py-1 text-[8px] font-bold active:scale-[0.97] ${fogTeam === value ? "bg-cs2-accent text-cs2-text-on-accent" : "text-cs2-text-muted"}`} title={label}>{value === "all" ? label : `仅 ${label}`}</button>)}</div>
             <div className="flex items-center gap-2 text-[9px] font-semibold text-cs2-text-muted" aria-label="时间轴事件图例"><span className="inline-flex items-center gap-1"><i className="h-2.5 w-2.5 rounded-full bg-rose-400" />击杀</span><span className="inline-flex items-center gap-1"><i className="h-2.5 w-2.5 rounded-full bg-amber-300" />道具</span><span className="inline-flex items-center gap-1"><i className="h-2.5 w-2.5 rounded-full bg-orange-600" />下包</span></div>
             <div role="group" aria-label="人物标识" className="flex rounded-md border border-cs2-border bg-cs2-bg-input p-0.5">{[["number", "序号"], ["id", "ID"]].map(([value, label]) => <button key={value} type="button" aria-pressed={playerLabelMode === value} onClick={() => setPlayerLabelMode(value)} className={`rounded px-2 py-1 text-[8px] font-bold ${playerLabelMode === value ? "bg-cs2-accent text-cs2-text-on-accent" : "text-cs2-text-muted"}`}>{label}</button>)}</div>
             <div className="flex rounded-md border border-cs2-border bg-cs2-bg-input p-0.5">{[0.5, 1, 2, 4].map((value) => <button key={value} type="button" onClick={() => setSpeed(value)} className={`rounded px-2 py-1 font-mono text-[8px] ${speed === value ? "bg-cs2-text-primary text-cs2-bg-page" : "text-cs2-text-muted"}`}>{value}x</button>)}</div>
@@ -1163,7 +1185,7 @@ export default function Demo2DReplayPreview({
       </section>
 
       <div className="grid gap-3 xl:grid-cols-[300px_minmax(460px,1fr)_300px]">
-        <ReplayRoster title={teamAName} teamKey="a" side={selectedRound.team_a_side} players={teamAPlayers} framePlayers={uiFrame.players} bombCarrierName={uiBombState.carrier} liveStatsByName={liveStatsByName} roundKillStarsByName={roundKillStarsByName} utilityExposureByName={utilityExposureByName} />
+        <ReplayRoster title={teamAName} teamKey="a" side={selectedRound.team_a_side} players={teamAPlayers} framePlayers={uiFrame.players} bombCarrierName={uiBombState.carrier} liveStatsByName={liveStatsByName} roundKillStarsByName={roundKillStarsByName} utilityExposureByName={utilityExposureByName} selectedPlayerName={selectedPlayerName} onSelectPlayer={setSelectedPlayerName} />
         <section className="relative min-h-[720px] overflow-hidden rounded-xl border border-cs2-border bg-[#060b0e]">
           <div className="absolute left-3 top-3 z-30 flex items-center gap-2">
             {hasMapLayers && <div role="group" aria-label="地图楼层" className="flex rounded-md border border-cs2-border bg-cs2-bg-card/95 p-0.5">{[{ key: "upper", label: "上层" }, { key: "lower", label: "下层" }].map((item) => <button key={item.key} type="button" aria-pressed={mapLayer === item.key} onClick={() => setMapLayer(item.key)} className={`rounded px-2 py-1 text-[8px] font-bold ${mapLayer === item.key ? "bg-cs2-accent text-cs2-text-on-accent" : "text-cs2-text-muted"}`}>{item.label}</button>)}</div>}
@@ -1210,11 +1232,16 @@ export default function Demo2DReplayPreview({
             effectTracks={effectTracks}
             effectCapabilities={effectCapabilities}
             smokeDebugLayer={smokeDebugOn ? smokeDebugLayer : "off"}
+            selectedPlayerName={selectedPlayerName}
+            onSelectPlayer={setSelectedPlayerName}
+            fogTeam={fogTeam}
           />
           {!transform && <div className="absolute inset-x-0 bottom-4 text-center text-[9px] text-cs2-text-muted">当前地图缺少坐标变换元数据</div>}
         </section>
-        <ReplayRoster title={teamBName} teamKey="b" side={selectedRound.team_b_side} players={teamBPlayers} framePlayers={uiFrame.players} bombCarrierName={uiBombState.carrier} liveStatsByName={liveStatsByName} roundKillStarsByName={roundKillStarsByName} utilityExposureByName={utilityExposureByName} />
+        <ReplayRoster title={teamBName} teamKey="b" side={selectedRound.team_b_side} players={teamBPlayers} framePlayers={uiFrame.players} bombCarrierName={uiBombState.carrier} liveStatsByName={liveStatsByName} roundKillStarsByName={roundKillStarsByName} utilityExposureByName={utilityExposureByName} selectedPlayerName={selectedPlayerName} onSelectPlayer={setSelectedPlayerName} />
       </div>
+      {selectedPlayerName ? <div className="flex items-center justify-between rounded-lg border border-cs2-accent/25 bg-cs2-accent/[0.06] px-3 py-2 text-[10px]"><span className="text-cs2-text-secondary">当前选中：<b className="text-cs2-accent">{selectedPlayerName}</b> · 可从左右阵容或地图标记切换</span><button type="button" onClick={() => setSelectedPlayerName("")} className="font-semibold text-cs2-text-muted hover:text-cs2-text-primary active:scale-[0.97]">取消选中</button></div> : null}
+      {roundFinished ? <section className="rounded-xl border border-cs2-border bg-cs2-bg-card p-3"><div className="mb-2 flex flex-wrap items-end justify-between gap-2"><div><p className="text-[9px] font-bold uppercase tracking-[0.16em] text-cs2-accent">Round assessment</p><h3 className="text-[12px] font-bold text-cs2-text-primary">第 {selectedRound.round_number} 回合玩家评价</h3></div><p className="text-[9px] text-cs2-text-muted">回合结束后依据击杀、死亡、首杀、爆头与目标事件生成</p></div><div className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-5">{roundAssessments.map((item) => <button key={item.name} type="button" onClick={() => setSelectedPlayerName(item.name)} className={`rounded-lg border p-2 text-left active:scale-[0.985] ${selectedPlayerName === item.name ? "border-cs2-accent/60 bg-cs2-accent-soft" : "border-cs2-border bg-cs2-bg-input/25 hover:bg-cs2-bg-hover"}`}><div className="flex items-center justify-between gap-2"><span className="truncate text-[10px] font-bold text-cs2-text-primary">{item.name}</span><span className="font-mono text-[10px] font-black text-cs2-accent">{item.grade}</span></div><p className="mt-1 text-[9px] text-cs2-text-muted">{item.kills}K / {item.deaths}D · {item.label}</p></button>)}</div></section> : <p className="rounded-lg border border-dashed border-cs2-border px-3 py-2 text-center text-[9px] text-cs2-text-muted">播放至回合结束后显示本回合全部玩家评价。</p>}
     </div>
   );
 }

@@ -703,7 +703,7 @@ export default function App() {
       );
       // A fresh Demo analysis should surface the most spatially useful result
       // immediately. The loading gate remains visible until parsing is complete.
-      setDemoAnalysisDefaultView(loaded, "replay");
+      setDemoAnalysisDefaultView(loaded, "overview");
       setUploadedDemos(loaded);
       setParsedMatches(
         loaded.map((d) => {
@@ -1131,7 +1131,7 @@ export default function App() {
         return;
       }
       setUploadedDemos(uploads);
-      setDemoAnalysisDefaultView(uploads, "replay");
+      setDemoAnalysisDefaultView(uploads, "overview");
       setParsedMatches(uploads.map(() => null));
       setLibraryDemoIdsByIndex({});
       setCurrentMatchIndex(0);

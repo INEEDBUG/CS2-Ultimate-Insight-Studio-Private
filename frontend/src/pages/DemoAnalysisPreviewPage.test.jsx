@@ -187,6 +187,7 @@ function buildShell(overrides = {}) {
     queue: [],
     handleUpload: vi.fn(),
     handleResetDemo: vi.fn(),
+    handleLoadSelectedLibraryDemos: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -259,7 +260,7 @@ describe("DemoAnalysisPreviewPage Insight Agent flow", () => {
 
   test("renders real roster and match summary from the original parser state", () => {
     renderPage(buildShell());
-    fireEvent.click(screen.getByRole("button", { name: "概览" }));
+    fireEvent.click(screen.getByRole("button", { name: "计分板" }));
 
     expect(screen.getByRole("heading", { name: "Vitality" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "NAVI" })).toBeTruthy();
@@ -267,8 +268,7 @@ describe("DemoAnalysisPreviewPage Insight Agent flow", () => {
     expect(screen.getByRole("heading", { name: "比赛主线" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "本局洞察" })).toBeNull();
     expect(screen.getByRole("heading", { name: "关键回合" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "全场数据" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "全场计分板" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "全场计分板与玩家评级" })).toBeTruthy();
     expect(screen.queryByText("详细战报")).toBeNull();
     expect(screen.queryByText("最佳")).toBeNull();
     expect(screen.getByText(/35 分钟/)).toBeTruthy();
@@ -281,7 +281,7 @@ describe("DemoAnalysisPreviewPage Insight Agent flow", () => {
 
     const analysisNavigation = screen.getByRole("navigation", { name: "Demo 分析视图" });
     expect(within(analysisNavigation).getAllByRole("button").map((button) => button.textContent)).toEqual([
-      "高光与录制", "2D 回放", "热力图", "概览", "玩家", "回合", "经济",
+      "计分板", "2D 回放", "玩家评价", "回合评价", "热力图", "高光与录制", "经济",
     ]);
 
     fireEvent.click(screen.getByRole("button", { name: "2D 回放" }));
@@ -333,6 +333,14 @@ describe("DemoAnalysisPreviewPage Insight Agent flow", () => {
     expect(tRosterSlot?.getAttribute("data-side")).toBe("T");
     expect(tRosterSlot?.className).toContain("border-amber-200");
     expect(tRosterSlot?.className).toContain("replay-observer-slot");
+    fireEvent.click(screen.getByRole("button", { name: "选择回放玩家 ZywOo" }));
+    expect(screen.getByText(/当前选中：/).textContent).toContain("ZywOo");
+    expect(screen.getByRole("button", { name: "选择回放玩家 ZywOo" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "选择回放玩家 b1t" }));
+    expect(screen.getByText(/当前选中：/).textContent).toContain("b1t");
+    fireEvent.click(screen.getByRole("button", { name: "仅 Vitality" }));
+    expect(view.container.querySelector('[data-player-trace="b1t"]')).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "全局" }));
     expect(screen.getByLabelText("ZywOo 携带 C4").querySelector('img[src$="/c4.svg"]')).toBeTruthy();
     expect(screen.getByRole("button", { name: "定位事件：ZywOo 投掷 HE 手雷" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "定位事件：ZywOo 投掷 HE 手雷" }));
@@ -407,7 +415,7 @@ describe("DemoAnalysisPreviewPage Insight Agent flow", () => {
     expect(view.container.querySelector("style")?.textContent).toContain(".demo-shot-tracer { filter:none; }");
     expect(screen.getAllByText("b1t", { selector: "span" }).length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByRole("button", { name: "回合" }));
+    fireEvent.click(screen.getByRole("button", { name: "回合评价" }));
     expect(screen.getByRole("heading", { name: "回合列表" })).toBeTruthy();
     expect(screen.getByText("ZywOo 双杀守住 B 区")).toBeTruthy();
     expect(screen.getByText("全枪全弹")).toBeTruthy();
@@ -423,7 +431,7 @@ describe("DemoAnalysisPreviewPage Insight Agent flow", () => {
     expect(killRow?.textContent).toContain("b1t");
     expect(within(roundPanel).queryByText(/使用 ak47/)).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "玩家" }));
+    fireEvent.click(screen.getByRole("button", { name: "玩家评价" }));
     expect(screen.getByText("详细数据")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /生成 AI 点评/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "返回概览" }));
@@ -605,6 +613,7 @@ describe("DemoAnalysisPreviewPage Insight Agent flow", () => {
     });
     renderPage(shell);
 
+    fireEvent.click(screen.getByRole("button", { name: "高光与录制" }));
     expect(screen.getByText("先选择一名玩家")).toBeTruthy();
     expect(screen.queryByText(/AI 锐评/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "选择 ZywOo" }));
@@ -783,14 +792,24 @@ describe("DemoAnalysisPreviewPage Insight Agent flow", () => {
       clips,
     }));
 
+    fireEvent.click(screen.getByRole("button", { name: "高光与录制" }));
     expect(screen.getByText("已按设置中的 AI 洞察模式，为 ZywOo 生成锐评。")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "回合时间线" }));
     expect(screen.queryByText("已按设置中的 AI 洞察模式，为 ZywOo 生成锐评。")).toBeNull();
   });
 
-  test("shows the upload entry when no demo set has been loaded", () => {
+  test("shows the upload entry when no demo set has been loaded", async () => {
     renderPage(buildShell({ hasDemos: false, uploadedDemos: [], matchTabsData: [], players: [], selectedPlayersList: [] }));
     expect(screen.getByText("上传单个或多个 Demo，或从 Demo 库勾选本次要分析的文件。")).toBeTruthy();
     expect(screen.getByText("前往 Demo 库")).toBeTruthy();
+    expect(await screen.findByText("还没有已完成的历史分析")).toBeTruthy();
+  });
+
+  test("opens a persisted analysis directly from history", async () => {
+    API.get.mockResolvedValueOnce({ data: { items: [{ id: 77, filename: "history.dem", has_result: true, map_name: "de_nuke", team_a_score: 13, team_b_score: 11, total_rounds: 24, clip_count: 6, result_created_at: "2026-08-03T04:30:00Z" }] } });
+    const shell = buildShell({ hasDemos: false, uploadedDemos: [], matchTabsData: [], players: [], selectedPlayersList: [] });
+    renderPage(shell);
+    fireEvent.click(await screen.findByRole("button", { name: /history\.dem/ }));
+    expect(shell.handleLoadSelectedLibraryDemos).toHaveBeenCalledWith([77]);
   });
 });

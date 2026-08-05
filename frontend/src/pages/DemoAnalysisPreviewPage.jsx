@@ -7,10 +7,12 @@ import {
   Check,
   ChevronDown,
   CircleDollarSign,
+  Clock3,
   Crosshair,
   FileVideo2,
   Film,
   Flame,
+  History,
   Library,
   ListChecks,
   Loader2,
@@ -20,6 +22,7 @@ import {
   Swords,
   Users,
 } from "lucide-react";
+import API from "../api/api";
 import ActionBar from "../components/ActionBar";
 import ClipList from "../components/ClipList";
 import DemoUpload from "../components/DemoUpload";
@@ -45,12 +48,12 @@ import { summarizeWeaponKills } from "../utils/weaponKillCompilations.js";
 const PAGE_CONTAINER_CLASS = "mx-auto w-full max-w-[1440px] px-5 sm:px-5";
 
 const TABS = [
-  { key: "highlights", label: "高光与录制", icon: Film },
+  { key: "overview", label: "计分板", icon: Activity },
   { key: "replay", label: "2D 回放", icon: MapPin },
+  { key: "players", label: "玩家评价", icon: Users },
+  { key: "rounds", label: "回合评价", icon: ListChecks },
   { key: "heatmap", label: "热力图", icon: Flame },
-  { key: "overview", label: "概览", icon: Activity },
-  { key: "players", label: "玩家", icon: Users },
-  { key: "rounds", label: "回合", icon: ListChecks },
+  { key: "highlights", label: "高光与录制", icon: Film },
   { key: "economy", label: "经济", icon: CircleDollarSign },
 ];
 
@@ -291,6 +294,48 @@ function TeamScoreboard({ name, score, players, tone, parsedNames }) {
   );
 }
 
+function AnalysisHistoryPanel({ onOpen, onClose }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const loadHistory = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const { data } = await API.get("/demos/compact", { params: { limit: 200, offset: 0 } });
+      setItems((Array.isArray(data?.items) ? data.items : []).filter((item) => item?.has_result).slice(0, 24));
+    } catch (requestError) {
+      setError(requestError?.response?.data?.detail || requestError?.message || "读取历史分析失败");
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { void loadHistory(); }, []);
+  return (
+    <Panel
+      title="历史分析记录"
+      eyebrow="Recent analysis"
+      action={<div className="flex items-center gap-2"><button type="button" onClick={() => void loadHistory()} className="rounded-md border border-cs2-border p-1.5 text-cs2-text-muted hover:text-cs2-text-primary active:scale-[0.97]" aria-label="刷新历史分析"><RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} /></button>{onClose ? <button type="button" onClick={onClose} className="text-[10px] font-semibold text-cs2-text-muted hover:text-cs2-text-primary active:scale-[0.97]">收起</button> : null}</div>}
+    >
+      {error ? <p className="p-5 text-center text-[10px] text-rose-300">{error}</p> : loading ? <div className="flex items-center justify-center gap-2 p-8 text-[10px] text-cs2-text-muted"><Loader2 className="h-4 w-4 animate-spin" />正在读取本地分析记录…</div> : items.length ? (
+        <div className="grid gap-2 p-3 sm:grid-cols-2 xl:grid-cols-3">
+          {items.map((item) => {
+            const title = String(item.display_name || item.filename || `Demo #${item.id}`);
+            const scoreA = Number(item.team_a_score ?? item.match_meta?.team_a_score ?? 0);
+            const scoreB = Number(item.team_b_score ?? item.match_meta?.team_b_score ?? 0);
+            const dateValue = item.result_created_at || item.parsed_at || item.match_date || item.added_at;
+            const dateLabel = dateValue ? new Date(dateValue).toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "时间未知";
+            return <button key={item.id} type="button" onClick={() => onOpen?.(item.id)} className="group rounded-xl border border-cs2-border bg-cs2-bg-input/25 p-3 text-left hover:border-cs2-accent/40 hover:bg-cs2-bg-hover active:scale-[0.985]">
+              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-[11px] font-bold text-cs2-text-primary" title={title}>{title}</p><p className="mt-1 flex items-center gap-1 font-mono text-[8px] text-cs2-text-muted"><Clock3 className="h-3 w-3" />{dateLabel}</p></div><span className="shrink-0 rounded-md bg-cs2-accent-soft px-2 py-1 font-mono text-[11px] font-black text-cs2-accent">{scoreA}:{scoreB}</span></div>
+              <div className="mt-3 flex items-center justify-between gap-2 border-t border-cs2-border/70 pt-2 text-[9px] text-cs2-text-muted"><span>{mapLabel(item.map_name || item.match_meta?.map_name)}</span><span>{Number(item.total_rounds || 0)} 回合 · {Number(item.clip_count || 0)} 片段</span></div>
+            </button>;
+          })}
+        </div>
+      ) : <div className="p-8 text-center"><History className="mx-auto h-6 w-6 text-cs2-text-muted" /><p className="mt-2 text-[11px] font-semibold text-cs2-text-primary">还没有已完成的历史分析</p><p className="mt-1 text-[9px] text-cs2-text-muted">解析完成后会自动保存在本地数据库。</p></div>}
+    </Panel>
+  );
+}
+
 function EmptyResult({ onAnalyze, disabled, parsing }) {
   return (
     <div className="flex min-h-[260px] items-center justify-center rounded-xl border border-dashed border-cs2-border bg-cs2-bg-card/45 p-8 text-center">
@@ -322,7 +367,8 @@ export default function DemoAnalysisPreviewPage() {
     || `demo-${s.currentMatchIndex}`,
   ));
   const sessionPrefix = `demo-analysis:${sessionIdentity}`;
-  const [activeTab, setActiveTab] = useSessionState(`${sessionPrefix}:tab`, "highlights");
+  const [activeTab, setActiveTab] = useSessionState(`${sessionPrefix}:tab`, "overview");
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [activeHighlightView, setActiveHighlightView] = useSessionState(`${sessionPrefix}:highlight-view`, "clips");
   const [selectedTag, setSelectedTag] = useSessionState(`${sessionPrefix}:tag`, "全部");
   const [selectedRound, setSelectedRound] = useSessionState(`${sessionPrefix}:round`, null);
@@ -419,6 +465,7 @@ export default function DemoAnalysisPreviewPage() {
         <div className="mx-auto w-full max-w-5xl space-y-4">
           <div className="flex items-center justify-between gap-3"><div><h1 className="text-lg font-black text-cs2-text-primary">Demo 分析</h1><p className="mt-1 text-[10px] text-cs2-text-muted">上传单个或多个 Demo，或从 Demo 库勾选本次要分析的文件。</p></div><Link to="/library" className="inline-flex items-center gap-1.5 rounded-md border border-cs2-border bg-cs2-bg-input px-3 py-2 text-[11px] font-semibold text-cs2-text-secondary hover:border-cs2-accent/45 hover:text-cs2-text-primary"><Library className="h-3.5 w-3.5" />前往 Demo 库</Link></div>
           <DemoUpload onUpload={s.handleUpload} loading={Boolean(s.parsing)} loadingText={s.progressText} aiEnabled={Boolean(s.aiMode)} />
+          <AnalysisHistoryPanel onOpen={(demoId) => void s.handleLoadSelectedLibraryDemos([demoId])} />
         </div>
       </div>
     );
@@ -453,6 +500,7 @@ export default function DemoAnalysisPreviewPage() {
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <DemoSelector matches={matches} currentIndex={s.currentMatchIndex} onChange={s.setCurrentMatchIndex} disabled={s.batchRecording} />
+            <Button variant="secondary" size="sm" onClick={() => setHistoryOpen((open) => !open)}><History className="h-3.5 w-3.5" />历史分析</Button>
             <Button variant="secondary" size="sm" disabled={!currentUpload?.id && !currentUpload?.path} onClick={playCurrentDemo}><Play className="h-3 w-3 fill-current" />播放 Demo</Button>
             <Button variant="secondary" size="sm" onClick={s.handleResetDemo} disabled={s.anyDemoParsing || s.batchRecording}><RefreshCw className="h-3.5 w-3.5" />切换 Demo</Button>
           </div>
@@ -461,6 +509,7 @@ export default function DemoAnalysisPreviewPage() {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <main className={`${PAGE_CONTAINER_CLASS} space-y-3 py-3`} data-testid="demo-analysis-content-container">
+          {historyOpen ? <AnalysisHistoryPanel onOpen={(demoId) => void s.handleLoadSelectedLibraryDemos([demoId])} onClose={() => setHistoryOpen(false)} /> : null}
           <section className="relative overflow-hidden rounded-[10px] border border-cs2-border bg-cs2-bg-card shadow-md">
             <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-sky-500 via-cs2-accent to-amber-500" />
             <div className="grid h-[72px] items-center gap-2 px-4 md:grid-cols-[1fr_auto_1fr]">

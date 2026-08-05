@@ -50,7 +50,14 @@
   </tr>
   <tr>
     <td width="50%" align="center"><b>官匹 Demo 下载</b><br><a href="./docs/screenshots/official-demo-download.png"><img src="./docs/screenshots/official-demo-download.png" alt="官匹 Demo 下载" width="100%"></a></td>
-    <td width="50%" align="center"><b>Demo 解析分析</b><br><a href="./docs/screenshots/demo-analysis.png"><img src="./docs/screenshots/demo-analysis.png" alt="Demo 解析分析" width="100%"></a></td>
+    <td width="50%" align="center"><b>解析后默认计分板与全场评级</b><br><a href="./docs/screenshots/demo-analysis.png"><img src="./docs/screenshots/demo-analysis.png" alt="解析后默认计分板与全场评级" width="100%"></a></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center"><b>可重新打开的历史分析</b><br><a href="./docs/screenshots/analysis-history.png"><img src="./docs/screenshots/analysis-history.png" alt="可重新打开的历史分析" width="100%"></a></td>
+    <td width="50%" align="center"><b>单局玩家表现与优化方向</b><br><a href="./docs/screenshots/player-assessment.png"><img src="./docs/screenshots/player-assessment.png" alt="单局玩家表现与优化方向" width="100%"></a></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><b>逐回合玩家评价与事件时间线</b><br><a href="./docs/screenshots/round-assessment.png"><img src="./docs/screenshots/round-assessment.png" alt="逐回合玩家评价与事件时间线" width="100%"></a></td>
   </tr>
   <tr>
     <td width="50%" align="center"><b>OBS 录制队列</b><br><a href="./docs/screenshots/recording-queue.png"><img src="./docs/screenshots/recording-queue.png" alt="OBS 录制队列" width="100%"></a></td>
@@ -65,7 +72,7 @@
     <td width="50%" align="center"><b>设置中心与昼夜模式</b><br><a href="./docs/screenshots/settings.png"><img src="./docs/screenshots/settings.png" alt="设置中心与昼夜模式" width="100%"></a></td>
   </tr>
   <tr>
-    <td colspan="2" align="center"><b>2D 雷达回放与轨迹复盘</b><br><a href="./docs/screenshots/2d-replay-preview.png"><img src="./docs/screenshots/2d-replay-preview.png" alt="2D 雷达回放与轨迹复盘" width="100%"></a></td>
+    <td colspan="2" align="center"><b>2D 雷达回放、玩家选中与单队视角</b><br><a href="./docs/screenshots/2d-replay-preview.png"><img src="./docs/screenshots/2d-replay-preview.png" alt="2D 雷达回放、玩家选中与单队视角" width="100%"></a></td>
   </tr>
 </table>
 
@@ -77,13 +84,22 @@
 ### 高光解析与片段挖掘
 
 - **批量 Demo 解析** — 支持同时解析大量 Demo 的高光时刻，同一玩家在多场 Demo 中的高光会按场次组织展示。
-- **解析后直达 2D 回放** — Demo 基础分析完成后会直接进入 2D 雷达回放，可按回合查看双方站位、移动轨迹、击杀以及烟雾/燃烧范围。
+- **历史分析记录** — 已完成的分析会保存在本地 SQLite 数据库；分析页可直接打开最近记录并复用缓存，不会因为重启软件丢失，也不会为了查看历史重复慢解析。
+- **解析后先看计分板** — Demo 基础分析完成后默认打开全场计分板，集中显示比分、K/D/A、ADR、KAST、爆头率、首杀、AWP 与道具伤害，并给每位玩家生成 S–D 评级、优势和优化方向。
+- **逐回合玩家评价** — 回合页和 2D 回放结束状态都会展示该回合全部玩家评价，综合击杀、死亡、首杀、爆头和下包/拆包事件。
+- **交互式 2D 回放** — 可按回合查看双方站位、移动轨迹、击杀以及烟雾/燃烧范围；点击左右阵容 ID 或地图标记即可选中玩家，选中反馈会在阵容、地图和回合评价之间同步。
+- **单队战术视角** — 可切换全局、仅 A 队或仅 B 队，过滤另一队的位置、轨迹、弹道和投掷物。该功能用于战术复盘，不声称模拟游戏内真实视线遮挡。
 - **目标玩家锁定** — 自动识别对局内全部玩家，按 Steam ID、平台 ID 或昵称定位目标，兼容 5E、完美世界、官匹等不同 Demo 导出习惯。
 - **细粒度高光分析** — 自动分出 **高光**（多杀、颗秒、残局、刀杀、跳杀、拆包等）、**下饭**（电击枪、沙鹰、队友误伤及「人肉吸铁石」「人体描边」「肩并肩」等名场面）、**跨回合合集**（亲儿子喂饭、本命苦主、全场击杀/死亡串烧、按回合连续录制），以及 **梗局**（211 / o / i / z 系列研发标签，可配 AI 整局总评）。标签说明见 [片段类型与标签](./docs/highlight_tags.md)。
 - **回合时间线** — 除自动挖出的片段卡片外，可按回合浏览击杀/死亡时间线，把某一枪、某一死或整回合画面直接加入录制队列。
 - **回合连续录制** — 支持从回合开局录到死亡或回合结束，可勾选若干回合拼成一条长片。
 
 > **关于首次解析耗时：** “Demo 基础分析”和“2D 回放缓存生成”是两个阶段。首次进入某场 Demo 的 2D 回放时，程序还需要生成整场 Parquet、当前回合二进制轨迹及烟雾/燃烧效果缓存，因此第一次会比再次打开更慢；缓存命中后会直接读取本地结果。升级版本不会删除 `%APPDATA%\CS2 Insight Agent\data\cache\demo-replay` 中已有的回放缓存。
+
+### 视频介绍
+
+- [观看 3–5 分钟中文产品介绍（MP4）](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases/download/v2.4.6/CS2-Ultimate-Insight-Studio-v2.4.6-intro.mp4)
+- 视频采用 1920×1080 横版、H.264 + AAC，可直接上传 B 站；抖音发布时可选择横屏原片或在平台内自动适配。
 
 ### 训练与输入实验室
 
@@ -158,7 +174,8 @@ OBS 与 FFmpeg 仍由各自的运行时集成管理。
    - [X] 回合时间线浏览与入队录制
    - [X] 录制前观战预热 / 受害者 POV / 虚拟键盘 OBS 叠加
 - **V3**
-   - [ ] Demo 图分析
+   - [X] Demo 图分析、历史记录与玩家/回合评价
+   - [X] 2D 玩家选择与单队战术视角
    - [ ] 战术教练（投掷物轨迹分析 / 路线复盘）
 
 

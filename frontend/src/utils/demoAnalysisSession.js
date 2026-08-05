@@ -18,9 +18,9 @@ export function resetDemoAnalysisDefaultView(demos, storage = globalThis.session
   }
 }
 
-export function setDemoAnalysisDefaultView(demos, view = "replay", storage = globalThis.sessionStorage) {
+export function setDemoAnalysisDefaultView(demos, view = "overview", storage = globalThis.sessionStorage) {
   if (!storage) return;
-  const normalizedView = String(view || "replay").trim() || "replay";
+  const normalizedView = String(view || "overview").trim() || "overview";
   for (const [index, demo] of (Array.isArray(demos) ? demos : [demos]).entries()) {
     const identity = demoAnalysisSessionIdentity(demo, `demo-${index}`);
     storage.setItem(
