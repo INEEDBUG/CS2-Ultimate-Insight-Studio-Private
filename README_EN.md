@@ -61,8 +61,7 @@ This repository does not display upstream donation QR codes or solicit money on 
 
 ### Product Video
 
-- [Watch the 3–5 minute Chinese product tour (MP4)](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases/download/v2.4.6/CS2-Ultimate-Insight-Studio-v2.4.6-intro.mp4)
-- 1920×1080, H.264 + AAC, ready for Bilibili and reusable as a horizontal Douyin upload.
+- The product video is being remade. The previous cut is no longer distributed in the current Release.
 
 ### Training & Input Labs
 

@@ -98,8 +98,7 @@
 
 ### 视频介绍
 
-- [观看 3–5 分钟中文产品介绍（MP4）](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases/download/v2.4.6/CS2-Ultimate-Insight-Studio-v2.4.6-intro.mp4)
-- 视频采用 1920×1080 横版、H.264 + AAC，可直接上传 B 站；抖音发布时可选择横屏原片或在平台内自动适配。
+- 产品介绍视频正在重新制作，当前 Release 暂不提供旧版视频。
 
 ### 训练与输入实验室
 
