@@ -5,8 +5,13 @@ export async function fetchMatchHistory() {
   return data;
 }
 
-export async function testSteamConnection(steam_api_key, steam_id64) {
-  const { data } = await API.post("/match-history/test-connection", { steam_api_key, steam_id64 });
+export async function testSteamConnection(steam_api_key, steam_id64, steam_game_auth_code, steam_known_share_code) {
+  const { data } = await API.post("/match-history/test-connection", {
+    steam_api_key,
+    steam_id64,
+    steam_game_auth_code,
+    steam_known_share_code,
+  });
   return data;
 }
 
@@ -46,6 +51,13 @@ export async function retryShareCodeDownloadJob(jobId) {
   return data;
 }
 
-export function saveMatchCredentials(steam_api_key, steam_id64, match_mode, match_count) {
-  return API.put("/config", { steam_api_key, steam_id64, match_mode, match_count });
+export function saveMatchCredentials(steam_api_key, steam_id64, steam_game_auth_code, steam_known_share_code, match_mode, match_count) {
+  return API.put("/config", {
+    steam_api_key,
+    steam_id64,
+    steam_game_auth_code,
+    steam_known_share_code,
+    match_mode,
+    match_count,
+  });
 }

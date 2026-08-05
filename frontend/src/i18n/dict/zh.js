@@ -2038,7 +2038,7 @@ export default {
   "guide.faq21a": "可以。将来自不同 Demo 的片段都加入录制队列，程序会自动按 Demo 分组，依次启动 CS2 并录制各自的片段，全程无需人工干预。",
   // match — MatchHistoryPage
   "match.pageTitle": "官匹战绩",
-  "match.pageSubtitle": "通过 Steam Web API 拉取官方匹配（优先排位 / 竞技）战绩，可直接下载官方 Demo 进入「Demo 库」解析。",
+  "match.pageSubtitle": "通过 Steam 官方接口增量同步比赛分享码；下载 Demo 后在本地生成完整战绩与复盘。",
   "match.btnEditCred": "编辑凭据",
   "match.btnRefresh": "刷新战绩",
   "match.btnDownloadSelected": "下载选中 Demo",
@@ -2173,9 +2173,9 @@ export default {
   "inputLab.adjustAndRetest": "调整与复测",
   "inputLab.officialSafety": "CS2 官匹安全提醒",
   "inputLab.history": "本地配置对比历史",
-  "match.loadingMatches": "正在从 Steam 拉取战绩…",
+  "match.loadingMatches": "正在从 Steam 同步比赛记录…",
   "match.noMatches": "没有符合条件的战绩",
-  "match.fetchFail": "拉取战绩失败，请检查凭据或网络",
+  "match.fetchFail": "同步比赛记录失败，请检查四项凭据或网络",
   "match.paginationRange": "显示 {from}–{to} 共 {total} 场",
   "match.paginationPerPage": "每页 {n} 条",
   // match — CredentialPanel
@@ -2203,7 +2203,7 @@ export default {
   "match.credSecurityLink": "Steam 开发者页面",
   "match.credConnectSuccess": "连接成功 · {name}",
   "match.credTestBtn": "测试连接",
-  "match.credSaveBtn": "保存并拉取战绩",
+  "match.credSaveBtn": "保存并同步比赛",
   "match.credConnectFail": "连接失败",
   "match.credSaveFail": "保存失败",
   // match — MatchHistoryFilterBar

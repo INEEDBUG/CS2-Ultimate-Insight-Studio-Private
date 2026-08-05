@@ -43,11 +43,13 @@ This repository does not display upstream donation QR codes or solicit money on 
 
 - **Local Library Records** — List and thumbnail view showing match source, scoreboard, tracked players, display names, notes, and other key info.
 - **Auto Directory Monitoring** — Supports monitoring demo download directories from 5E, Perfect World, Official Matchmaking, FACEIT, etc., with one-click import.
+- **Official Steam Match Sync** — Uses Valve's supported `GetNextMatchSharingCode` flow with an API key, SteamID64, game authentication code, and a known share code. Synced codes are cached locally; complete maps, scores, and player assessments are generated only after downloading and parsing the Demo.
 
 ### Highlight Parsing & Clip Discovery
 
 - **Batch Demo Parsing** — Parse highlights from multiple demos simultaneously; highlights from the same player across different matches are organized by match.
 - **Persistent Analysis History** — Completed analysis is stored in the local SQLite database. Recent results can be reopened from the analysis page without reparsing the Demo.
+- **History While Parsing** — The history panel remains visible while background analysis runs, together with an elapsed timer. History cards stay read-only until the active job finishes so a running session cannot be replaced accidentally.
 - **Scoreboard First** — Base analysis now opens on the full-match scoreboard with K/D/A, ADR, KAST, headshot rate, openings, AWP and utility damage, plus an S–D grade and improvement notes for every player.
 - **Per-round Player Assessment** — The round explorer and completed 2D replay state grade every player from kills, deaths, openings, headshots and objective events.
 - **Interactive 2D Replay** — Review round-by-round positions, paths, kills, smokes and fire areas. Click either side roster or a radar marker to select a player, with selection shared across the replay and assessment cards.
@@ -58,6 +60,8 @@ This repository does not display upstream donation QR codes or solicit money on 
 - **Continuous Round Recording** — Record from round start to death or round end; select multiple rounds to combine into a longer clip.
 
 > **First-run performance:** base Demo analysis and 2D replay cache generation are separate stages. The first visit to a match's 2D replay also creates the whole-match Parquet cache, round binary trajectories, and smoke/fire effect cache, so it can take longer than reopening the same match. Cache hits read the local result directly. Upgrades do not delete existing replay caches under `%APPDATA%\CS2 Insight Agent\data\cache\demo-replay`.
+
+> **Steam credential safety:** the Steam Web API key and game authentication code remain in the local configuration only. UI responses are masked, and HTTP client logs do not record credential-bearing query strings. Valve's supported endpoint returns a share-code chain, so the app does not present unverified K/D data as official match statistics.
 
 ### Product Video
 

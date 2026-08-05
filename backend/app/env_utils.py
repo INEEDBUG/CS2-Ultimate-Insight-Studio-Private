@@ -429,6 +429,11 @@ class AppConfig(BaseModel):
     # 官匹战绩
     steam_api_key: str = ""
     steam_id64: str = ""
+    # Valve 官方比赛历史接口还要求用户生成的游戏认证码，以及一场属于该账号的已知比赛分享码。
+    steam_game_auth_code: str = ""
+    steam_known_share_code: str = ""
+    # 已同步的分享码只保存在本地，用于增量检查，避免每次启动重复请求整段历史。
+    steam_match_share_codes: list[str] = Field(default_factory=list)
     match_mode: str = "premier"   # premier / competitive
     match_count: int = 20         # 20 / 50 / 100
     # 虚拟键盘 overlay（OBS Browser Source 实时合成）

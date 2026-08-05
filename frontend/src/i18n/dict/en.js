@@ -2037,7 +2037,7 @@ export default {
   "guide.faq21a": "Yes. Add clips from different demos to the recording queue. The app automatically groups them by demo, then launches CS2 and records each group in turn — no manual intervention required.",
   // match — MatchHistoryPage
   "match.pageTitle": "Official Match History",
-  "match.pageSubtitle": "Fetch official matchmaking (Premier / Competitive) records via the Steam Web API. Download official demos directly into the Demo Library for analysis.",
+  "match.pageSubtitle": "Incrementally sync official match share codes from Steam, then download demos for complete local analysis.",
   "match.btnEditCred": "Edit credentials",
   "match.btnRefresh": "Refresh history",
   "match.btnDownloadSelected": "Download selected demo",
@@ -2172,9 +2172,9 @@ export default {
   "inputLab.adjustAndRetest": "Adjust and retest",
   "inputLab.officialSafety": "CS2 official matchmaking safety",
   "inputLab.history": "Local configuration history",
-  "match.loadingMatches": "Fetching match history from Steam…",
+  "match.loadingMatches": "Syncing official match records from Steam…",
   "match.noMatches": "No matches found for the current filters",
-  "match.fetchFail": "Failed to fetch match history — check credentials or network",
+  "match.fetchFail": "Failed to sync match records — check all four credentials or the network",
   "match.paginationRange": "Showing {from}–{to} of {total} matches",
   "match.paginationPerPage": "{n} per page",
   // match — CredentialPanel
@@ -2202,7 +2202,7 @@ export default {
   "match.credSecurityLink": "Steam developer page",
   "match.credConnectSuccess": "Connected · {name}",
   "match.credTestBtn": "Test connection",
-  "match.credSaveBtn": "Save & fetch history",
+  "match.credSaveBtn": "Save & sync matches",
   "match.credConnectFail": "Connection failed",
   "match.credSaveFail": "Save failed",
   // match — MatchHistoryFilterBar

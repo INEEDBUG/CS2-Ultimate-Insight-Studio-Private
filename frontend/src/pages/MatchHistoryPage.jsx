@@ -97,7 +97,7 @@ export default function MatchHistoryPage() {
   useEffect(() => {
     API.get("/config").then(({ data: cfg }) => {
       setConfig(cfg);
-      if (cfg.steam_api_key && cfg.steam_id64) {
+      if (cfg.steam_api_key && cfg.steam_id64 && cfg.steam_game_auth_code && cfg.steam_known_share_code) {
         doFetch();
       } else {
         setCredOpen(true);
@@ -189,7 +189,12 @@ export default function MatchHistoryPage() {
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const pageMatches = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const configured = !!(config?.steam_api_key);
+  const configured = !!(
+    config?.steam_api_key
+    && config?.steam_id64
+    && config?.steam_game_auth_code
+    && config?.steam_known_share_code
+  );
   const shareCodeBusy = shareCodeJob?.status === "running";
   const shareCodeProgress = Math.round((shareCodeJob?.progress ?? 0) * 100);
 
@@ -329,6 +334,8 @@ export default function MatchHistoryPage() {
         <CredentialPanel
           configured={configured && !credOpen}
           maskedKey={config?.steam_api_key}
+          maskedAuthCode={config?.steam_game_auth_code}
+          maskedKnownCode={config?.steam_known_share_code}
           steamId64={config?.steam_id64}
           matchMode={config?.match_mode}
           matchCount={config?.match_count}
@@ -340,6 +347,43 @@ export default function MatchHistoryPage() {
       {/* Player overview */}
       {data?.player && (
         <PlayerOverviewPanel player={data.player} stats={data.stats_summary} />
+      )}
+
+      {data?.source === "official_share_codes" && (
+        <section className="rounded-[10px] border border-cs2-border bg-cs2-bg-card p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-[14px] font-semibold text-cs2-text-primary">Steam 官方比赛记录</h2>
+              <p className="mt-1 text-[11.5px] text-cs2-text-muted">Steam API 只同步比赛分享码；完整地图、比分和玩家评价会在下载并解析 Demo 后生成。</p>
+            </div>
+            <span className="rounded-full border border-cs2-border bg-cs2-bg-input px-2.5 py-1 font-mono text-[10px] text-cs2-text-secondary">
+              {data.newest_reached ? "已同步至最新" : `已读取最近 ${data.total || 0} 场`}
+            </span>
+          </div>
+          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {(data.match_codes || []).map((item, index) => (
+              <article key={item.match_id} className="rounded-[9px] border border-cs2-border bg-cs2-bg-input/35 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold text-cs2-text-primary">比赛 {(data.total || 0) - index}</p>
+                    <p className="mt-1 truncate font-mono text-[9px] text-cs2-text-muted" title={item.match_id}>Match ID · {item.match_id}</p>
+                  </div>
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold ${item.demo_in_library ? "bg-cs2-success/15 text-cs2-success" : "bg-cs2-accent-soft text-cs2-accent"}`}>
+                    {item.demo_in_library ? "已入库" : "可下载"}
+                  </span>
+                </div>
+                <p className="mt-3 truncate rounded bg-black/20 px-2 py-1.5 font-mono text-[9px] text-cs2-text-secondary" title={item.share_code}>{item.share_code}</p>
+                <button
+                  type="button"
+                  onClick={() => item.demo_in_library ? navigate("/library") : setShareCode(item.share_code)}
+                  className="mt-2 w-full rounded-[7px] border border-cs2-border px-2.5 py-1.5 text-[11px] font-semibold text-cs2-text-secondary transition-[color,border-color,background-color,transform] duration-150 ease-out hover:border-cs2-accent/45 hover:bg-cs2-accent-soft hover:text-cs2-text-primary active:scale-[0.98]"
+                >
+                  {item.demo_in_library ? "前往 Demo 库" : "填入上方下载框"}
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
       )}
 
       {/* Error */}
@@ -358,7 +402,7 @@ export default function MatchHistoryPage() {
       )}
 
       {/* Match list */}
-      {data && !loading && (
+      {data && data.source !== "official_share_codes" && !loading && (
         <>
           <MatchHistoryFilterBar
             filters={filters}

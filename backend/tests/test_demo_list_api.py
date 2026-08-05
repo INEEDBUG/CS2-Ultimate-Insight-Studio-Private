@@ -147,30 +147,13 @@ def test_list_demo_ids_returns_only_filtered_ids(monkeypatch):
 
 
 def test_match_history_batches_library_lookup(monkeypatch):
-    raw_matches = [
-        {
-            "matchid": match_id,
-            "matchtime": 1_700_000_000,
-            "watchablematchinfo": {"game_type": 2048},
-            "roundstatsall": [{
-                "map": 6,
-                "num_rounds": 2,
-                "match_duration": 180,
-                "team_scores": [2, 0],
-                "kills": [2],
-                "assists": [0],
-                "deaths": [1],
-                "enemy_headshots": [1],
-                "enemy_kills": [2],
-                "mvps": [1],
-                "damage": [200],
-            }],
-        }
-        for match_id in ("1", "2")
+    share_codes = [
+        "CSGO-88Xwc-WZWzc-Z2bjd-5apou-yqk2H",
+        "CSGO-88Xwc-WZWzc-Z2bjd-5apou-yqk2J",
     ]
 
-    async def fake_matches(*_args):
-        return raw_matches
+    async def fake_sync(*_args):
+        return share_codes, True
 
     async def fake_player(*_args):
         return {"personaname": "Player", "avatarfull": "avatar"}
@@ -191,19 +174,25 @@ def test_match_history_batches_library_lookup(monkeypatch):
         lambda: SimpleNamespace(
             steam_api_key="key",
             steam_id64="76561198000000000",
+            steam_game_auth_code="AAAA-AAAAA-AAAA",
+            steam_known_share_code=share_codes[0],
+            steam_match_share_codes=[],
             match_count=20,
             match_mode="premier",
         ),
     )
-    monkeypatch.setattr(main, "fetch_match_history", fake_matches)
+    monkeypatch.setattr(main, "sync_match_share_codes", fake_sync)
     monkeypatch.setattr(main, "fetch_player_summary", fake_player)
+    monkeypatch.setattr(main, "save_config", lambda _cfg: None)
     monkeypatch.setattr(main.demo_db, "find_existing_filenames", fake_existing)
     monkeypatch.setattr(main.demo_db, "find_by_filename", forbidden_single_lookup)
 
     response = _run(main.get_match_history())
 
-    assert batch_calls == [["match730_1.dem", "match730_2.dem"]]
-    assert [row["demo_in_library"] for row in response["matches"]] == [False, True]
+    assert len(batch_calls) == 1
+    assert response["source"] == "official_share_codes"
+    assert len(response["match_codes"]) == 2
+    assert response["matches"] == []
 
 
 def test_batch_summary_reports_corrupt_result_as_item_error(monkeypatch):

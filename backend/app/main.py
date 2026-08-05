@@ -104,7 +104,9 @@ import httpx
 
 from .steam_match_history import (
     fetch_match_history,
+    fetch_next_match_share_code,
     fetch_player_summary,
+    sync_match_share_codes,
     parse_match_row,
     download_demo,
     game_type_to_mode,
@@ -115,12 +117,15 @@ from .valve_demo_resolver import (
     BoilerRuntimeError,
     InvalidShareCodeError,
     MatchInfoDecodeError,
+    decode_match_share_code,
     resolve_valve_demo,
 )
 
 APP_VERSION, _APP_VERSION_SOURCE = resolve_local_version_info()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+# httpx 的 INFO 日志会打印完整查询串，Steam Web API Key 与游戏认证码不得落盘。
+logging.getLogger("httpx").setLevel(logging.WARNING)
 install_gsi_access_log_filter()
 
 _FAULT_LOG_FILE = None
@@ -948,6 +953,8 @@ class ConfigPayload(BaseModel):
     experimental: Optional[ExperimentalPayload] = None
     steam_api_key: Optional[str] = None
     steam_id64: Optional[str] = None
+    steam_game_auth_code: Optional[str] = None
+    steam_known_share_code: Optional[str] = None
     match_mode: Optional[str] = None
     match_count: Optional[int] = None
     # Cloudflare / electron-updater 启动检查频率（不再用于 GitHub update-info）
@@ -976,6 +983,13 @@ def get_config():
     if data.get("steam_api_key"):
         raw = data["steam_api_key"]
         data["steam_api_key"] = "****" + raw[-4:] if len(raw) >= 4 else "****"
+    if data.get("steam_game_auth_code"):
+        raw = str(data["steam_game_auth_code"])
+        data["steam_game_auth_code"] = "****" + raw[-4:] if len(raw) >= 4 else "****"
+    if data.get("steam_known_share_code"):
+        raw = str(data["steam_known_share_code"])
+        data["steam_known_share_code"] = "CSGO-****-****-****-****-" + raw[-5:]
+    data.pop("steam_match_share_codes", None)
     obs_pw = (data.get("obs") or {}).get("password") or ""
     if obs_pw:
         data.setdefault("obs", {})
@@ -1340,6 +1354,13 @@ async def update_config(payload: ConfigPayload):
         cfg.steam_api_key = payload.steam_api_key.strip()
     if payload.steam_id64 is not None and payload.steam_id64:
         cfg.steam_id64 = payload.steam_id64.strip()
+    if payload.steam_game_auth_code is not None and payload.steam_game_auth_code and not payload.steam_game_auth_code.startswith("****"):
+        cfg.steam_game_auth_code = payload.steam_game_auth_code.strip()
+    if payload.steam_known_share_code is not None and payload.steam_known_share_code and not payload.steam_known_share_code.startswith("CSGO-****"):
+        next_seed = payload.steam_known_share_code.strip()
+        if next_seed != cfg.steam_known_share_code:
+            cfg.steam_match_share_codes = []
+        cfg.steam_known_share_code = next_seed
     if payload.match_mode is not None and payload.match_mode in ("premier", "competitive"):
         cfg.match_mode = payload.match_mode
     if payload.match_count is not None and payload.match_count in (20, 50, 100):
@@ -2566,75 +2587,71 @@ async def demo_library_event_stream():
 @app.get("/api/match-history/matches")
 async def get_match_history():
     cfg = load_config()
-    if not cfg.steam_api_key or not cfg.steam_id64:
-        raise HTTPException(400, "Steam API Key 和 SteamID64 未配置，请先保存凭据")
+    if not all((
+        cfg.steam_api_key,
+        cfg.steam_id64,
+        cfg.steam_game_auth_code,
+        cfg.steam_known_share_code,
+    )):
+        raise HTTPException(
+            400,
+            "Steam 官方比赛同步需要 API Key、SteamID64、游戏认证码和一场已知比赛分享码",
+        )
 
     try:
-        raw_matches, player = await asyncio.gather(
-            fetch_match_history(cfg.steam_api_key, cfg.steam_id64, cfg.match_count),
-            fetch_player_summary(cfg.steam_api_key, cfg.steam_id64),
+        player = await fetch_player_summary(cfg.steam_api_key, cfg.steam_id64)
+        share_codes, newest_reached = await sync_match_share_codes(
+            cfg.steam_api_key,
+            cfg.steam_id64,
+            cfg.steam_game_auth_code,
+            cfg.steam_known_share_code,
+            cfg.steam_match_share_codes,
+            cfg.match_count,
         )
     except httpx.HTTPStatusError as e:
         status = e.response.status_code
         if status == 403:
-            raise HTTPException(403, "Steam API Key 无效，请检查凭据")
+            raise HTTPException(403, "Steam API Key 或游戏认证码无效，请检查凭据")
+        if status == 412:
+            raise HTTPException(412, "已知比赛分享码无效，或不属于当前 Steam 账号")
         if status == 429:
             raise HTTPException(429, "Steam API 请求频率超限，请稍后再试")
-        raise HTTPException(502, f"Steam API 返回 {status}")
-    except httpx.RequestError as e:
-        raise HTTPException(502, f"无法连接 Steam API: {e}")
-    except ValueError as e:
-        raise HTTPException(502, str(e))
+        if status == 503:
+            raise HTTPException(503, "Steam API 暂时繁忙，请稍后再试")
+        raise HTTPException(502, f"Steam API 返回 HTTP {status}")
+    except httpx.RequestError:
+        raise HTTPException(502, "无法连接 Steam API，请检查网络后重试")
+    except InvalidShareCodeError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
-    mode_filter = cfg.match_mode
-    parsed_rows: list[tuple[dict, str]] = []
-    for i, m in enumerate(raw_matches):
-        wmi = m.get("watchablematchinfo") or {}
-        mode = game_type_to_mode(int(wmi.get("game_type", 0)))
-        if mode != mode_filter:
-            continue
-        try:
-            row = parse_match_row(m, player_index=0)
-        except Exception:
-            logger.exception("Failed to parse match %s", m.get("matchid"))
-            continue
-        dem_name = f"match730_{row['match_id']}.dem"
-        parsed_rows.append((row, dem_name))
-    existing_filenames = await demo_db.find_existing_filenames(
-        dem_name for _, dem_name in parsed_rows
-    )
-    rows = []
-    for row, dem_name in parsed_rows:
-        row["demo_in_library"] = dem_name in existing_filenames
-        rows.append(row)
+    if share_codes != cfg.steam_match_share_codes:
+        cfg.steam_match_share_codes = share_codes
+        save_config(cfg)
 
-    wins = sum(1 for r in rows if r["result"] == "win")
-    losses = sum(1 for r in rows if r["result"] == "loss")
-    total_kills = sum(r["kills"] for r in rows)
-    total_deaths = sum(r["deaths"] for r in rows)
-    total_hs = sum(r["headshot_kills"] for r in rows)
-    total_dmg = sum(r["damage"] for r in rows)
-    total_rounds = sum(r["score_own"] + r["score_opp"] for r in rows)
-    avg_kd = round(total_kills / total_deaths, 2) if total_deaths else 0.0
-    hs_pct = round(total_hs / total_kills * 100) if total_kills else 0
-    avg_adr = round(total_dmg / total_rounds, 1) if total_rounds else 0.0
-    avg_rating = round(sum(r["rating"] for r in rows) / len(rows), 2) if rows else 0.0
+    visible_codes = share_codes[-max(1, min(int(cfg.match_count), 100)):]
+    decoded = [decode_match_share_code(code) for code in visible_codes]
+    filenames = [f"match730_{item.match_id}.dem" for item in decoded]
+    existing_filenames = await demo_db.find_existing_filenames(filenames)
+    rows = [
+        {
+            "share_code": item.share_code,
+            "match_id": str(item.match_id),
+            "filename": filename,
+            "demo_in_library": filename in existing_filenames,
+        }
+        for item, filename in zip(decoded, filenames, strict=True)
+    ][::-1]
 
     return {
+        "source": "official_share_codes",
         "player": {
             "name": player.get("personaname", ""),
             "avatar": player.get("avatarfull", ""),
             "steam_id64": cfg.steam_id64,
         },
-        "stats_summary": {
-            "wins": wins,
-            "losses": losses,
-            "avg_kd": avg_kd,
-            "headshot_pct": hs_pct,
-            "avg_adr": avg_adr,
-            "rating": avg_rating,
-        },
-        "matches": rows,
+        "match_codes": rows,
+        "matches": [],
+        "newest_reached": newest_reached,
         "total": len(rows),
     }
 
@@ -2643,17 +2660,36 @@ async def get_match_history():
 async def test_steam_connection(body: dict = Body(...)):
     api_key = str(body.get("steam_api_key") or "").strip()
     steam_id64 = str(body.get("steam_id64") or "").strip()
-    if not api_key or not steam_id64:
-        raise HTTPException(400, "steam_api_key 和 steam_id64 不能为空")
+    game_auth_code = str(body.get("steam_game_auth_code") or "").strip()
+    known_share_code = str(body.get("steam_known_share_code") or "").strip()
+    if not all((api_key, steam_id64, game_auth_code, known_share_code)):
+        raise HTTPException(400, "四项 Steam 同步凭据均不能为空")
     try:
-        player = await fetch_player_summary(api_key, steam_id64)
+        player, next_code = await asyncio.gather(
+            fetch_player_summary(api_key, steam_id64),
+            fetch_next_match_share_code(api_key, steam_id64, game_auth_code, known_share_code),
+        )
     except httpx.HTTPStatusError as e:
-        raise HTTPException(e.response.status_code, f"Steam API 返回 {e.response.status_code}")
-    except httpx.RequestError as e:
-        raise HTTPException(502, f"无法连接 Steam: {e}")
+        status = e.response.status_code
+        messages = {
+            403: "Steam API Key 或游戏认证码无效",
+            412: "已知比赛分享码无效，或不属于当前 Steam 账号",
+            429: "Steam API 请求频率超限，请稍后再试",
+            503: "Steam API 暂时繁忙，请稍后再试",
+        }
+        raise HTTPException(status, messages.get(status, f"Steam API 返回 HTTP {status}"))
+    except httpx.RequestError:
+        raise HTTPException(502, "无法连接 Steam，请检查网络后重试")
+    except InvalidShareCodeError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if not player:
         raise HTTPException(404, "未找到该 SteamID 的玩家信息，请检查 SteamID64")
-    return {"ok": True, "name": player.get("personaname", ""), "avatar": player.get("avatarfull", "")}
+    return {
+        "ok": True,
+        "name": player.get("personaname", ""),
+        "avatar": player.get("avatarfull", ""),
+        "next_match_available": next_code is not None,
+    }
 
 
 @app.post("/api/match-history/download")

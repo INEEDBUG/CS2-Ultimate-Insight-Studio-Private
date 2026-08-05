@@ -1,4 +1,5 @@
 import bz2
+import asyncio
 import sys
 import time
 from pathlib import Path
@@ -16,6 +17,7 @@ from app.steam_match_history import (
     calc_rating,
     build_demo_url,
     parse_match_row,
+    sync_match_share_codes,
 )
 
 
@@ -76,6 +78,38 @@ def test_build_demo_url():
     assert url.startswith("http://replay")
     assert ".valve.net/730/" in url
     assert url.endswith(".dem.bz2")
+
+
+def test_share_code_sync_uses_cached_tail_for_incremental_refresh(monkeypatch):
+    seed = "CSGO-88Xwc-WZWzc-Z2bjd-5apou-yqk2H"
+    newer = "CSGO-88Xwc-WZWzc-Z2bjd-5apou-yqk2J"
+    calls = []
+
+    async def fake_next(_key, _steam_id, _auth, known):
+        calls.append(known)
+        return None
+
+    monkeypatch.setattr("app.steam_match_history.fetch_next_match_share_code", fake_next)
+    codes, newest = asyncio.run(sync_match_share_codes("key", "765", "auth", seed, [seed, newer], 20))
+
+    assert codes == [seed, newer]
+    assert newest is True
+    assert calls == [newer]
+
+
+def test_share_code_sync_appends_new_codes_until_latest(monkeypatch):
+    seed = "CSGO-88Xwc-WZWzc-Z2bjd-5apou-yqk2H"
+    newer = "CSGO-88Xwc-WZWzc-Z2bjd-5apou-yqk2J"
+    responses = iter([newer, None])
+
+    async def fake_next(*_args):
+        return next(responses)
+
+    monkeypatch.setattr("app.steam_match_history.fetch_next_match_share_code", fake_next)
+    codes, newest = asyncio.run(sync_match_share_codes("key", "765", "auth", seed, [], 20))
+
+    assert codes == [seed, newer]
+    assert newest is True
 
 def test_parse_match_row_win():
     raw_match = {

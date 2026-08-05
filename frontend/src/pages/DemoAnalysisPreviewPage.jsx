@@ -294,7 +294,7 @@ function TeamScoreboard({ name, score, players, tone, parsedNames }) {
   );
 }
 
-function AnalysisHistoryPanel({ onOpen, onClose }) {
+function AnalysisHistoryPanel({ onOpen, onClose, disabled = false }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -325,7 +325,7 @@ function AnalysisHistoryPanel({ onOpen, onClose }) {
             const scoreB = Number(item.team_b_score ?? item.match_meta?.team_b_score ?? 0);
             const dateValue = item.result_created_at || item.parsed_at || item.match_date || item.added_at;
             const dateLabel = dateValue ? new Date(dateValue).toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "时间未知";
-            return <button key={item.id} type="button" onClick={() => onOpen?.(item.id)} className="group rounded-xl border border-cs2-border bg-cs2-bg-input/25 p-3 text-left hover:border-cs2-accent/40 hover:bg-cs2-bg-hover active:scale-[0.985]">
+            return <button key={item.id} type="button" onClick={() => onOpen?.(item.id)} disabled={disabled} title={disabled ? "当前 Demo 解析完成后即可打开" : `打开 ${title}`} className="group rounded-xl border border-cs2-border bg-cs2-bg-input/25 p-3 text-left transition-[border-color,background-color,transform,opacity] duration-150 ease-out hover:border-cs2-accent/40 hover:bg-cs2-bg-hover active:scale-[0.985] disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:border-cs2-border disabled:hover:bg-cs2-bg-input/25 disabled:active:scale-100">
               <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-[11px] font-bold text-cs2-text-primary" title={title}>{title}</p><p className="mt-1 flex items-center gap-1 font-mono text-[8px] text-cs2-text-muted"><Clock3 className="h-3 w-3" />{dateLabel}</p></div><span className="shrink-0 rounded-md bg-cs2-accent-soft px-2 py-1 font-mono text-[11px] font-black text-cs2-accent">{scoreA}:{scoreB}</span></div>
               <div className="mt-3 flex items-center justify-between gap-2 border-t border-cs2-border/70 pt-2 text-[9px] text-cs2-text-muted"><span>{mapLabel(item.map_name || item.match_meta?.map_name)}</span><span>{Number(item.total_rounds || 0)} 回合 · {Number(item.clip_count || 0)} 片段</span></div>
             </button>;
@@ -374,6 +374,7 @@ export default function DemoAnalysisPreviewPage() {
   const [selectedRound, setSelectedRound] = useSessionState(`${sessionPrefix}:round`, null);
   const [replayRound, setReplayRound] = useSessionState(`${sessionPrefix}:replay-round`, null);
   const [statsPlayer, setStatsPlayer] = useSessionState(`${sessionPrefix}:stats-player`, "");
+  const [analysisElapsedSeconds, setAnalysisElapsedSeconds] = useState(0);
   const uploadedDemoCount = s.uploadedDemos?.length || 0;
   const parsedDemoCount = matches.filter((match) => match?.parsed).length;
   const allDemosParsed = uploadedDemoCount > 0
@@ -389,6 +390,18 @@ export default function DemoAnalysisPreviewPage() {
     || (analysisGateActive
       ? `正在解析所选 Demo（${parsedDemoCount}/${uploadedDemoCount}）…`
       : `尚有 ${Math.max(0, uploadedDemoCount - parsedDemoCount)} 个 Demo 未完成解析`);
+  useEffect(() => {
+    if (!analysisGateActive) {
+      setAnalysisElapsedSeconds(0);
+      return undefined;
+    }
+    const startedAt = Date.now();
+    setAnalysisElapsedSeconds(0);
+    const timer = window.setInterval(() => {
+      setAnalysisElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [analysisGateActive]);
   const meta = s.matchMeta || currentUpload?.match_meta || matches[s.currentMatchIndex]?.match_meta || {};
   const teams = useMemo(() => splitTeams(s.players), [s.players]);
   const teamAName = meta.team_a_name || firstTeamName(teams.a, "Team A");
@@ -484,7 +497,15 @@ export default function DemoAnalysisPreviewPage() {
               <RefreshCw className="h-3.5 w-3.5" />重置 Demo
             </Button>
           </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-cs2-accent/20 bg-cs2-accent-soft/45 px-3 py-2 text-[10px] text-cs2-text-secondary" aria-live="polite">
+            <span><strong className="text-cs2-accent">解析任务仍在后台运行</strong>，界面没有卡死；较大的 Demo 或首次生成 2D 缓存通常需要更久。</span>
+            <span className="shrink-0 rounded-full border border-cs2-border bg-cs2-bg-input px-2 py-1 font-mono tabular-nums text-cs2-text-primary">已运行 {analysisElapsedSeconds} 秒</span>
+          </div>
           <DemoUpload onUpload={s.handleUpload} loading loadingText={analysisGateText} aiEnabled={Boolean(s.aiMode)} />
+          <AnalysisHistoryPanel
+            disabled={analysisGateActive}
+            onOpen={(demoId) => void s.handleLoadSelectedLibraryDemos([demoId])}
+          />
         </div>
       </div>
     );

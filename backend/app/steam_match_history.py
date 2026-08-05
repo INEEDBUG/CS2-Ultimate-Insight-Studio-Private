@@ -13,6 +13,8 @@ from typing import Callable, Optional
 
 import httpx
 
+from .valve_demo_resolver import InvalidShareCodeError, extract_match_share_code
+
 logger = logging.getLogger(__name__)
 
 STEAM_API_BASE = "https://api.steampowered.com"
@@ -170,6 +172,7 @@ def parse_match_row(raw: dict, player_index: int = 0) -> dict:
 # ---------- async API calls ----------
 
 async def fetch_match_history(api_key: str, steam_id64: str, count: int = 20) -> list[dict]:
+    """Legacy endpoint retained for compatibility tests; Valve no longer exposes it publicly."""
     url = f"{STEAM_API_BASE}/ICSGOServers_730/GetMatchHistory/v001/"
     params = {"key": api_key, "steamid": steam_id64, "count": min(count, 100)}
     async with httpx.AsyncClient(timeout=20.0) as client:
@@ -181,6 +184,83 @@ async def fetch_match_history(api_key: str, steam_id64: str, count: int = 20) ->
     if status != 1:
         raise ValueError(f"Steam API status={status}")
     return result.get("matches") or []
+
+
+async def fetch_next_match_share_code(
+    api_key: str,
+    steam_id64: str,
+    game_auth_code: str,
+    known_share_code: str,
+) -> str | None:
+    """Return the next official matchmaking share code, or ``None`` at the newest match."""
+
+    url = f"{STEAM_API_BASE}/ICSGOPlayers_730/GetNextMatchSharingCode/v1/"
+    params = {
+        "key": api_key,
+        "steamid": steam_id64,
+        "steamidkey": game_auth_code,
+        "knowncode": extract_match_share_code(known_share_code),
+    }
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.get(url, params=params)
+    if response.status_code == 202:
+        return None
+    response.raise_for_status()
+    next_code = str((response.json().get("result") or {}).get("nextcode") or "").strip()
+    if not next_code or next_code.lower() == "n/a":
+        return None
+    return extract_match_share_code(next_code)
+
+
+async def sync_match_share_codes(
+    api_key: str,
+    steam_id64: str,
+    game_auth_code: str,
+    seed_share_code: str,
+    cached_codes: list[str] | None = None,
+    count: int = 20,
+) -> tuple[list[str], bool]:
+    """Incrementally walk Valve's supported share-code history endpoint.
+
+    The oldest configured seed remains stable. Cached codes make later refreshes
+    a single newest-match check instead of replaying the entire chain.
+    """
+
+    seed = extract_match_share_code(seed_share_code)
+    codes: list[str] = []
+    for value in cached_codes or []:
+        try:
+            normalized = extract_match_share_code(value)
+        except InvalidShareCodeError:
+            continue
+        if normalized not in codes:
+            codes.append(normalized)
+    if seed not in codes:
+        codes = [seed]
+    elif codes[0] != seed:
+        codes = codes[codes.index(seed):]
+
+    request_window = max(1, min(int(count), 100))
+    newest_reached = False
+    seen = set(codes)
+    fetched = 0
+    while fetched < request_window:
+        next_code = await fetch_next_match_share_code(
+            api_key,
+            steam_id64,
+            game_auth_code,
+            codes[-1],
+        )
+        if next_code is None:
+            newest_reached = True
+            break
+        if next_code in seen:
+            newest_reached = True
+            break
+        codes.append(next_code)
+        seen.add(next_code)
+        fetched += 1
+    return codes, newest_reached
 
 
 async def fetch_player_summary(api_key: str, steam_id64: str) -> dict:

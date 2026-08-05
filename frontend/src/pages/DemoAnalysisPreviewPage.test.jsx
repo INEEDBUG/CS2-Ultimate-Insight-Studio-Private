@@ -226,7 +226,7 @@ describe("DemoAnalysisPreviewPage Insight Agent flow", () => {
     expect(shell.setCurrentMatchIndex).toHaveBeenCalledWith(1);
   });
 
-  test("keeps batch parsing inside the upload box until every demo is ready", () => {
+  test("keeps batch parsing inside the upload box until every demo is ready", async () => {
     const shell = buildShell({
       parsingByIndex: { 0: true },
       anyDemoParsing: true,
@@ -240,6 +240,9 @@ describe("DemoAnalysisPreviewPage Insight Agent flow", () => {
 
     expect(screen.getByRole("status").getAttribute("aria-busy")).toBe("true");
     expect(screen.getByText("正在自动解析每个 Demo 的全部玩家（1/2）…")).toBeTruthy();
+    expect(screen.getByText(/解析任务仍在后台运行/)).toBeTruthy();
+    expect(screen.getByText(/已运行 0 秒/)).toBeTruthy();
+    expect(await screen.findByText("还没有已完成的历史分析")).toBeTruthy();
     expect(screen.queryByText("PREVIEW")).toBeNull();
     expect(screen.queryByRole("button", { name: "2D 回放" })).toBeNull();
     expect(screen.queryByText("13")).toBeNull();
