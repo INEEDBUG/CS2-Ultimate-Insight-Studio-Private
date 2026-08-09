@@ -24,6 +24,7 @@ import BombObjectiveCard from "./overview/BombObjectiveCard";
 import PlayerEventsCard from "./overview/PlayerEventsCard";
 import KeyRoundsTimeline from "./overview/KeyRoundsTimeline";
 import { buildPlayerAssessment, buildRoundPlayerAssessments } from "../../utils/playerPerformance";
+import { buildMatchRatingPro } from "../../utils/playerRatings";
 
 export function Panel({ title, eyebrow, action, children, className = "" }) {
   return (
@@ -165,7 +166,7 @@ export function useWorkspaceData(workspace, fallback) {
   }, [workspace, fallback]);
 }
 
-function TeamScoreboard({ teamKey, name, score, players, totalRounds, onSelectPlayer, winner = false }) {
+function TeamScoreboard({ teamKey, name, score, players, totalRounds, onSelectPlayer, winner = false, ratings, heroName, culpritName }) {
   const isBlue = teamKey === "a";
   return (
     <section className={`min-w-0 overflow-hidden rounded-lg border bg-cs2-bg-input/20 ${winner ? (isBlue ? "border-sky-500/40" : "border-amber-500/40") : "border-cs2-border"}`}>
@@ -179,45 +180,52 @@ function TeamScoreboard({ teamKey, name, score, players, totalRounds, onSelectPl
       <div className="overflow-hidden">
         <table className="w-full table-fixed border-collapse text-left">
           <colgroup>
-            <col className="w-[24%]" />
-            <col className="w-[9%]" />
-            {Array.from({ length: 9 }).map((_, index) => <col key={index} className="w-[7.4%]" />)}
+            <col className="w-[28%]" />
+            <col className="w-[10%]" />
+            <col className="w-[10%]" />
+            <col className="w-[6%]" />
+            <col className="w-[6%]" />
+            <col className="w-[6%]" />
+            <col className="w-[12%]" />
+            <col className="w-[12%]" />
+            <col className="w-[10%]" />
           </colgroup>
           <thead className="border-b border-cs2-border bg-cs2-bg-input/55 text-[7px] uppercase tracking-wide text-cs2-text-muted">
             <tr>
               <th className="px-2 py-1.5">玩家</th>
-              <th className="px-1 text-center">评价</th>
+              <th className="px-1 text-right" title="Rating Pro 2.0 本地估算">RP2</th>
+              <th className="px-1 text-right" title="Rating Pro 3.0 本地估算">RP3</th>
               <th className="px-1 text-right">K</th>
               <th className="px-1 text-right">D</th>
               <th className="px-1 text-right">A</th>
               <th className="px-1 text-right">ADR</th>
               <th className="px-1 text-right">KAST</th>
-              <th className="px-1 text-right">HS%</th>
-              <th className="px-1 text-right">首杀</th>
-              <th className="px-1 text-right">AWP</th>
-              <th className="px-2 text-right">道具</th>
+              <th className="px-2 text-right">首杀</th>
             </tr>
           </thead>
           <tbody>
             {players.map((player) => {
               const assessment = buildPlayerAssessment(player, totalRounds);
+              const rating = ratings.get(player.name) || {};
+              const isHero = player.name === heroName;
+              const isCulprit = player.name === culpritName;
               return <tr key={player.name} className="border-t border-cs2-border/70 hover:bg-cs2-bg-hover">
                 <td className="px-2 py-1.5">
                   <button type="button" onClick={() => onSelectPlayer?.(player.name)} className="flex max-w-full items-center gap-1.5 text-left">
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${teamDot(teamKey)}`} />
                     <span className="truncate text-[11px] font-bold text-cs2-text-primary">{player.name}</span>
+                    {isHero && <span className="shrink-0 rounded bg-emerald-500/15 px-1 py-0.5 text-[7px] font-black text-emerald-300">英雄</span>}
+                    {isCulprit && <span className="shrink-0 rounded bg-red-500/15 px-1 py-0.5 text-[7px] font-black text-red-300">战犯</span>}
                   </button>
                 </td>
-                <td className="px-1 text-center"><span title={assessment.summary} className="inline-flex min-w-6 items-center justify-center rounded bg-cs2-accent-soft px-1 py-0.5 font-mono text-[9px] font-black text-cs2-accent">{assessment.grade}</span></td>
+                <td className="px-1 text-right font-mono text-[9px] text-cs2-text-secondary" title={`${assessment.grade} · ${assessment.summary}`}>{Number(rating.rating_pro_2 || 0).toFixed(2)}</td>
+                <td className="px-1 text-right font-mono text-[9px] font-black text-cs2-accent" title={`经济修正 ${Number(rating.eco_factor || 1).toFixed(2)} · Swing ${Number(rating.round_swing || 0).toFixed(3)}`}>{Number(rating.rating_pro_3 || 0).toFixed(2)}</td>
                 <td className="px-1 text-right font-mono text-[9px] font-bold text-cs2-text-primary">{player.kills}</td>
                 <td className="px-1 text-right font-mono text-[9px] text-cs2-text-secondary">{player.deaths}</td>
                 <td className="px-1 text-right font-mono text-[9px] text-cs2-text-secondary">{player.assists}</td>
                 <td className="px-1 text-right font-mono text-[9px] text-cs2-text-secondary">{Number(player.adr || 0).toFixed(0)}</td>
                 <td className="px-1 text-right font-mono text-[9px] text-cs2-text-secondary">{Number(player.kast || 0).toFixed(0)}%</td>
-                <td className="px-1 text-right font-mono text-[9px] text-cs2-text-secondary">{Number(player.hs_percent || 0).toFixed(0)}%</td>
-                <td className="px-1 text-right font-mono text-[9px] text-cs2-text-secondary">{player.first_kills || 0}</td>
-                <td className="px-1 text-right font-mono text-[9px] text-cs2-text-secondary">{player.awp_kills || 0}</td>
-                <td className="px-2 text-right font-mono text-[9px] text-cs2-text-secondary">{player.utility_damage || 0}</td>
+                <td className="px-2 text-right font-mono text-[9px] text-cs2-text-secondary">{player.first_kills || 0}</td>
               </tr>;
             })}
           </tbody>
@@ -236,6 +244,8 @@ function MatchScoreboardPanel({ data, onSelectPlayer }) {
   const playersB = sortScoreboardPlayers(data.players.filter((player) => player.team_key === "b"));
   const scoreA = Number(data.team_a_score || 0);
   const scoreB = Number(data.team_b_score || 0);
+  const ratingModel = useMemo(() => buildMatchRatingPro(data), [data]);
+  const ratings = useMemo(() => new Map(ratingModel.players.map((row) => [row.name, row])), [ratingModel]);
   return (
     <section className="rounded-[10px] border border-cs2-border bg-cs2-bg-card shadow-sm">
       <header className="flex items-center justify-between gap-3 px-3.5 py-2.5">
@@ -244,10 +254,15 @@ function MatchScoreboardPanel({ data, onSelectPlayer }) {
       </header>
       {scoreboardOpen ? (
         <div className="border-t border-cs2-border p-2.5">
+          <div className="mb-2 grid gap-2 md:grid-cols-2">
+            <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/[0.06] px-3 py-2"><div className="flex items-center justify-between gap-2"><span className="text-[8px] font-black uppercase tracking-[0.16em] text-emerald-300">本局英雄</span><span className="font-mono text-[10px] font-black text-emerald-300">RP3 {Number(ratingModel.hero?.rating_pro_3 || 0).toFixed(2)}</span></div><p className="mt-0.5 truncate text-[11px] font-black text-cs2-text-primary">{ratingModel.hero?.name || "—"}</p><p className="mt-0.5 text-[8px] text-cs2-text-muted">{ratingModel.hero?.detail || "暂无足够数据"}</p></div>
+            <div className="rounded-lg border border-red-500/25 bg-red-500/[0.05] px-3 py-2"><div className="flex items-center justify-between gap-2"><span className="text-[8px] font-black uppercase tracking-[0.16em] text-red-300">本局战犯</span><span className="font-mono text-[10px] font-black text-red-300">RP3 {Number(ratingModel.culprit?.rating_pro_3 || 0).toFixed(2)}</span></div><p className="mt-0.5 truncate text-[11px] font-black text-cs2-text-primary">{ratingModel.culprit?.name || "—"}</p><p className="mt-0.5 text-[8px] text-cs2-text-muted">{ratingModel.culprit?.detail || "暂无足够数据"}</p></div>
+          </div>
+          <p className="mb-2 text-[8px] leading-4 text-cs2-text-muted">{ratingModel.model_note}</p>
           <div className="mb-2 flex gap-1 md:hidden">{[["a", teamAName], ["b", teamBName]].map(([key, label]) => <button key={key} type="button" onClick={() => setMobileScoreTeam(key)} className={`rounded-md border px-2.5 py-1 text-[10px] font-semibold active:scale-[0.97] ${mobileScoreTeam === key ? "border-cs2-accent/50 bg-cs2-accent-soft text-cs2-accent" : "border-cs2-border text-cs2-text-muted"}`}>{label}</button>)}</div>
           <div className="grid gap-2.5 md:grid-cols-2">
-            <div className={mobileScoreTeam === "a" ? "block" : "hidden md:block"}><TeamScoreboard teamKey="a" name={teamAName} score={scoreA} players={playersA} totalRounds={data.rounds.length} onSelectPlayer={onSelectPlayer} winner={scoreA > scoreB} /></div>
-            <div className={mobileScoreTeam === "b" ? "block" : "hidden md:block"}><TeamScoreboard teamKey="b" name={teamBName} score={scoreB} players={playersB} totalRounds={data.rounds.length} onSelectPlayer={onSelectPlayer} winner={scoreB > scoreA} /></div>
+            <div className={mobileScoreTeam === "a" ? "block" : "hidden md:block"}><TeamScoreboard teamKey="a" name={teamAName} score={scoreA} players={playersA} totalRounds={data.rounds.length} onSelectPlayer={onSelectPlayer} winner={scoreA > scoreB} ratings={ratings} heroName={ratingModel.hero?.name} culpritName={ratingModel.culprit?.name} /></div>
+            <div className={mobileScoreTeam === "b" ? "block" : "hidden md:block"}><TeamScoreboard teamKey="b" name={teamBName} score={scoreB} players={playersB} totalRounds={data.rounds.length} onSelectPlayer={onSelectPlayer} winner={scoreB > scoreA} ratings={ratings} heroName={ratingModel.hero?.name} culpritName={ratingModel.culprit?.name} /></div>
           </div>
         </div>
       ) : null}
@@ -451,6 +466,8 @@ export function PlayersView({ data, selectedPlayer, onSelectPlayer, onBackToOver
   const player = data.players.find((item) => item.name === selectedPlayer) || data.players[0];
   if (!player) return <Panel title="全部玩家"><div className="p-12 text-center text-[11px] text-cs2-text-muted">当前解析结果没有玩家统计。</div></Panel>;
   const assessment = buildPlayerAssessment(player, data.rounds.length);
+  const ratingModel = buildMatchRatingPro(data);
+  const proRating = ratingModel.players.find((item) => item.name === player.name) || {};
   const groups = [
     { title: "Combat", rows: [{ label: "击杀", value: player.kills, max: 40 }, { label: "死亡", value: player.deaths, max: 40 }, { label: "助攻", value: player.assists, max: 20 }, { label: "KPR", value: player.kpr, display: Number(player.kpr || 0).toFixed(2), max: 1.4 }, { label: "DPR", value: player.dpr, display: Number(player.dpr || 0).toFixed(2), max: 1.2 }, { label: "ADR", value: player.adr, display: Number(player.adr || 0).toFixed(1), max: 130 }, { label: "HS%", value: player.hs_percent, display: `${Number(player.hs_percent || 0).toFixed(0)}%` }, { label: "KAST", value: player.kast, display: `${Number(player.kast || 0).toFixed(0)}%` }, { label: "存活率", value: player.survival_rate, display: `${Number(player.survival_rate || 0).toFixed(0)}%` }, { label: "2 杀回合", value: player.two_kill_rounds, max: 8 }, { label: "3 杀回合", value: player.three_kill_rounds, max: 5 }, { label: "4 杀回合", value: player.four_kill_rounds, max: 3 }, { label: "5 杀回合", value: player.five_kill_rounds, max: 1 }] },
     { title: "Opening / Trade", rows: [{ label: "首杀", value: player.first_kills, max: 10 }, { label: "首死", value: player.first_deaths, max: 10 }, { label: "首杀对决胜率", value: player.opening_duel_win_rate, display: `${Number(player.opening_duel_win_rate || 0).toFixed(0)}%` }, { label: "补枪", value: player.trade_kills, max: 10 }, { label: "被补枪", value: player.trade_deaths, max: 10 }, { label: "补枪率", value: player.trade_kill_rate, display: `${Number(player.trade_kill_rate || 0).toFixed(0)}%` }] },
@@ -463,7 +480,7 @@ export function PlayersView({ data, selectedPlayer, onSelectPlayer, onBackToOver
       <div className="space-y-4">
         <Panel><div className="flex flex-wrap items-center gap-4 p-5"><div className={`flex h-14 w-14 items-center justify-center rounded-xl text-xl font-black ${player.team_key === "a" ? "bg-sky-500/15 text-sky-400" : "bg-amber-500/15 text-amber-400"}`}>{player.name.slice(0, 1).toUpperCase()}</div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><h2 className="text-xl font-black text-cs2-text-primary">{player.name}</h2><Badge variant="orange">{player.team_key === "a" ? data.team_a_name : data.team_b_name}</Badge></div><p className="mt-1 text-[10px] text-cs2-text-muted">全场表现 · {data.rounds.length} 回合 · 原始 Demo 统计</p></div><Button variant="secondary" onClick={onBackToOverview}><ArrowLeft className="h-3.5 w-3.5" />返回概览</Button></div></Panel>
         <Panel><div className="grid gap-3 p-4 md:grid-cols-[110px_minmax(0,1fr)_minmax(220px,0.8fr)]"><div className="flex flex-col items-center justify-center rounded-xl border border-cs2-accent/25 bg-cs2-accent/[0.07] py-4"><span className="font-mono text-4xl font-black text-cs2-accent">{assessment.grade}</span><span className="mt-1 text-[10px] font-bold text-cs2-text-primary">{assessment.score} · {assessment.label}</span></div><div className="flex flex-col justify-center"><p className="text-[9px] font-bold uppercase tracking-[0.16em] text-cs2-accent">Match assessment</p><p className="mt-1 text-[12px] font-semibold leading-5 text-cs2-text-primary">{assessment.summary}</p></div><div className="grid gap-2 sm:grid-cols-2 md:grid-cols-1"><div><p className="text-[9px] font-bold text-emerald-300">优势</p><p className="mt-1 text-[10px] leading-5 text-cs2-text-secondary">{assessment.strengths.join(" · ")}</p></div><div><p className="text-[9px] font-bold text-amber-300">优化方向</p><p className="mt-1 text-[10px] leading-5 text-cs2-text-secondary">{assessment.improvements.join(" · ")}</p></div></div></div></Panel>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><MetricCard icon={Swords} label="K / D / A" value={`${player.kills} / ${player.deaths} / ${player.assists}`} detail={`${Number(player.kd || 0).toFixed(2)} K/D`} tone="blue" /><MetricCard icon={Activity} label="ADR" value={Number(player.adr || 0).toFixed(1)} detail={`总伤害约 ${Math.round(Number(player.adr || 0) * Math.max(1, data.rounds.length))}`} /><MetricCard icon={ShieldCheck} label="KAST" value={`${Number(player.kast || 0).toFixed(0)}%`} detail={`${player.trade_kills || 0} 次有效补枪`} tone="green" /><MetricCard icon={Gauge} label="爆头率" value={`${Number(player.hs_percent || 0).toFixed(0)}%`} detail={`${player.first_kills || 0} 次首杀 · ${player.awp_kills || 0} 次 AWP 击杀`} tone="violet" /></div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6"><MetricCard icon={Zap} label="Rating Pro 2.0" value={Number(proRating.rating_pro_2 || 0).toFixed(2)} detail="击杀 · 存活 · KAST · 伤害 · 影响" tone="accent" /><MetricCard icon={Activity} label="Rating Pro 3.0" value={Number(proRating.rating_pro_3 || 0).toFixed(2)} detail={`经济 ${Number(proRating.eco_factor || 1).toFixed(2)} · Swing ${Number(proRating.round_swing || 0).toFixed(3)}`} tone="green" /><MetricCard icon={Swords} label="K / D / A" value={`${player.kills} / ${player.deaths} / ${player.assists}`} detail={`${Number(player.kd || 0).toFixed(2)} K/D`} tone="blue" /><MetricCard icon={Activity} label="ADR" value={Number(player.adr || 0).toFixed(1)} detail={`总伤害约 ${Math.round(Number(player.adr || 0) * Math.max(1, data.rounds.length))}`} /><MetricCard icon={ShieldCheck} label="KAST" value={`${Number(player.kast || 0).toFixed(0)}%`} detail={`${player.trade_kills || 0} 次有效补枪`} tone="green" /><MetricCard icon={Gauge} label="爆头率" value={`${Number(player.hs_percent || 0).toFixed(0)}%`} detail={`${player.first_kills || 0} 次首杀 · ${player.awp_kills || 0} 次 AWP 击杀`} tone="violet" /></div>
         <Panel title="详细数据" eyebrow="全场表现拆分 · 原始统计"><div className="grid gap-3 p-4 xl:grid-cols-2">{groups.map((group) => <StatGroup key={group.title} {...group} />)}</div></Panel>
       </div>
     </div>
