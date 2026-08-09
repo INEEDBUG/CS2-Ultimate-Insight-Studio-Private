@@ -216,6 +216,8 @@ export default function App() {
   const [libraryLoadingText, setLibraryLoadingText] = useState("");
   const [libraryPage, setLibraryPage] = useState(1);
   const libraryPageRef = useRef(1);
+  const [librarySortKey, setLibrarySortKey] = useState("library");
+  const [librarySortDir, setLibrarySortDir] = useState("desc");
   const [libraryHasNextPage, setLibraryHasNextPage] = useState(false);
   const [libraryTotal, setLibraryTotal] = useState(null);
   const [selectedLibraryDemoIds, setSelectedLibraryDemoIds] = useState(new Set());
@@ -474,6 +476,8 @@ export default function App() {
       const limit = libraryPageSize;
       const offset = (page - 1) * limit;
       const params = { limit, offset };
+      params.sort_key = librarySortKey;
+      params.sort_dir = librarySortDir;
       const qEff = searchQOverride !== undefined ? searchQOverride : librarySearchQ;
       if (qEff) params.q = qEff;
       appendDemoLibraryFilterParams(params);
@@ -492,7 +496,7 @@ export default function App() {
     } finally {
       if (manageLoading) setLibraryLoading(false);
     }
-  }, [libraryPage, librarySearchQ, libraryPageSize, appendDemoLibraryFilterParams]);
+  }, [libraryPage, librarySearchQ, libraryPageSize, librarySortKey, librarySortDir, appendDemoLibraryFilterParams]);
 
   const refreshDemoLibraryRef = useRef(refreshDemoLibrary);
   refreshDemoLibraryRef.current = refreshDemoLibrary;
@@ -512,6 +516,17 @@ export default function App() {
     setLibraryPage(1);
     void refreshDemoLibraryRef.current(1, { manageLoading: false });
   }, [libraryPageSize]);
+
+  const librarySortEffectSkipRef = useRef(false);
+  useEffect(() => {
+    if (!librarySortEffectSkipRef.current) {
+      librarySortEffectSkipRef.current = true;
+      return;
+    }
+    setLibraryPage(1);
+    setSelectedLibraryDemoIds(new Set());
+    void refreshDemoLibraryRef.current(1, { manageLoading: true });
+  }, [librarySortKey, librarySortDir]);
 
   useEffect(() => {
     libraryPageRef.current = libraryPage;
@@ -978,6 +993,7 @@ export default function App() {
           const { data } = await API.get("config");
           if (cancelled) return;
           useLocaleStore.getState().hydrate(data.locale);
+          void desktopBridge?.setCloseToTray(data.close_to_tray !== false);
           if (data.obs) {
             const rawPw = data.obs.password ?? "";
             const masked = typeof rawPw === "string" && rawPw.startsWith("****");
@@ -3150,6 +3166,10 @@ export default function App() {
     setSelectedLibraryDemoIds,
     libraryPage,
     setLibraryPage,
+    librarySortKey,
+    setLibrarySortKey,
+    librarySortDir,
+    setLibrarySortDir,
     libraryPageSize,
     setLibraryPageSize,
     libraryTotalPages,

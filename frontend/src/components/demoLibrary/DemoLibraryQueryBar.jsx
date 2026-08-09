@@ -21,7 +21,8 @@ export default function DemoLibraryQueryBar({
 
   const SORT_OPTIONS = [
     { value: "library", label: t("library.sortOptLibrary") },
-    { value: "date", label: t("library.sortOptDate") },
+    { value: "match_time", label: t("library.sortOptMatchTime") },
+    { value: "added_time", label: t("library.sortOptDate") },
     { value: "size", label: t("library.sortOptSize") },
     { value: "duration", label: t("library.sortOptDuration") },
     { value: "rounds", label: t("library.sortOptRounds") },

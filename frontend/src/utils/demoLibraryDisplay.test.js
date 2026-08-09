@@ -4,6 +4,7 @@ import {
   applyClientSideDemoFilters,
   classifyDemoStatus,
   deriveTags,
+  sortDemoRows,
 } from "./demoLibraryDisplay";
 
 
@@ -54,5 +55,15 @@ describe("compact demo library rows", () => {
       kind: "error",
       tooltipKey: "api.err.demoAnalysisFailed",
     });
+  });
+
+  test("sorts by actual match time and always keeps unknown dates last", () => {
+    const rows = [
+      { id: 1, match_date: "2026-08-01T12:00:00Z" },
+      { id: 2, match_date: "" },
+      { id: 3, match_date: "2026-08-09T12:00:00Z" },
+    ];
+    expect(sortDemoRows(rows, "match_time", "desc").map((row) => row.id)).toEqual([3, 1, 2]);
+    expect(sortDemoRows(rows, "match_time", "asc").map((row) => row.id)).toEqual([1, 3, 2]);
   });
 });

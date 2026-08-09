@@ -248,7 +248,7 @@ export function filterByPathAndTags(items, rawQuery) {
   });
 }
 
-const SORT_KEYS = new Set(["library", "date", "size", "duration", "rounds", "status", "map", "filename"]);
+const SORT_KEYS = new Set(["library", "match_time", "added_time", "date", "size", "duration", "rounds", "status", "map", "filename"]);
 
 /**
  * @param {Record<string, unknown>[]} rows
@@ -269,7 +269,17 @@ export function sortDemoRows(rows, key, dir) {
         return dir === "desc" ? ad : -ad;
       }
       case "date":
+      case "added_time":
         return mul * (rowAddedAtTs(x) - rowAddedAtTs(y));
+      case "match_time": {
+        const xTime = Date.parse(String(x.match_date || ""));
+        const yTime = Date.parse(String(y.match_date || ""));
+        const xKnown = Number.isFinite(xTime);
+        const yKnown = Number.isFinite(yTime);
+        if (xKnown !== yKnown) return xKnown ? -1 : 1;
+        if (!xKnown) return (Number(y.id) || 0) - (Number(x.id) || 0);
+        return mul * (xTime - yTime);
+      }
       case "size":
         return cmpNum(x.file_size, y.file_size);
       case "duration":

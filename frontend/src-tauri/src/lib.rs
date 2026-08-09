@@ -4,12 +4,19 @@ use std::{
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use tauri::{AppHandle, Manager, RunEvent, State, WindowEvent};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Manager, RunEvent, State, WindowEvent,
+};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 #[cfg(windows)]
@@ -20,6 +27,57 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 struct BackendProcess {
     child: Mutex<Option<ManagedBackend>>,
     session_token: String,
+}
+
+struct AppLifecycle {
+    close_to_tray: AtomicBool,
+    quitting: AtomicBool,
+}
+
+impl Default for AppLifecycle {
+    fn default() -> Self {
+        Self {
+            close_to_tray: AtomicBool::new(true),
+            quitting: AtomicBool::new(false),
+        }
+    }
+}
+
+#[tauri::command]
+fn set_close_to_tray(enabled: bool, lifecycle: State<'_, AppLifecycle>) {
+    lifecycle.close_to_tray.store(enabled, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn get_close_to_tray(lifecycle: State<'_, AppLifecycle>) -> bool {
+    lifecycle.close_to_tray.load(Ordering::SeqCst)
+}
+
+fn should_hide_on_close(close_to_tray: bool, quitting: bool) -> bool {
+    close_to_tray && !quitting
+}
+
+fn show_main_window(handle: &AppHandle) {
+    if let Some(window) = handle.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn request_app_exit(handle: &AppHandle) {
+    let lifecycle = handle.state::<AppLifecycle>();
+    if lifecycle.quitting.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if let Some(window) = handle.get_webview_window("main") {
+        let _ = window.destroy();
+    }
+    let handle = handle.clone();
+    thread::spawn(move || {
+        stop_backend(&handle);
+        handle.exit(0);
+    });
 }
 
 impl BackendProcess {
@@ -377,11 +435,41 @@ pub fn run() {
         // plugin without a valid updater configuration.
         .plugin(tauri_plugin_process::init())
         .manage(BackendProcess::new().expect("failed to create desktop session token"))
+        .manage(AppLifecycle::default())
         .invoke_handler(tauri::generate_handler![
             read_legacy_ui_state,
-            backend_session_token
+            backend_session_token,
+            set_close_to_tray,
+            get_close_to_tray
         ])
         .setup(|app| {
+            let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "退出程序", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let mut tray = TrayIconBuilder::with_id("main-tray")
+                .tooltip("CS2 Ultimate Insight Studio")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => show_main_window(app),
+                    "quit" => request_app_exit(app),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main_window(tray.app_handle());
+                    }
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+            tray.build(app)?;
+
             // Start the backend on a worker thread so the window (and its
             // "connecting to backend" splash) appears immediately instead of
             // after the Python process answers HTTP.
@@ -410,22 +498,18 @@ pub fn run() {
             event: WindowEvent::CloseRequested { api, .. },
             ..
         } if label == "main" => {
-            // Destroy the webview first so EventSource/HTTP connections close
-            // immediately. Otherwise uvicorn waits on the still-live renderer
-            // while this handler waits on uvicorn.
             api.prevent_close();
-            if let Some(window) = handle.get_webview_window(&label) {
-                let _ = window.destroy();
+            let lifecycle = handle.state::<AppLifecycle>();
+            if should_hide_on_close(
+                lifecycle.close_to_tray.load(Ordering::SeqCst),
+                lifecycle.quitting.load(Ordering::SeqCst),
+            ) {
+                if let Some(window) = handle.get_webview_window(&label) {
+                    let _ = window.hide();
+                }
+            } else {
+                request_app_exit(handle);
             }
-            // window.destroy() is only queued on the event loop; blocking on
-            // the backend here would keep a frozen window on screen for the
-            // whole graceful-shutdown wait. Stop the backend on a worker
-            // thread so the window disappears instantly.
-            let handle = handle.clone();
-            thread::spawn(move || {
-                stop_backend(&handle);
-                handle.exit(0);
-            });
         }
         RunEvent::ExitRequested { code, api, .. } => {
             // The last window closing must not tear down the process while the
@@ -442,12 +526,19 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::new_session_token;
+    use super::{new_session_token, should_hide_on_close};
 
     #[test]
     fn session_token_is_256_bit_hex() {
         let token = new_session_token().expect("OS random source should be available");
         assert_eq!(token.len(), 64);
         assert!(token.bytes().all(|value| value.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn close_hides_only_when_enabled_and_not_quitting() {
+        assert!(should_hide_on_close(true, false));
+        assert!(!should_hide_on_close(false, false));
+        assert!(!should_hide_on_close(true, true));
     }
 }

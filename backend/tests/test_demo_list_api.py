@@ -35,6 +35,8 @@ def _route_kwargs(**overrides):
         "duration_max": 60.0,
         "date_from": "2026-07-01",
         "date_to": "2026-07-31",
+        "sort_key": "match_time",
+        "sort_dir": "asc",
     }
     values.update(overrides)
     return values
@@ -70,6 +72,8 @@ def test_compact_list_route_uses_compact_query_and_forwards_all_filters(monkeypa
     assert calls["list"]["limit"] == 25
     assert calls["list"]["offset"] == 5
     assert calls["list"]["name_query"] == "match"
+    assert calls["list"]["sort_key"] == "match_time"
+    assert calls["list"]["sort_dir"] == "asc"
     assert calls["list"]["filters"] == {
         "map_names": ["de_mirage"],
         "statuses": ["done"],
@@ -112,9 +116,7 @@ def test_list_demo_ids_returns_only_filtered_ids(monkeypatch):
 
     monkeypatch.setattr(main.demo_db, "list_filtered_demo_ids", fake_list_filtered_demo_ids)
 
-    response = _run(
-        main.list_demo_ids(
-            **_route_kwargs(
+    route_kwargs = _route_kwargs(
                 limit=1000,
                 offset=0,
                 q=None,
@@ -132,8 +134,9 @@ def test_list_demo_ids_returns_only_filtered_ids(monkeypatch):
                 date_from=None,
                 date_to=None,
             )
-        )
-    )
+    route_kwargs.pop("sort_key")
+    route_kwargs.pop("sort_dir")
+    response = _run(main.list_demo_ids(**route_kwargs))
 
     assert response == {"ids": [11, 9, 3], "limit": 1000, "offset": 0, "q": None}
     assert calls == [

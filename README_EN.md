@@ -42,6 +42,7 @@ This repository does not display upstream donation QR codes or solicit money on 
 ### Demo Library Management
 
 - **Local Library Records** — List and thumbnail view showing match source, scoreboard, tracked players, display names, notes, and other key info.
+- **Actual Match-Time Sorting** — Sort ascending or descending by the parsed time when each match was played. Ordering happens in SQLite across the complete paginated library; older rows without a known match time stay at the end instead of being disguised as import times.
 - **Auto Directory Monitoring** — Supports monitoring demo download directories from 5E, Perfect World, Official Matchmaking, FACEIT, etc., with one-click import.
 - **Official Steam Match Sync** — Uses Valve's supported `GetNextMatchSharingCode` flow with an API key, SteamID64, game authentication code, and a known share code. Synced codes are cached locally; complete maps, scores, and player assessments are generated only after downloading and parsing the Demo.
 
@@ -107,6 +108,8 @@ This repository does not display upstream donation QR codes or solicit money on 
 ## Installation
 
 Download the latest `CS2 Ultimate Insight Studio_x.x.x_x64-setup.exe` from this repository's [Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases), run the installer and follow the prompts.
+
+By default, the window `×` button hides the app to the Windows system tray so parsing and downloads can continue. Left-click the tray icon to restore the window, or use its menu to quit. This behavior can be changed under Settings → System & Updates.
 
 After installation, launch from desktop or start menu. **No browser or manual backend start is required.** The lightweight Tauri shell starts the bundled Python backend and renders the UI with the Windows system WebView2 runtime.
 

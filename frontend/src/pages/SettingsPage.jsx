@@ -425,7 +425,10 @@ export default function SettingsPage() {
     (async () => {
       try {
         const { data } = await API.get("config");
-        if (!cancelled) setConfig(data);
+        if (!cancelled) {
+          setConfig(data);
+          void desktopBridge?.setCloseToTray(data.close_to_tray !== false);
+        }
       } catch (e) {
         if (!cancelled) console.error("Failed to load config:", e);
       } finally {
@@ -613,6 +616,7 @@ export default function SettingsPage() {
       payload.ai_mode = !!config.ai_mode;
       payload.obs_agent_auto_prepare = !!config.obs_agent_auto_prepare;
       payload.locale = config.locale ?? "auto";
+      payload.close_to_tray = config.close_to_tray !== false;
       payload.demo_directory = config.demo_directory ?? "";
       payload.demo_watch_paths = config.demo_watch_paths ?? [];
       payload.expected_parse_players = config.expected_parse_players ?? [];
@@ -636,6 +640,7 @@ export default function SettingsPage() {
       };
 
       await API.put("config", payload);
+      await desktopBridge?.setCloseToTray(payload.close_to_tray);
       useLocaleStore.getState().hydrate(payload.locale);
       setSaveMsg({ text: t("app.settingsSaved") ?? "Saved", tone: "ok" });
     } catch (e) {
@@ -866,6 +871,19 @@ export default function SettingsPage() {
                       {t("settings.checkUpdateBtn")}
                     </button>
                   </div>
+                </FieldRow>
+
+                <FieldRow
+                  label={t("settings.labelCloseToTray")}
+                  hint={t("settings.hintCloseToTray")}
+                  search={search && !matches(t("settings.labelCloseToTray") + " tray background close")}
+                >
+                  <Toggle
+                    value={config.close_to_tray !== false}
+                    onChange={(value) => set("close_to_tray", value)}
+                    onLabel={t("settings.closeToTrayOn")}
+                    offLabel={t("settings.closeToTrayOff")}
+                  />
                 </FieldRow>
 
                 {/* GitHub 地址 */}

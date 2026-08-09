@@ -1110,6 +1110,40 @@ class DemoDB:
         "ELSE 4 END ASC, d.id DESC"
     )
 
+    @classmethod
+    def _demo_order_by_sql(cls, sort_key: str, sort_dir: str) -> str:
+        """Build a whitelisted global ordering for paginated library rows."""
+        key = str(sort_key or "library").strip().lower()
+        direction = "ASC" if str(sort_dir or "desc").strip().lower() == "asc" else "DESC"
+        if key == "library":
+            return (
+                "ORDER BY CASE lower(ifnull(d.status, '')) "
+                "WHEN 'loaded' THEN 0 WHEN 'parsing' THEN 1 WHEN 'error' THEN 2 "
+                "WHEN 'done' THEN 3 ELSE 4 END ASC, "
+                f"julianday(d.added_at) {direction}, d.id {direction}"
+            )
+        if key == "match_time":
+            # Unknown match times always stay at the end instead of silently
+            # pretending the import timestamp was the match timestamp.
+            return (
+                "ORDER BY CASE WHEN NULLIF(d.match_date, '') IS NULL THEN 1 ELSE 0 END ASC, "
+                f"julianday(NULLIF(d.match_date, '')) {direction}, d.id {direction}"
+            )
+        expressions = {
+            "added_time": "julianday(d.added_at)",
+            "date": "julianday(d.added_at)",  # legacy client alias
+            "size": "COALESCE(d.file_size, 0)",
+            "duration": "COALESCE(d.duration_mins, 0)",
+            "rounds": "COALESCE(d.total_rounds, -1)",
+            "status": "lower(ifnull(d.status, ''))",
+            "map": "lower(ifnull(d.map_name, ''))",
+            "filename": "lower(ifnull(d.filename, ''))",
+        }
+        expression = expressions.get(key)
+        if expression is None:
+            return cls._LIST_ORDER_BY
+        return f"ORDER BY {expression} {direction}, d.id {direction}"
+
     async def replace_demo_player_stats(
         self,
         demo_id: int,
@@ -1403,6 +1437,8 @@ class DemoDB:
         *,
         name_query: str | None = None,
         filters: DemoListFilters | None = None,
+        sort_key: str = "library",
+        sort_dir: str = "desc",
     ) -> list[dict[str, Any]]:
         f = self._merge_demo_filters(name_query=name_query, filters=filters)
         where_sql, params, need_ps = self._build_demo_filters_sql(f)
@@ -1412,7 +1448,7 @@ class DemoDB:
         sql = (
             f"{self._LIST_SELECT} FROM demo_files d "
             f"LEFT JOIN match_results r ON r.demo_path = d.path {join_sql} {where_sql} "
-            f"{self._LIST_ORDER_BY} LIMIT ? OFFSET ?"
+            f"{self._demo_order_by_sql(sort_key, sort_dir)} LIMIT ? OFFSET ?"
         )
         params_ext = [*params, limit, offset]
         async with aiosqlite.connect(self.db_path) as conn:
@@ -1440,6 +1476,8 @@ class DemoDB:
         *,
         name_query: str | None = None,
         filters: DemoListFilters | None = None,
+        sort_key: str = "library",
+        sort_dir: str = "desc",
     ) -> list[dict[str, Any]]:
         """Return lightweight list rows without selecting or decoding result_json.
 
@@ -1455,7 +1493,7 @@ class DemoDB:
         sql = (
             f"{self._COMPACT_LIST_SELECT} FROM demo_files d "
             f"LEFT JOIN demo_result_summaries rs ON rs.demo_path = d.path {join_sql} {where_sql} "
-            f"{self._LIST_ORDER_BY} LIMIT ? OFFSET ?"
+            f"{self._demo_order_by_sql(sort_key, sort_dir)} LIMIT ? OFFSET ?"
         )
         params_ext = [*params, max(1, int(limit)), max(0, int(offset))]
         async with aiosqlite.connect(self.db_path) as conn:

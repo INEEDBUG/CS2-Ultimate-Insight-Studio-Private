@@ -6,6 +6,10 @@ from app import env_utils
 from app.env_utils import AppConfig
 
 
+def test_close_to_tray_defaults_on():
+    assert AppConfig().close_to_tray is True
+
+
 def _configure_paths(monkeypatch, tmp_path: Path) -> tuple[Path, Path]:
     config_path = tmp_path / "profile" / "cs2-insight.config.json"
     bundle_dir = tmp_path / "bundle"

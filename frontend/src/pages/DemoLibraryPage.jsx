@@ -44,8 +44,6 @@ export default function DemoLibraryPage() {
   const s = useAppShell();
   const [viewMode, setViewMode] = useState("grid"); // "grid" | "list"
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [sortKey, setSortKey] = useState("library");
-  const [sortDir, setSortDir] = useState("desc");
   const [watchPathsModalOpen, setWatchPathsModalOpen] = useState(false);
   const [ingestModalOpen, setIngestModalOpen] = useState(false);
   const [batchDeleteCount, setBatchDeleteCount] = useState(0);
@@ -120,19 +118,19 @@ export default function DemoLibraryPage() {
     let rows = s.demoLibraryItems;
     rows = applyClientSideDemoFilters(rows, s.libraryAdvFilters);
     rows = filterByPathAndTags(rows, searchQ);
-    return sortDemoRows(rows, sortKey, sortDir);
-  }, [s.demoLibraryItems, s.libraryAdvFilters, s.librarySearchInput, s.librarySearchQ, sortKey, sortDir]);
+    return sortDemoRows(rows, s.librarySortKey, s.librarySortDir);
+  }, [s.demoLibraryItems, s.libraryAdvFilters, s.librarySearchInput, s.librarySearchQ, s.librarySortKey, s.librarySortDir]);
 
   const onColumnSort = useCallback((col) => {
-    setSortKey((prevKey) => {
+    s.setLibrarySortKey((prevKey) => {
       if (prevKey !== col) {
-        setSortDir(col === "filename" || col === "map" ? "asc" : "desc");
+        s.setLibrarySortDir(col === "filename" || col === "map" ? "asc" : "desc");
         return col;
       }
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      s.setLibrarySortDir((d) => (d === "asc" ? "desc" : "asc"));
       return prevKey;
     });
-  }, []);
+  }, [s]);
 
   const handleSelectVisiblePage = useCallback(() => {
     s.setSelectedLibraryDemoIds((prev) => {
@@ -263,10 +261,10 @@ export default function DemoLibraryPage() {
         onSearchSubmit={() => s.handleLibrarySearchSubmit()}
         libraryAdvFilters={s.libraryAdvFilters}
         setLibraryAdvFilters={s.setLibraryAdvFilters}
-        sortKey={sortKey}
-        sortDir={sortDir}
-        onSortKeyChange={setSortKey}
-        onSortDirChange={setSortDir}
+        sortKey={s.librarySortKey}
+        sortDir={s.librarySortDir}
+        onSortKeyChange={s.setLibrarySortKey}
+        onSortDirChange={s.setLibrarySortDir}
         advancedOpen={advancedOpen}
         onToggleAdvanced={() => setAdvancedOpen((v) => !v)}
         onClearQuickFilters={clearAllFilters}

@@ -1,5 +1,6 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 
@@ -25,6 +26,8 @@ export const desktopBridge = isDesktopApp
         };
       },
       getVersion,
+      setCloseToTray: (enabled) => invoke("set_close_to_tray", { enabled: Boolean(enabled) }),
+      getCloseToTray: () => invoke("get_close_to_tray"),
       async showOpenDialog(options = {}) {
         const properties = Array.isArray(options.properties) ? options.properties : [];
         const selected = await open({

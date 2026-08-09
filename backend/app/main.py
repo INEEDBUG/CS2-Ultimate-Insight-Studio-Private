@@ -935,6 +935,7 @@ class ConfigPayload(BaseModel):
     ai_mode: Optional[bool] = None
     obs_agent_auto_prepare: Optional[bool] = None
     locale: Optional[str] = None
+    close_to_tray: Optional[bool] = None
     expected_parse_players: Optional[list[str]] = None
     recording_global_pacing: Optional[dict[str, Any]] = None
     default_record_warmup: Optional[dict[str, Any]] = None
@@ -1269,6 +1270,8 @@ async def update_config(payload: ConfigPayload):
         cfg.obs_agent_auto_prepare = bool(payload.obs_agent_auto_prepare)
     if payload.locale is not None and payload.locale in ("zh", "en", "auto"):
         cfg.locale = payload.locale
+    if payload.close_to_tray is not None:
+        cfg.close_to_tray = bool(payload.close_to_tray)
     if payload.expected_parse_players is not None:
         cleaned: list[str] = []
         for x in payload.expected_parse_players:
@@ -2423,6 +2426,8 @@ async def list_demos(
     duration_max: Optional[float] = Query(default=None, ge=0),
     date_from: Optional[str] = Query(default=None, max_length=32),
     date_to: Optional[str] = Query(default=None, max_length=32),
+    sort_key: str = Query(default="library", max_length=32),
+    sort_dir: str = Query(default="desc", pattern="^(asc|desc)$"),
 ):
     qn = (q or "").strip() or None
     filters = _demo_library_filters_from_query(
@@ -2449,6 +2454,8 @@ async def list_demos(
         offset=offset,
         name_query=qn,
         filters=filters or None,
+        sort_key=sort_key,
+        sort_dir=sort_dir,
     )
     return {"items": rows, "limit": limit, "offset": offset, "total": total, "q": qn}
 
@@ -2474,6 +2481,8 @@ async def list_demos_compact_api(
     duration_max: Optional[float] = Query(default=None, ge=0),
     date_from: Optional[str] = Query(default=None, max_length=32),
     date_to: Optional[str] = Query(default=None, max_length=32),
+    sort_key: str = Query(default="library", max_length=32),
+    sort_dir: str = Query(default="desc", pattern="^(asc|desc)$"),
 ):
     qn = (q or "").strip() or None
     filters = _demo_library_filters_from_query(
@@ -2500,6 +2509,8 @@ async def list_demos_compact_api(
         offset=offset,
         name_query=qn,
         filters=filters or None,
+        sort_key=sort_key,
+        sort_dir=sort_dir,
     )
     return {"items": rows, "limit": limit, "offset": offset, "total": total, "q": qn}
 

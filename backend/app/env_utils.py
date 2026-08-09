@@ -399,6 +399,8 @@ class AppConfig(BaseModel):
     ai_mode: bool = False
     # 前端界面语言：auto=跟随操作系统（中文系统→zh，其他→en）；亦可显式设为 zh / en
     locale: str = "auto"
+    # Desktop window close behavior. True keeps parsing/download work alive in the tray.
+    close_to_tray: bool = True
     # 关注玩家名单：批量载入时可按 roster 匹配解析目标（不做自动改展示名 / 高光解析）
     expected_parse_players: list[str] = Field(default_factory=list)
     # 前端录制队列「全局节奏」覆写（仅含用户改过的字段；空对象表示沿用内置默认）

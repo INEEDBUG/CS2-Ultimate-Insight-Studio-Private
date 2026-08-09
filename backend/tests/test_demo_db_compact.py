@@ -138,6 +138,40 @@ def test_compact_list_uses_materialized_summary_and_two_selects(tmp_path: Path, 
     _run(scenario())
 
 
+def test_match_time_sort_is_global_across_pages_and_unknown_last(tmp_path: Path):
+    async def scenario():
+        db = DemoDB(tmp_path / "match-time-sort.sqlite3")
+        await db.init_db()
+        oldest = await _seed_demo(
+            db, tmp_path, "oldest.dem", player_name="Old", kills=10, clip_count=0,
+            match_date="2026-08-01T10:00:00Z",
+        )
+        newest = await _seed_demo(
+            db, tmp_path, "newest.dem", player_name="New", kills=10, clip_count=0,
+            match_date="2026-08-09T10:00:00Z",
+        )
+        unknown = await _seed_demo(
+            db, tmp_path, "unknown.dem", player_name="Unknown", kills=10, clip_count=0,
+            match_date="",
+        )
+
+        first_page = await db.list_demos_compact(
+            limit=2, offset=0, sort_key="match_time", sort_dir="desc"
+        )
+        second_page = await db.list_demos_compact(
+            limit=2, offset=2, sort_key="match_time", sort_dir="desc"
+        )
+        assert [row["id"] for row in first_page] == [newest, oldest]
+        assert [row["id"] for row in second_page] == [unknown]
+
+        ascending = await db.list_demos_compact(
+            limit=10, sort_key="match_time", sort_dir="asc"
+        )
+        assert [row["id"] for row in ascending] == [oldest, newest, unknown]
+
+    _run(scenario())
+
+
 def test_find_existing_filenames_uses_one_batch_result(tmp_path: Path):
     async def scenario():
         db = DemoDB(tmp_path / "filenames.sqlite3")

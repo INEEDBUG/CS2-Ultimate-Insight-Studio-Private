@@ -29,6 +29,19 @@ function formatDuration(mins) {
   return `${Math.round(mins)} min`;
 }
 
+function resolveDisplayDate(demo, matchMeta) {
+  const matchDate = matchMeta?.match_date || demo.match_date;
+  const raw = matchDate || demo.added_at;
+  if (!raw) return { text: "", isMatchTime: false };
+  const parsed = new Date(raw);
+  return {
+    text: Number.isNaN(parsed.getTime())
+      ? ""
+      : parsed.toLocaleDateString("zh-CN", { year: "2-digit", month: "2-digit", day: "2-digit" }),
+    isMatchTime: Boolean(matchDate),
+  };
+}
+
 const SOURCE_LOGOS = {
   "Faceit": "/images/sources/faceit-white.png",
   "5E": "/images/sources/5eplay.png",
@@ -78,6 +91,7 @@ export function MatchListRow({
     duration_mins: demo.duration_mins,
     match_date: demo.match_date,
   };
+  const displayDate = resolveDisplayDate(demo, matchMeta);
 
   const mapName = matchMeta.map_name || "unknown";
   const sourceLogo = SOURCE_LOGOS[demo.source] || SOURCE_LOGOS["Local/Other"];
@@ -217,8 +231,8 @@ export function MatchListRow({
                 {listStatusLabel}
               </span>
             </div>
-            <div className="text-[9px] font-bold text-cs2-text-muted font-mono">
-              {demo.added_at ? new Date(demo.added_at).toLocaleDateString('zh-CN', { year: '2-digit', month: '2-digit', day: '2-digit' }) : ""}
+            <div className="text-[9px] font-bold text-cs2-text-muted font-mono" title={t(displayDate.isMatchTime ? "library.matchTimeLabel" : "library.addedTimeFallbackLabel")}>
+              {displayDate.text}
             </div>
           </div>
 
@@ -311,6 +325,7 @@ export default function MatchCard({
     duration_mins: demo.duration_mins,
     match_date: demo.match_date,
   };
+  const displayDate = resolveDisplayDate(demo, matchMeta);
 
   const mapName = matchMeta.map_name || "unknown";
   const mapThumbnail = `/images/maps/${mapName}.webp`;
@@ -430,8 +445,8 @@ export default function MatchCard({
               <Clock className="h-3 w-3" />
               {formatDuration(matchMeta.duration_mins)}
             </div>
-            <div className="opacity-80 tabular-nums">
-              {demo.added_at ? new Date(demo.added_at).toLocaleDateString('zh-CN', { year: '2-digit', month: '2-digit', day: '2-digit' }) : ""}
+            <div className="opacity-80 tabular-nums" title={t(displayDate.isMatchTime ? "library.matchTimeLabel" : "library.addedTimeFallbackLabel")}>
+              {displayDate.text}
             </div>
           </div>
         </div>

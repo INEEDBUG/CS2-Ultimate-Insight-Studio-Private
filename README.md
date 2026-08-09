@@ -79,6 +79,7 @@
 ### Demo 库维护
 
 - **本地库记录展示** — 列表、缩略图展示 Demo 的比赛来源、记分板、关注玩家、展示名、备注等关键信息。
+- **按真实比赛时间排序** — 可像战绩工具一样按解析出的比赛发生时间升序或降序浏览，排序在 SQLite 查询阶段完成并覆盖全部分页；尚未解析出比赛时间的旧 Demo 固定排在末尾，不会被误当成入库时间。
 - **目录自动监听** — 支持 5E / 完美 / 官匹 demo / faceit 等 Demo 下载目录的监听，一键自动入库。
 - **Steam 官方比赛同步** — 使用 Valve 当前支持的 `GetNextMatchSharingCode` 流程，以 API Key、SteamID64、游戏认证码和一场已知分享码增量同步官匹记录；完整地图、比分和玩家评价仍以下载后的本地 Demo 解析结果为准。同步结果缓存在本地，避免每次启动重复请求整段历史。
 
@@ -147,6 +148,7 @@
 前往本仓库的 [Releases 页面](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases) 下载最新的 `CS2 Ultimate Insight Studio_x.x.x_x64-setup.exe`，双击运行安装包，按提示完成安装。
 
 安装完成后从桌面或开始菜单启动程序，**无需打开浏览器，无需手动启动后端**。轻量 Tauri 桌面壳会自动启动内嵌 Python 后端，并使用 Windows 系统 WebView2 显示界面。
+默认点击右上角 `×` 会隐藏到 Windows 系统托盘，让 Demo 解析和下载任务继续运行；左键单击托盘图标可恢复窗口，托盘菜单可彻底退出。也可在“设置 → 系统与更新”中改为关闭窗口时直接退出。
 
 源码开发需先安装 `uv 0.11.x`，然后运行
 `.\packaging\demoparser-lean\setup-backend-dev.ps1`。脚本会依据仓库根目录的
