@@ -1,4 +1,5 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -48,6 +49,31 @@ copyFiltered("backend", (rel) => {
   return !/^debug_.*\.py$/i.test(path);
 });
 writeFileSync(join(destination, "backend", "app", "release_version.txt"), `${appVersion}\n`);
+
+// Ship deterministic bytecode for the bundled backend. The desktop runtime is
+// read-only from Program Files on many machines and explicitly disables cache
+// writes, so compiling here avoids reparsing the full FastAPI application on
+// every launch.
+const stagedPython = join(destination, "python", "python.exe");
+const stagedBackend = join(destination, "backend");
+const compileResult = spawnSync(
+  stagedPython,
+  [
+    "-I",
+    "-m",
+    "compileall",
+    "-q",
+    "-j",
+    "0",
+    "--invalidation-mode",
+    "unchecked-hash",
+    stagedBackend,
+  ],
+  { encoding: "utf8", windowsHide: true },
+);
+if (compileResult.status !== 0) {
+  throw new Error(`Failed to precompile desktop backend: ${compileResult.stderr || compileResult.stdout}`);
+}
 copyFiltered("pov", () => true);
 const bundledDataFiles = new Set([
   "basic.ini",

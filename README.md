@@ -149,7 +149,7 @@
 前往本仓库的 [Releases 页面](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases) 下载最新的 `CS2 Ultimate Insight Studio_x.x.x_x64-setup.exe`，双击运行安装包，按提示完成安装。
 
 安装完成后从桌面或开始菜单启动程序，**无需打开浏览器，无需手动启动后端**。轻量 Tauri 桌面壳会自动启动内嵌 Python 后端，并使用 Windows 系统 WebView2 显示界面。
-默认点击右上角 `×` 会隐藏到 Windows 系统托盘，让 Demo 解析和下载任务继续运行；左键单击托盘图标可恢复窗口，托盘菜单可彻底退出。也可在“设置 → 系统与更新”中改为关闭窗口时直接退出。
+默认点击右上角 `×` 会询问“驻留后台”还是“彻底退出”，并可记住选择。驻留后台时 Demo 解析和下载任务会继续运行；左键单击托盘图标可恢复窗口，托盘菜单也可彻底退出。可在“设置 → 系统与更新”中随时切换为每次询问、直接驻留或直接退出。
 
 源码开发需先安装 `uv 0.11.x`，然后运行
 `.\packaging\demoparser-lean\setup-backend-dev.ps1`。脚本会依据仓库根目录的

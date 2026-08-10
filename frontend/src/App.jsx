@@ -50,8 +50,10 @@ import { createDesktopUpdateCheck } from "./utils/desktopUpdater";
 import { getVersion as getDesktopAppVersion } from "@tauri-apps/api/app";
 import { Loader2 } from "lucide-react";
 import API, { BACKEND_CONNECT_LABEL, getDemosStreamUrl } from "./api/api";
+import { desktopBridge } from "./desktop/desktopBridge";
 
 import CustomTitleBar from "./components/CustomTitleBar";
+import DesktopCloseDialog from "./components/DesktopCloseDialog";
 import FirstRunWelcome, { shouldShowFirstRunWelcome } from "./components/FirstRunWelcome";
 
 const GuidePage = lazy(() => import("./pages/GuidePage"));
@@ -85,6 +87,11 @@ export default function App() {
   const t = useT();
   const locale = useLocaleStore((s) => s.locale);
   const [backendReady, setBackendReady] = useState(false);
+  const [backendWaitMs, setBackendWaitMs] = useState(0);
+  const [backendConnectError, setBackendConnectError] = useState("");
+  const [closeDialogOpen, setCloseDialogOpen] = useState(false);
+  const [closeDialogRemember, setCloseDialogRemember] = useState(false);
+  const [closeDialogBusy, setCloseDialogBusy] = useState(false);
   const [showFirstRunWelcome] = useState(() => shouldShowFirstRunWelcome());
   /** 后端就绪后的启动流程：先检查更新，再拉取首页配置检查 */
   const [startupInitDone, setStartupInitDone] = useState(false);
@@ -988,12 +995,16 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     const initialize = async () => {
+      let attempts = 0;
       while (!cancelled) {
         try {
           const { data } = await API.get("config");
           if (cancelled) return;
           useLocaleStore.getState().hydrate(data.locale);
-          void desktopBridge?.setCloseToTray(data.close_to_tray !== false);
+          const closeAction = ["ask", "tray", "exit"].includes(data.close_action)
+            ? data.close_action
+            : data.close_to_tray === false ? "exit" : "ask";
+          await desktopBridge?.setCloseAction(closeAction);
           if (data.obs) {
             const rawPw = data.obs.password ?? "";
             const masked = typeof rawPw === "string" && rawPw.startsWith("****");
@@ -1031,10 +1042,15 @@ export default function App() {
           setCommonParamsRefreshKey((k) => k + 1);
 
           obsConfigHydratedRef.current = true;
+          setBackendConnectError("");
           setBackendReady(true);
           break;
-        } catch {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+        } catch (error) {
+          attempts += 1;
+          if (!cancelled && attempts >= 40) {
+            setBackendConnectError(String(error?.message || "Backend connection failed"));
+          }
+          await new Promise((resolve) => setTimeout(resolve, attempts < 40 ? 200 : 1000));
         }
       }
     };
@@ -1044,6 +1060,62 @@ export default function App() {
       cancelled = true;
     };
   }, [applyCommonParamsFromConfigData]);
+
+  useEffect(() => {
+    if (backendReady) return undefined;
+    const startedAt = performance.now();
+    const timer = window.setInterval(() => {
+      setBackendWaitMs(performance.now() - startedAt);
+    }, 200);
+    return () => window.clearInterval(timer);
+  }, [backendReady]);
+
+  useEffect(() => {
+    if (!desktopBridge) return undefined;
+    let active = true;
+    let unlisten = null;
+    void desktopBridge.onCloseChoiceRequested(() => {
+      if (active) {
+        setCloseDialogRemember(false);
+        setCloseDialogOpen(true);
+      }
+    }).then((dispose) => {
+      if (active) unlisten = dispose;
+      else dispose();
+    });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
+
+  const handleDesktopCloseChoice = useCallback(async (action) => {
+    if (!desktopBridge || closeDialogBusy) return;
+    setCloseDialogBusy(true);
+    try {
+      if (closeDialogRemember) {
+        await desktopBridge.setCloseAction(action);
+        try {
+          await API.put("config", {
+            close_action: action,
+            close_to_tray: action !== "exit",
+          });
+        } catch (error) {
+          // Closing the app must still work if persistence briefly fails.
+          console.error("Failed to remember desktop close choice", error);
+        }
+      } else {
+        await desktopBridge.setCloseAction("ask");
+      }
+      setCloseDialogOpen(false);
+      if (action === "tray") await desktopBridge.hideToTray();
+      else await desktopBridge.quitApp();
+    } catch (error) {
+      console.error("Failed to apply desktop close choice", error);
+    } finally {
+      setCloseDialogBusy(false);
+    }
+  }, [closeDialogBusy, closeDialogRemember]);
 
   const refreshConfigBackupStatus = useCallback(async () => {
     setConfigBackupLoading(true);
@@ -3221,6 +3293,14 @@ export default function App() {
     <AppShellProvider value={shell}>
       <div className="app-shell relative flex h-screen flex-col overflow-hidden bg-cs2-bg-page text-cs2-text-primary">
         <CustomTitleBar />
+        <DesktopCloseDialog
+          open={closeDialogOpen}
+          busy={closeDialogBusy}
+          remember={closeDialogRemember}
+          onRememberChange={setCloseDialogRemember}
+          onChoice={(action) => void handleDesktopCloseChoice(action)}
+          onCancel={() => setCloseDialogOpen(false)}
+        />
         <div className="relative flex flex-1 overflow-hidden">
           <FirstRunWelcome
             open={backendReady && startupInitDone && showFirstRunWelcome && !isStandalonePreview}
@@ -3249,6 +3329,9 @@ export default function App() {
                   <div className="flex flex-col items-center gap-2">
                     <h2 className="text-xl font-bold tracking-tight text-dynamic-white">{t("app.backendConnecting")}</h2>
                     <p className="text-sm text-dynamic-zinc-400">{t("app.backendStarting")}</p>
+                    <p className="text-[11px] font-mono text-dynamic-zinc-500">
+                      {t("app.backendElapsed", { seconds: Math.max(0, backendWaitMs / 1000).toFixed(1) })}
+                    </p>
                   </div>
                   <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/40 border border-white/5">
                     <div className="w-1.5 h-1.5 rounded-full bg-cs2-orange animate-pulse" />
@@ -3256,6 +3339,20 @@ export default function App() {
                       Attempting to connect: {BACKEND_CONNECT_LABEL}
                     </span>
                   </div>
+                  {backendWaitMs >= 8000 && (
+                    <div className="flex max-w-sm flex-col items-center gap-3 text-center">
+                      <p className="text-xs leading-5 text-amber-300/90">
+                        {backendConnectError || t("app.backendTakingLonger")}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => window.location.reload()}
+                        className="rounded-lg border border-cs2-border bg-white/5 px-4 py-2 text-xs font-semibold text-cs2-text-secondary transition hover:border-cs2-accent/50 hover:text-cs2-text-primary"
+                      >
+                        {t("app.backendRetryNow")}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             ) : !startupInitDone ? (

@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         Mutex,
     },
     thread,
@@ -15,7 +15,7 @@ use std::{
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, RunEvent, State, WindowEvent,
+    AppHandle, Emitter, Manager, RunEvent, State, WindowEvent,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
@@ -30,14 +30,18 @@ struct BackendProcess {
 }
 
 struct AppLifecycle {
-    close_to_tray: AtomicBool,
+    close_action: AtomicU8,
     quitting: AtomicBool,
 }
+
+const CLOSE_ACTION_ASK: u8 = 0;
+const CLOSE_ACTION_TRAY: u8 = 1;
+const CLOSE_ACTION_EXIT: u8 = 2;
 
 impl Default for AppLifecycle {
     fn default() -> Self {
         Self {
-            close_to_tray: AtomicBool::new(true),
+            close_action: AtomicU8::new(CLOSE_ACTION_ASK),
             quitting: AtomicBool::new(false),
         }
     }
@@ -45,16 +49,45 @@ impl Default for AppLifecycle {
 
 #[tauri::command]
 fn set_close_to_tray(enabled: bool, lifecycle: State<'_, AppLifecycle>) {
-    lifecycle.close_to_tray.store(enabled, Ordering::SeqCst);
+    lifecycle.close_action.store(
+        if enabled { CLOSE_ACTION_ASK } else { CLOSE_ACTION_EXIT },
+        Ordering::SeqCst,
+    );
 }
 
 #[tauri::command]
 fn get_close_to_tray(lifecycle: State<'_, AppLifecycle>) -> bool {
-    lifecycle.close_to_tray.load(Ordering::SeqCst)
+    lifecycle.close_action.load(Ordering::SeqCst) != CLOSE_ACTION_EXIT
 }
 
-fn should_hide_on_close(close_to_tray: bool, quitting: bool) -> bool {
-    close_to_tray && !quitting
+fn parse_close_action(action: &str) -> Result<u8, String> {
+    match action.trim().to_ascii_lowercase().as_str() {
+        "ask" => Ok(CLOSE_ACTION_ASK),
+        "tray" => Ok(CLOSE_ACTION_TRAY),
+        "exit" => Ok(CLOSE_ACTION_EXIT),
+        _ => Err("close action must be ask, tray, or exit".to_string()),
+    }
+}
+
+fn close_action_name(action: u8) -> &'static str {
+    match action {
+        CLOSE_ACTION_TRAY => "tray",
+        CLOSE_ACTION_EXIT => "exit",
+        _ => "ask",
+    }
+}
+
+#[tauri::command]
+fn set_close_action(action: String, lifecycle: State<'_, AppLifecycle>) -> Result<(), String> {
+    lifecycle
+        .close_action
+        .store(parse_close_action(&action)?, Ordering::SeqCst);
+    Ok(())
+}
+
+#[tauri::command]
+fn get_close_action(lifecycle: State<'_, AppLifecycle>) -> String {
+    close_action_name(lifecycle.close_action.load(Ordering::SeqCst)).to_string()
 }
 
 fn show_main_window(handle: &AppHandle) {
@@ -63,6 +96,18 @@ fn show_main_window(handle: &AppHandle) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+#[tauri::command]
+fn hide_to_tray(handle: AppHandle) {
+    if let Some(window) = handle.get_webview_window("main") {
+        let _ = window.hide();
+    }
+}
+
+#[tauri::command]
+fn quit_app(handle: AppHandle) {
+    request_app_exit(&handle);
 }
 
 fn request_app_exit(handle: &AppHandle) {
@@ -440,7 +485,11 @@ pub fn run() {
             read_legacy_ui_state,
             backend_session_token,
             set_close_to_tray,
-            get_close_to_tray
+            get_close_to_tray,
+            set_close_action,
+            get_close_action,
+            hide_to_tray,
+            quit_app
         ])
         .setup(|app| {
             let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
@@ -500,15 +549,19 @@ pub fn run() {
         } if label == "main" => {
             api.prevent_close();
             let lifecycle = handle.state::<AppLifecycle>();
-            if should_hide_on_close(
-                lifecycle.close_to_tray.load(Ordering::SeqCst),
-                lifecycle.quitting.load(Ordering::SeqCst),
-            ) {
-                if let Some(window) = handle.get_webview_window(&label) {
-                    let _ = window.hide();
+            if lifecycle.quitting.load(Ordering::SeqCst) {
+                return;
+            }
+            match lifecycle.close_action.load(Ordering::SeqCst) {
+                CLOSE_ACTION_TRAY => {
+                    if let Some(window) = handle.get_webview_window(&label) {
+                        let _ = window.hide();
+                    }
                 }
-            } else {
-                request_app_exit(handle);
+                CLOSE_ACTION_EXIT => request_app_exit(handle),
+                _ => {
+                    let _ = handle.emit("desktop-close-choice-requested", ());
+                }
             }
         }
         RunEvent::ExitRequested { code, api, .. } => {
@@ -526,7 +579,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{new_session_token, should_hide_on_close};
+    use super::{close_action_name, new_session_token, parse_close_action};
 
     #[test]
     fn session_token_is_256_bit_hex() {
@@ -536,9 +589,10 @@ mod tests {
     }
 
     #[test]
-    fn close_hides_only_when_enabled_and_not_quitting() {
-        assert!(should_hide_on_close(true, false));
-        assert!(!should_hide_on_close(false, false));
-        assert!(!should_hide_on_close(true, true));
+    fn close_action_round_trips_supported_values() {
+        for expected in ["ask", "tray", "exit"] {
+            assert_eq!(close_action_name(parse_close_action(expected).unwrap()), expected);
+        }
+        assert!(parse_close_action("unsupported").is_err());
     }
 }

@@ -427,7 +427,7 @@ export default function SettingsPage() {
         const { data } = await API.get("config");
         if (!cancelled) {
           setConfig(data);
-          void desktopBridge?.setCloseToTray(data.close_to_tray !== false);
+          void desktopBridge?.setCloseAction(data.close_action ?? (data.close_to_tray === false ? "exit" : "ask"));
         }
       } catch (e) {
         if (!cancelled) console.error("Failed to load config:", e);
@@ -616,7 +616,8 @@ export default function SettingsPage() {
       payload.ai_mode = !!config.ai_mode;
       payload.obs_agent_auto_prepare = !!config.obs_agent_auto_prepare;
       payload.locale = config.locale ?? "auto";
-      payload.close_to_tray = config.close_to_tray !== false;
+      payload.close_action = config.close_action ?? (config.close_to_tray === false ? "exit" : "ask");
+      payload.close_to_tray = payload.close_action !== "exit";
       payload.demo_directory = config.demo_directory ?? "";
       payload.demo_watch_paths = config.demo_watch_paths ?? [];
       payload.expected_parse_players = config.expected_parse_players ?? [];
@@ -640,7 +641,7 @@ export default function SettingsPage() {
       };
 
       await API.put("config", payload);
-      await desktopBridge?.setCloseToTray(payload.close_to_tray);
+      await desktopBridge?.setCloseAction(payload.close_action);
       useLocaleStore.getState().hydrate(payload.locale);
       setSaveMsg({ text: t("app.settingsSaved") ?? "Saved", tone: "ok" });
     } catch (e) {
@@ -874,16 +875,19 @@ export default function SettingsPage() {
                 </FieldRow>
 
                 <FieldRow
-                  label={t("settings.labelCloseToTray")}
-                  hint={t("settings.hintCloseToTray")}
-                  search={search && !matches(t("settings.labelCloseToTray") + " tray background close")}
+                  label={t("settings.labelCloseAction")}
+                  hint={t("settings.hintCloseAction")}
+                  search={search && !matches(t("settings.labelCloseAction") + " tray background close exit ask")}
                 >
-                  <Toggle
-                    value={config.close_to_tray !== false}
-                    onChange={(value) => set("close_to_tray", value)}
-                    onLabel={t("settings.closeToTrayOn")}
-                    offLabel={t("settings.closeToTrayOff")}
-                  />
+                  <select
+                    value={config.close_action ?? (config.close_to_tray === false ? "exit" : "ask")}
+                    onChange={(event) => set("close_action", event.target.value)}
+                    className="min-w-40 rounded-md border border-cs2-border bg-cs2-bg-input px-3 py-2 text-xs font-medium text-cs2-text-primary outline-none transition focus:border-cs2-accent/60"
+                  >
+                    <option value="ask">{t("settings.closeActionAsk")}</option>
+                    <option value="tray">{t("settings.closeActionTray")}</option>
+                    <option value="exit">{t("settings.closeActionExit")}</option>
+                  </select>
                 </FieldRow>
 
                 {/* GitHub 地址 */}

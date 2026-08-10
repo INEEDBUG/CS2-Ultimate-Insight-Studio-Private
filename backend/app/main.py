@@ -936,6 +936,7 @@ class ConfigPayload(BaseModel):
     obs_agent_auto_prepare: Optional[bool] = None
     locale: Optional[str] = None
     close_to_tray: Optional[bool] = None
+    close_action: Optional[Literal["ask", "tray", "exit"]] = None
     expected_parse_players: Optional[list[str]] = None
     recording_global_pacing: Optional[dict[str, Any]] = None
     default_record_warmup: Optional[dict[str, Any]] = None
@@ -1272,6 +1273,9 @@ async def update_config(payload: ConfigPayload):
         cfg.locale = payload.locale
     if payload.close_to_tray is not None:
         cfg.close_to_tray = bool(payload.close_to_tray)
+    if payload.close_action is not None:
+        cfg.close_action = payload.close_action
+        cfg.close_to_tray = payload.close_action != "exit"
     if payload.expected_parse_players is not None:
         cleaned: list[str] = []
         for x in payload.expected_parse_players:

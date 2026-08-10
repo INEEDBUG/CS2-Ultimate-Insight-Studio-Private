@@ -110,7 +110,7 @@ This repository does not display upstream donation QR codes or solicit money on 
 
 Download the latest `CS2 Ultimate Insight Studio_x.x.x_x64-setup.exe` from this repository's [Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases), run the installer and follow the prompts.
 
-By default, the window `×` button hides the app to the Windows system tray so parsing and downloads can continue. Left-click the tray icon to restore the window, or use its menu to quit. This behavior can be changed under Settings → System & Updates.
+By default, the window `×` button asks whether to keep the app running in the Windows system tray or exit completely, with an option to remember the choice. Parsing and downloads continue while the app is in the tray. The behavior can be changed at any time under Settings → System & Updates.
 
 After installation, launch from desktop or start menu. **No browser or manual backend start is required.** The lightweight Tauri shell starts the bundled Python backend and renders the UI with the Windows system WebView2 runtime.
 
