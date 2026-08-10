@@ -29,6 +29,7 @@ import subprocess
 import tarfile
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Awaitable, Callable, Iterator
 from urllib.parse import unquote, urlparse
@@ -96,6 +97,14 @@ class ResolvedValveDemo:
     reservation_id: int
     tv_port: int
     demo_url: str
+    played_at: str | None = None
+
+
+@dataclass(frozen=True)
+class ValveMatchMetadata:
+    match_id: int
+    played_at: str | None
+    demo_url: str | None
 
 
 def extract_match_share_code(value: str) -> str:
@@ -204,8 +213,14 @@ def _validate_demo_url(value: str) -> str:
     return value
 
 
-def parse_match_list_demo_url(payload: bytes, expected_match_id: int) -> str:
-    """Read the requested match's demo URL from a CMsg...MatchList payload."""
+def parse_match_list_metadata(payload: bytes, expected_match_id: int) -> ValveMatchMetadata:
+    """Read stable match metadata from a CMsg...MatchList payload.
+
+    ``matchtime`` is field 2 of ``CDataGCCStrike15_v2_MatchInfo``.  Unlike a
+    local file timestamp it is the server-authored start time, so it is safe to
+    label as the actual match time.  The replay URL is optional because Valve
+    can retire it while the match metadata remains useful.
+    """
 
     match_messages = [
         bytes(value)
@@ -216,6 +231,15 @@ def parse_match_list_demo_url(payload: bytes, expected_match_id: int) -> str:
         match_id = _first_varint(match_message, 1)
         if match_id != expected_match_id:
             continue
+        match_time = _first_varint(match_message, 2)
+        played_at = None
+        if match_time and match_time > 0:
+            try:
+                played_at = datetime.fromtimestamp(match_time, tz=timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
+            except (OverflowError, OSError, ValueError):
+                played_at = None
         fields = list(_protobuf_fields(match_message))
         round_messages = [
             bytes(value)
@@ -229,15 +253,25 @@ def parse_match_list_demo_url(payload: bytes, expected_match_id: int) -> str:
                 if number == 4 and wire_type == 2
             ]
         if not round_messages:
-            raise MatchInfoDecodeError("比赛信息中没有回合统计")
+            return ValveMatchMetadata(match_id=match_id, played_at=played_at, demo_url=None)
         for number, wire_type, value in _protobuf_fields(round_messages[-1]):
             if number == 3 and wire_type == 2:
                 try:
-                    return _validate_demo_url(bytes(value).decode("utf-8"))
+                    demo_url = _validate_demo_url(bytes(value).decode("utf-8"))
+                    return ValveMatchMetadata(match_id=match_id, played_at=played_at, demo_url=demo_url)
                 except UnicodeDecodeError as exc:
                     raise MatchInfoDecodeError("Demo URL 不是有效 UTF-8") from exc
-        raise MatchInfoDecodeError("比赛信息中没有 Demo 下载地址，可能已经过期")
+        return ValveMatchMetadata(match_id=match_id, played_at=played_at, demo_url=None)
     raise MatchInfoDecodeError("Game Coordinator 未返回对应比赛，Demo 可能已经过期")
+
+
+def parse_match_list_demo_url(payload: bytes, expected_match_id: int) -> str:
+    """Read the requested match's active demo URL from a match-list payload."""
+
+    metadata = parse_match_list_metadata(payload, expected_match_id)
+    if not metadata.demo_url:
+        raise MatchInfoDecodeError("比赛信息中没有 Demo 下载地址，可能已经过期")
+    return metadata.demo_url
 
 
 def _boiler_runtime_is_ready(runtime_dir: Path) -> bool:
@@ -445,11 +479,30 @@ async def resolve_valve_demo(
     executable = await runtime_installer(runtime_parent)
     output_path = runtime_parent / "work" / f"matches-{uuid.uuid4().hex}.info"
     payload = await process_runner(executable, output_path, share_code)
-    demo_url = parse_match_list_demo_url(payload, share_code.match_id)
+    metadata = parse_match_list_metadata(payload, share_code.match_id)
+    if not metadata.demo_url:
+        raise MatchInfoDecodeError("比赛信息中没有 Demo 下载地址，可能已经过期")
     return ResolvedValveDemo(
         share_code=share_code.share_code,
         match_id=share_code.match_id,
         reservation_id=share_code.reservation_id,
         tv_port=share_code.tv_port,
-        demo_url=demo_url,
+        demo_url=metadata.demo_url,
+        played_at=metadata.played_at,
     )
+
+
+async def resolve_valve_match_metadata(
+    value: str,
+    runtime_parent: Path,
+    *,
+    runtime_installer: Callable[[Path], Awaitable[Path]] = ensure_boiler_runtime,
+    process_runner: Callable[[Path, Path, MatchShareCode], Awaitable[bytes]] = run_boiler_runtime,
+) -> ValveMatchMetadata:
+    """Resolve match time even when the downloadable replay has expired."""
+
+    share_code = decode_match_share_code(value)
+    executable = await runtime_installer(runtime_parent)
+    output_path = runtime_parent / "work" / f"matches-{uuid.uuid4().hex}.info"
+    payload = await process_runner(executable, output_path, share_code)
+    return parse_match_list_metadata(payload, share_code.match_id)

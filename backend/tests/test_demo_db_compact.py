@@ -524,3 +524,32 @@ def test_batch_detail_isolates_corrupt_result_json(tmp_path: Path):
         assert "损坏的解析结果" in rows[0]["result_error"]
 
     _run(scenario())
+
+
+def test_verified_match_time_is_stored_with_provenance(tmp_path: Path):
+    async def scenario():
+        db = DemoDB(tmp_path / "match-time.sqlite3")
+        await db.init_db()
+        demo = tmp_path / "official.dem"
+        demo.write_bytes(b"demo")
+        demo_id, _ = await db.add_demo(str(demo), status="done")
+
+        assert await db.update_match_date(demo_id, "2026-08-10T13:14:00Z") is True
+        await db.update_lightweight_meta(
+            str(demo),
+            {
+                "map_name": "de_mirage",
+                "total_rounds": 24,
+                "team_a_score": 13,
+                "team_b_score": 11,
+                "team_a_name": "A",
+                "team_b_name": "B",
+                "duration_mins": 36,
+                "match_date": "",
+            },
+        )
+        row = await db.get_demo_list_item(demo_id)
+        assert row["match_date"] == "2026-08-10T13:14:00Z"
+        assert row["match_date_source"] == "steam_gc"
+
+    _run(scenario())

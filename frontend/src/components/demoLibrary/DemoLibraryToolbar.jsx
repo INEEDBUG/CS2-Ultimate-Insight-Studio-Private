@@ -1,4 +1,4 @@
-import { Database, FilePlus2, FolderOpen, LayoutGrid, List, Loader2, ScanSearch } from "lucide-react";
+import { ChartNoAxesCombined, Database, FilePlus2, FolderOpen, LayoutGrid, List, Loader2, ScanSearch } from "lucide-react";
 import { useT } from "../../i18n/useT.js";
 
 export default function DemoLibraryToolbar({
@@ -20,7 +20,7 @@ export default function DemoLibraryToolbar({
   const viewBtn = (mode, Icon) => (
     <button
       type="button"
-      title={mode === "grid" ? t("library.viewGrid") : t("library.viewList")}
+      title={mode === "grid" ? t("library.viewGrid") : mode === "list" ? t("library.viewList") : t("library.viewPerformance")}
       onClick={() => onViewModeChange?.(mode)}
       className={`p-1.5 rounded-md transition-all ${viewMode === mode ? "bg-cs2-accent text-cs2-text-on-accent shadow" : "text-cs2-text-muted hover:text-cs2-text-secondary"}`}
     >
@@ -39,6 +39,7 @@ export default function DemoLibraryToolbar({
         <div className="mr-1 flex items-center rounded-lg bg-cs2-bg-input/70 p-1 border border-cs2-border">
           {viewBtn("grid", LayoutGrid)}
           {viewBtn("list", List)}
+          {viewBtn("performance", ChartNoAxesCombined)}
         </div>
         <button
           type="button"

@@ -39,9 +39,13 @@ def _field_bytes(number: int, value: bytes) -> bytes:
     return _varint((number << 3) | 2) + _varint(len(value)) + value
 
 
-def _match_list(match_id: int, demo_url: str) -> bytes:
-    round_stats = _field_bytes(3, demo_url.encode("utf-8"))
-    match_info = _field_varint(1, match_id) + _field_bytes(5, round_stats)
+def _match_list(match_id: int, demo_url: str | None, match_time: int = 0) -> bytes:
+    round_stats = _field_bytes(3, demo_url.encode("utf-8")) if demo_url else b""
+    match_info = _field_varint(1, match_id)
+    if match_time:
+        match_info += _field_varint(2, match_time)
+    if round_stats:
+        match_info += _field_bytes(5, round_stats)
     return _field_bytes(4, match_info)
 
 
@@ -73,6 +77,16 @@ def test_parse_match_list_demo_url_reads_requested_match():
     payload += _match_list(decoded.match_id, url)
 
     assert resolver.parse_match_list_demo_url(payload, decoded.match_id) == url
+
+
+def test_parse_match_list_metadata_keeps_server_match_time_without_replay_url():
+    decoded = resolver.decode_match_share_code(USER_SHARE_CODE)
+    payload = _match_list(decoded.match_id, None, 1_725_900_000)
+
+    metadata = resolver.parse_match_list_metadata(payload, decoded.match_id)
+
+    assert metadata.demo_url is None
+    assert metadata.played_at == "2024-09-09T16:40:00Z"
 
 
 def test_parse_match_list_demo_url_rejects_non_valve_host():
@@ -204,7 +218,7 @@ def test_resolve_valve_demo_composes_runtime_and_parser(tmp_path: Path):
         assert executable.name == "boiler-writter.exe"
         assert output.parent == tmp_path / "work"
         assert share_code == decoded
-        return _match_list(decoded.match_id, expected_url)
+        return _match_list(decoded.match_id, expected_url, 1_725_900_000)
 
     result = asyncio.run(
         resolver.resolve_valve_demo(
@@ -217,3 +231,4 @@ def test_resolve_valve_demo_composes_runtime_and_parser(tmp_path: Path):
 
     assert result.demo_url == expected_url
     assert result.share_code == USER_SHARE_CODE
+    assert result.played_at == "2024-09-09T16:40:00Z"

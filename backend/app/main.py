@@ -117,8 +117,10 @@ from .valve_demo_resolver import (
     BoilerRuntimeError,
     InvalidShareCodeError,
     MatchInfoDecodeError,
+    BOILER_VERSION,
     decode_match_share_code,
     resolve_valve_demo,
+    resolve_valve_match_metadata,
 )
 
 APP_VERSION, _APP_VERSION_SOURCE = resolve_local_version_info()
@@ -2776,7 +2778,9 @@ async def download_match_demo_from_share_code(body: MatchShareCodeDownloadBody):
     except OSError as exc:
         raise HTTPException(500, f"Demo 写入或解压失败: {exc}") from exc
 
-    await _enqueue_and_ingest_demo_path(dem_path)
+    demo_id = await _enqueue_and_ingest_demo_path(dem_path)
+    if resolved.played_at:
+        await demo_db.update_match_date(demo_id, resolved.played_at)
     return {
         "ok": True,
         "path": str(dem_path),
@@ -2837,6 +2841,8 @@ async def _run_share_code_download_job(job: DemoDownloadJob) -> dict:
 
     job.update(stage="ingesting", progress=0.92, message="下载与解压完成，正在加入 Demo 库")
     demo_id = await _enqueue_and_ingest_demo_path(dem_path)
+    if resolved.played_at:
+        await demo_db.update_match_date(demo_id, resolved.played_at)
     return {
         "ok": True,
         "path": str(dem_path),
@@ -2844,6 +2850,52 @@ async def _run_share_code_download_job(job: DemoDownloadJob) -> dict:
         "match_id": str(resolved.match_id),
         "share_code": resolved.share_code,
         "demo_id": demo_id,
+    }
+
+
+@app.post("/api/demos/sync-match-times")
+async def sync_demo_match_times():
+    """Backfill verified Steam GC match times for official demos already in the library."""
+
+    cfg = load_config()
+    codes = list(dict.fromkeys(cfg.steam_match_share_codes or []))
+    if not codes:
+        raise HTTPException(400, "没有已同步的官匹分享码，请先在「官匹 Demo 下载」刷新战绩")
+    runtime_parent = resolve_config_path().parent / "third_party" / "boiler-writter"
+    runtime_executable = runtime_parent / BOILER_VERSION / "boiler-writter.exe"
+    if not runtime_executable.is_file():
+        raise HTTPException(409, "本机尚未安装 Game Coordinator 组件，请先在官匹下载页完成一次授权下载")
+
+    candidates: list[tuple[str, int]] = []
+    for code in codes[-100:]:
+        try:
+            decoded = decode_match_share_code(code)
+        except InvalidShareCodeError:
+            continue
+        filename = f"match730_{decoded.match_id}.dem"
+        row = await demo_db.get_demo_by_filename(filename)
+        if row and not str(row.get("match_date") or "").strip():
+            candidates.append((code, int(row["id"])))
+
+    updated = 0
+    failed: list[dict[str, Any]] = []
+    for code, demo_id in candidates:
+        try:
+            metadata = await resolve_valve_match_metadata(code, runtime_parent)
+            if metadata.played_at and await demo_db.update_match_date(demo_id, metadata.played_at):
+                updated += 1
+            else:
+                failed.append({"demo_id": demo_id, "reason": "Steam 未返回比赛时间"})
+        except (BoilerProcessError, BoilerRuntimeError, MatchInfoDecodeError) as exc:
+            failed.append({"demo_id": demo_id, "reason": str(exc)[:240]})
+
+    if updated:
+        await demo_library_hub.notify("match_times")
+    return {
+        "ok": True,
+        "matched": len(candidates),
+        "updated": updated,
+        "failed": failed,
     }
 
 
