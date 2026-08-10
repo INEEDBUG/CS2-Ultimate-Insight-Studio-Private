@@ -8,6 +8,7 @@ from app.env_utils import AppConfig
 
 def test_close_to_tray_defaults_on():
     assert AppConfig().close_to_tray is True
+    assert AppConfig().close_action == "ask"
 
 
 def _configure_paths(monkeypatch, tmp_path: Path) -> tuple[Path, Path]:
