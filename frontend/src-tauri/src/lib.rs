@@ -50,7 +50,11 @@ impl Default for AppLifecycle {
 #[tauri::command]
 fn set_close_to_tray(enabled: bool, lifecycle: State<'_, AppLifecycle>) {
     lifecycle.close_action.store(
-        if enabled { CLOSE_ACTION_ASK } else { CLOSE_ACTION_EXIT },
+        if enabled {
+            CLOSE_ACTION_ASK
+        } else {
+            CLOSE_ACTION_EXIT
+        },
         Ordering::SeqCst,
     );
 }
@@ -591,7 +595,10 @@ mod tests {
     #[test]
     fn close_action_round_trips_supported_values() {
         for expected in ["ask", "tray", "exit"] {
-            assert_eq!(close_action_name(parse_close_action(expected).unwrap()), expected);
+            assert_eq!(
+                close_action_name(parse_close_action(expected).unwrap()),
+                expected
+            );
         }
         assert!(parse_close_action("unsupported").is_err());
     }
