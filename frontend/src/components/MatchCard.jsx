@@ -31,14 +31,13 @@ function formatDuration(mins) {
 
 function resolveDisplayDate(demo, matchMeta) {
   const matchDate = matchMeta?.match_date || demo.match_date;
-  const raw = matchDate || demo.added_at;
-  if (!raw) return { text: "", isMatchTime: false };
-  const parsed = new Date(raw);
+  if (!matchDate) return { text: "", isMatchTime: false };
+  const parsed = new Date(matchDate);
   return {
     text: Number.isNaN(parsed.getTime())
       ? ""
       : parsed.toLocaleDateString("zh-CN", { year: "2-digit", month: "2-digit", day: "2-digit" }),
-    isMatchTime: Boolean(matchDate),
+    isMatchTime: true,
   };
 }
 
@@ -231,8 +230,8 @@ export function MatchListRow({
                 {listStatusLabel}
               </span>
             </div>
-            <div className="text-[9px] font-bold text-cs2-text-muted font-mono" title={t(displayDate.isMatchTime ? "library.matchTimeLabel" : "library.addedTimeFallbackLabel")}>
-              {displayDate.text}
+            <div className="text-[9px] font-bold text-cs2-text-muted font-mono" title={t(displayDate.isMatchTime ? "library.matchTimeLabel" : "library.matchTimeUnknown")}>
+              {displayDate.text || t("library.matchTimeUnknownShort")}
             </div>
           </div>
 
@@ -445,8 +444,8 @@ export default function MatchCard({
               <Clock className="h-3 w-3" />
               {formatDuration(matchMeta.duration_mins)}
             </div>
-            <div className="opacity-80 tabular-nums" title={t(displayDate.isMatchTime ? "library.matchTimeLabel" : "library.addedTimeFallbackLabel")}>
-              {displayDate.text}
+            <div className="opacity-80 tabular-nums" title={t(displayDate.isMatchTime ? "library.matchTimeLabel" : "library.matchTimeUnknown")}>
+              {displayDate.text || t("library.matchTimeUnknownShort")}
             </div>
           </div>
         </div>

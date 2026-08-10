@@ -45,6 +45,9 @@
 
 <table>
   <tr>
+    <td colspan="2" align="center"><b>近期战绩面板、真实比赛时间与双方记分板</b><br><a href="./docs/screenshots/demo-performance-board.png"><img src="./docs/screenshots/demo-performance-board.png" alt="近期战绩面板、真实比赛时间与双方记分板" width="100%"></a></td>
+  </tr>
+  <tr>
     <td width="50%" align="center"><b>上手指南</b><br><a href="./docs/screenshots/getting-started.png"><img src="./docs/screenshots/getting-started.png" alt="上手指南" width="100%"></a></td>
     <td width="50%" align="center"><b>本地 Demo 库</b><br><a href="./docs/screenshots/demo-library.png"><img src="./docs/screenshots/demo-library.png" alt="本地 Demo 库" width="100%"></a></td>
   </tr>
@@ -79,7 +82,8 @@
 ### Demo 库维护
 
 - **本地库记录展示** — 列表、缩略图展示 Demo 的比赛来源、记分板、关注玩家、展示名、备注等关键信息。
-- **按真实比赛时间排序** — 可像战绩工具一样按解析出的比赛发生时间升序或降序浏览，排序在 SQLite 查询阶段完成并覆盖全部分页；尚未解析出比赛时间的旧 Demo 固定排在末尾，不会被误当成入库时间。
+- **近期战绩面板** — 默认采用“左侧近期比赛、右侧所选比赛详情”的战绩工具布局；直接复用已解析 Demo，展示回合胜负条、双方 K/D/A、ADR、KAST、Rating Pro 2.0/3.0，以及胜方英雄和负方战犯。原网格与列表视图仍可随时切换。
+- **真实比赛时间与来源标记** — 官匹分享码下载时读取 Steam Game Coordinator 返回的 `matchtime`，单独保存为真实比赛时间；排序在 SQLite 查询阶段覆盖全部分页。缺少服务器时间的旧 Demo 明确显示“比赛时间未知”，仅把入库时间作为辅助信息，不再冒充比赛日期；已缓存分享码的旧官匹可在战绩面板中补全。
 - **目录自动监听** — 支持 5E / 完美 / 官匹 demo / faceit 等 Demo 下载目录的监听，一键自动入库。
 - **Steam 官方比赛同步** — 使用 Valve 当前支持的 `GetNextMatchSharingCode` 流程，以 API Key、SteamID64、游戏认证码和一场已知分享码增量同步官匹记录；完整地图、比分和玩家评价仍以下载后的本地 Demo 解析结果为准。同步结果缓存在本地，避免每次启动重复请求整段历史。
 

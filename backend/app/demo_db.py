@@ -144,6 +144,7 @@ class DemoDB:
                     team_b_name TEXT,
                     duration_mins REAL,
                     match_date TEXT,
+                    match_date_source TEXT,
                     status    TEXT NOT NULL DEFAULT 'pending',
                     added_at  TEXT NOT NULL,
                     parsed_at TEXT,
@@ -246,6 +247,8 @@ class DemoDB:
                 alter_stmts.append("ALTER TABLE demo_files ADD COLUMN duration_mins REAL")
             if "match_date" not in cols:
                 alter_stmts.append("ALTER TABLE demo_files ADD COLUMN match_date TEXT")
+            if "match_date_source" not in cols:
+                alter_stmts.append("ALTER TABLE demo_files ADD COLUMN match_date_source TEXT")
             if "display_name" not in cols:
                 alter_stmts.append("ALTER TABLE demo_files ADD COLUMN display_name TEXT")
             if "team_a_name" not in cols:
@@ -642,6 +645,29 @@ class DemoDB:
             )
             await conn.commit()
 
+    async def update_match_date(
+        self,
+        demo_id: int,
+        match_date: str,
+        *,
+        source: str = "steam_gc",
+    ) -> bool:
+        """Persist a verified match timestamp without touching import time."""
+
+        if not str(match_date or "").strip():
+            return False
+        async with aiosqlite.connect(self.db_path) as conn:
+            cur = await conn.execute(
+                """
+                UPDATE demo_files
+                SET match_date = ?, match_date_source = ?
+                WHERE id = ?
+                """,
+                (str(match_date).strip(), str(source or "steam_gc"), int(demo_id)),
+            )
+            await conn.commit()
+        return cur.rowcount > 0
+
     async def update_lightweight_meta(self, demo_path: str, meta: dict[str, Any], source: str | None = None) -> None:
         async with aiosqlite.connect(self.db_path) as conn:
             if source:
@@ -655,7 +681,7 @@ class DemoDB:
                         team_a_name = ?,
                         team_b_name = ?,
                         duration_mins = ?,
-                        match_date = ?,
+                        match_date = COALESCE(NULLIF(?, ''), match_date),
                         source = ?
                     WHERE path = ?
                     """,
@@ -683,7 +709,7 @@ class DemoDB:
                         team_a_name = ?,
                         team_b_name = ?,
                         duration_mins = ?,
-                        match_date = ?
+                        match_date = COALESCE(NULLIF(?, ''), match_date)
                     WHERE path = ?
                     """,
                     (
@@ -990,7 +1016,9 @@ class DemoDB:
                 params.append(caster(f[key]))
             except (TypeError, ValueError):
                 pass
-        date_expr = "julianday(COALESCE(NULLIF(d.match_date, ''), NULLIF(d.parsed_at, ''), d.added_at))"
+        # Date range filters mean verified match time. Import and parse times
+        # are deliberately excluded so they cannot masquerade as match dates.
+        date_expr = "julianday(NULLIF(d.match_date, ''))"
         date_from = str(f.get("date_from") or "").strip()
         if date_from:
             parts.append(f"{date_expr} >= julianday(?)")
@@ -1063,14 +1091,14 @@ class DemoDB:
 
     _LIST_SELECT = """
         SELECT DISTINCT d.id, d.path, d.filename, d.display_name, d.file_size, d.status, d.added_at, d.parsed_at, d.error_msg,
-               d.map_name, d.total_rounds, d.team_a_score, d.team_b_score, d.team_a_name, d.team_b_name, d.duration_mins, d.match_date, d.source, d.remark,
+               d.map_name, d.total_rounds, d.team_a_score, d.team_b_score, d.team_a_name, d.team_b_name, d.duration_mins, d.match_date, d.match_date_source, d.source, d.remark,
                d.content_md5, d.origin_zip,
                r.result_json, r.created_at AS result_created_at
         """
 
     _COMPACT_LIST_SELECT = """
         SELECT DISTINCT d.id, d.path, d.filename, d.display_name, d.file_size, d.status, d.added_at, d.parsed_at, d.error_msg,
-               d.map_name, d.total_rounds, d.team_a_score, d.team_b_score, d.team_a_name, d.team_b_name, d.duration_mins, d.match_date, d.source, d.remark,
+               d.map_name, d.total_rounds, d.team_a_score, d.team_b_score, d.team_a_name, d.team_b_name, d.duration_mins, d.match_date, d.match_date_source, d.source, d.remark,
                d.content_md5, d.origin_zip,
                CASE WHEN rs.demo_path IS NULL THEN 0 ELSE 1 END AS has_result,
                COALESCE(rs.clip_count, 0) AS clip_count,

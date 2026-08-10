@@ -42,7 +42,8 @@ This repository does not display upstream donation QR codes or solicit money on 
 ### Demo Library Management
 
 - **Local Library Records** — List and thumbnail view showing match source, scoreboard, tracked players, display names, notes, and other key info.
-- **Actual Match-Time Sorting** — Sort ascending or descending by the parsed time when each match was played. Ordering happens in SQLite across the complete paginated library; older rows without a known match time stay at the end instead of being disguised as import times.
+- **Recent-Match Performance Board** — The default library view now follows a left-side recent-match rail plus selected-match detail layout. Existing analysis caches directly populate round results, both team scoreboards, K/D/A, ADR, KAST, Rating Pro 2.0/3.0, and the match hero/culprit. Grid and list views remain available.
+- **Verified Match Time and Provenance** — Official share-code downloads persist Steam Game Coordinator `matchtime` separately from import time. SQLite sorting covers the complete paginated library. Older rows without server time explicitly show “match time unknown”; import time is only secondary context and is never relabeled as the match date. Cached official share codes can backfill older records.
 - **Auto Directory Monitoring** — Supports monitoring demo download directories from 5E, Perfect World, Official Matchmaking, FACEIT, etc., with one-click import.
 - **Official Steam Match Sync** — Uses Valve's supported `GetNextMatchSharingCode` flow with an API key, SteamID64, game authentication code, and a known share code. Synced codes are cached locally; complete maps, scores, and player assessments are generated only after downloading and parsing the Demo.
 

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import API from "../api/api";
 import { LayoutGrid, List } from "lucide-react";
 import PageContainer from "../components/PageContainer";
@@ -9,6 +9,7 @@ import DemoLibraryQueryBar from "../components/demoLibrary/DemoLibraryQueryBar";
 import DemoLibraryToolbar from "../components/demoLibrary/DemoLibraryToolbar";
 import DemoWatchPathsModal from "../components/demoLibrary/DemoWatchPathsModal";
 import DemoPagination from "../components/demoLibrary/DemoPagination";
+import DemoPerformanceView from "../components/demoLibrary/DemoPerformanceView";
 import MatchCard, { MatchListRow } from "../components/MatchCard";
 import IngestModal from "../components/IngestModal";
 import Modal from "../components/ui/Modal";
@@ -42,7 +43,11 @@ const INITIAL_ADV_FILTERS = {
 export default function DemoLibraryPage() {
   const t = useT();
   const s = useAppShell();
-  const [viewMode, setViewMode] = useState("grid"); // "grid" | "list"
+  const [viewMode, setViewMode] = useState("performance"); // "performance" | "grid" | "list"
+  const [performanceSelectedId, setPerformanceSelectedId] = useState(null);
+  const [performanceDetail, setPerformanceDetail] = useState(null);
+  const [performanceDetailLoading, setPerformanceDetailLoading] = useState(false);
+  const [syncingMatchTimes, setSyncingMatchTimes] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [watchPathsModalOpen, setWatchPathsModalOpen] = useState(false);
   const [ingestModalOpen, setIngestModalOpen] = useState(false);
@@ -120,6 +125,51 @@ export default function DemoLibraryPage() {
     rows = filterByPathAndTags(rows, searchQ);
     return sortDemoRows(rows, s.librarySortKey, s.librarySortDir);
   }, [s.demoLibraryItems, s.libraryAdvFilters, s.librarySearchInput, s.librarySearchQ, s.librarySortKey, s.librarySortDir]);
+
+  useEffect(() => {
+    if (viewMode !== "performance" || !filteredRows.length) return;
+    if (!filteredRows.some((row) => Number(row.id) === Number(performanceSelectedId))) {
+      setPerformanceSelectedId(filteredRows[0].id);
+    }
+  }, [filteredRows, performanceSelectedId, viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== "performance" || performanceSelectedId == null) return undefined;
+    let cancelled = false;
+    setPerformanceDetailLoading(true);
+    API.get(`/demos/${performanceSelectedId}`)
+      .then(({ data }) => {
+        if (!cancelled) setPerformanceDetail(data || null);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setPerformanceDetail(null);
+          s.setProgressText(t("library.performanceLoadFail", { msg: error?.response?.data?.detail || error?.message || "unknown" }));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPerformanceDetailLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [performanceSelectedId, s.setProgressText, t, viewMode]);
+
+  const handleSyncMatchTimes = useCallback(async () => {
+    if (syncingMatchTimes) return;
+    setSyncingMatchTimes(true);
+    try {
+      const { data } = await API.post("/demos/sync-match-times");
+      await s.refreshDemoLibrary(s.libraryPage, { manageLoading: false });
+      if (performanceSelectedId != null) {
+        const detailResponse = await API.get(`/demos/${performanceSelectedId}`);
+        setPerformanceDetail(detailResponse.data || null);
+      }
+      s.setProgressText(t("library.matchTimeSyncDone", { updated: data?.updated || 0, failed: data?.failed?.length || 0 }));
+    } catch (error) {
+      s.setProgressText(t("library.matchTimeSyncFail", { msg: error?.response?.data?.detail || error?.message || "unknown" }));
+    } finally {
+      setSyncingMatchTimes(false);
+    }
+  }, [performanceSelectedId, s, syncingMatchTimes, t]);
 
   const onColumnSort = useCallback((col) => {
     s.setLibrarySortKey((prevKey) => {
@@ -276,11 +326,23 @@ export default function DemoLibraryPage() {
       ) : null}
 
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-cs2-border bg-cs2-bg-card">
-        <div className="min-h-0 flex-1 overflow-y-auto p-4 custom-scrollbar">
+        <div className={`min-h-0 flex-1 ${viewMode === "performance" ? "overflow-hidden" : "overflow-y-auto p-4 custom-scrollbar"}`}>
           {s.libraryLoading ? (
             <div className="flex h-32 items-center justify-center text-cs2-text-muted text-sm">{t("library.loading")}</div>
           ) : filteredRows.length === 0 ? (
             <div className="flex h-32 items-center justify-center text-cs2-text-muted text-sm">{emptyMessage || t("library.noDemo")}</div>
+          ) : viewMode === "performance" ? (
+            <DemoPerformanceView
+              rows={filteredRows}
+              selectedId={performanceSelectedId}
+              onSelect={setPerformanceSelectedId}
+              detail={performanceDetail}
+              detailLoading={performanceDetailLoading}
+              expectedPlayers={expectedPlayers}
+              onOpenAnalysis={handleOpenAnalysis}
+              onSyncMatchTimes={() => void handleSyncMatchTimes()}
+              syncingMatchTimes={syncingMatchTimes}
+            />
           ) : viewMode === "grid" ? (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {filteredRows.map((it) => (
