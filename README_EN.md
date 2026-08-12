@@ -45,7 +45,7 @@ This repository does not display upstream donation QR codes or solicit money on 
 - **Recent-Match Performance Board** — The default library view now follows a left-side recent-match rail plus selected-match detail layout. Existing analysis caches directly populate round results, both team scoreboards, K/D/A, ADR, KAST, Rating Pro 2.0/3.0, and the match hero/culprit. Grid and list views remain available.
 - **Verified Match Time and Provenance** — Official share-code downloads persist Steam Game Coordinator `matchtime` separately from import time. SQLite sorting covers the complete paginated library. Older rows without server time explicitly show “match time unknown”; import time is only secondary context and is never relabeled as the match date. Cached official share codes can backfill older records.
 - **Auto Directory Monitoring** — Supports monitoring demo download directories from 5E, Perfect World, Official Matchmaking, FACEIT, etc., with one-click import.
-- **Official Steam Match Sync** — Uses Valve's supported `GetNextMatchSharingCode` flow with an API key, SteamID64, game authentication code, and a known share code. Synced codes are cached locally; complete maps, scores, and player assessments are generated only after downloading and parsing the Demo.
+- **Local Steam Recent Matches** — Requires no personal Steam Web API key, game authentication code, or browser cookie. The app connects to the currently signed-in local Steam Game Coordinator and shows the latest eight official matches with verified match time, map, score, K/D/A, headshots, and MVPs. A demo is downloaded only when requested. Damage, ADR, KAST, and Rating are shown as unavailable until the demo is parsed locally.
 
 ### Highlight Parsing & Clip Discovery
 
@@ -64,7 +64,7 @@ This repository does not display upstream donation QR codes or solicit money on 
 
 > **First-run performance:** base Demo analysis and 2D replay cache generation are separate stages. The first visit to a match's 2D replay also creates the whole-match Parquet cache, round binary trajectories, and smoke/fire effect cache, so it can take longer than reopening the same match. Cache hits read the local result directly. Upgrades do not delete existing replay caches under `%APPDATA%\CS2 Insight Agent\data\cache\demo-replay`.
 
-> **Steam credential safety:** the Steam Web API key and game authentication code remain in the local configuration only. UI responses are masked, and HTTP client logs do not record credential-bearing query strings. Valve's supported endpoint returns a share-code chain, so the app does not present unverified K/D data as official match statistics.
+> **Steam credential safety:** recent-match discovery uses only the active local Steam client session. It does not read a Steam password, browser cookies, or a personal Web API key. The optional isolated Game Coordinator helper requires explicit first-use consent and is version- and SHA-512-pinned.
 
 ### Product Video
 

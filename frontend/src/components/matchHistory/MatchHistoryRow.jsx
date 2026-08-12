@@ -15,6 +15,7 @@ function fmtDate(iso) {
 }
 
 function ratingColor(r) {
+  if (!Number.isFinite(r)) return "var(--cs2-text-muted)";
   if (r >= 1.2) return "#2eb86a";
   if (r < 0.95) return "#e0556a";
   return undefined;
@@ -47,6 +48,9 @@ export default function MatchHistoryRow({ match, onDownload, onGoToLibrary }) {
 
   const durationSec = match.duration_sec;
   const durationMin = durationSec != null ? Math.floor(durationSec / 60) : null;
+  const adrDisplay = Number.isFinite(match.adr) ? match.adr : "—";
+  const ratingDisplay = Number.isFinite(match.rating) ? match.rating : "—";
+  const needsDemoStats = !Number.isFinite(match.adr) || !Number.isFinite(match.rating);
 
   return (
     <div
@@ -110,7 +114,7 @@ export default function MatchHistoryRow({ match, onDownload, onGoToLibrary }) {
         </div>
         <div>
           <div className="text-[10.5px] text-cs2-text-muted">{t("match.statAdr")}</div>
-          <div className="font-mono text-[13px] font-semibold text-cs2-text-primary">{match.adr}</div>
+          <div className="font-mono text-[13px] font-semibold text-cs2-text-primary">{adrDisplay}</div>
         </div>
         <div>
           <div className="text-[10.5px] text-cs2-text-muted">{t("match.statMvp")}</div>
@@ -121,8 +125,12 @@ export default function MatchHistoryRow({ match, onDownload, onGoToLibrary }) {
       {/* Col 6: rating + badges */}
       <div className="flex flex-col items-center gap-1.5 px-2 py-3">
         <div className="text-[10.5px] text-cs2-text-muted">{t("match.statRating")}</div>
-        <div className="font-mono text-[20px] font-bold" style={{ color: ratingColor(match.rating) }}>
-          {match.rating}
+        <div
+          className="font-mono text-[20px] font-bold"
+          style={{ color: ratingColor(match.rating) }}
+          title={needsDemoStats ? t("match.demoStatsPending") : undefined}
+        >
+          {ratingDisplay}
         </div>
         <div className="flex flex-wrap justify-center gap-1">
           {match.ace_count > 0 && (

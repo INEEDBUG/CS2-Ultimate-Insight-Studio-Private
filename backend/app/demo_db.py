@@ -941,6 +941,28 @@ class DemoDB:
                 existing.update(str(row[0]) for row in await cur.fetchall())
         return existing
 
+    async def find_demo_rows_by_filenames(self, filenames: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """Return compact library metadata keyed by filename in bounded batches."""
+
+        ordered = list(dict.fromkeys(str(value) for value in filenames if str(value)))
+        if not ordered:
+            return {}
+        rows: dict[str, dict[str, Any]] = {}
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            for start in range(0, len(ordered), 500):
+                chunk = ordered[start : start + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                cur = await db.execute(
+                    "SELECT id, filename, map_name, team_a_score, team_b_score, match_date, "
+                    f"match_date_source FROM demo_files WHERE filename IN ({placeholders})",
+                    chunk,
+                )
+                for row in await cur.fetchall():
+                    item = dict(row)
+                    rows[str(item["filename"])] = item
+        return rows
+
     @staticmethod
     def _need_player_join(f: DemoListFilters) -> bool:
         if str(f.get("player_query") or "").strip() or str(f.get("steam_query") or "").strip():

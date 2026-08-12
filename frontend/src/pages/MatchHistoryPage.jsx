@@ -9,10 +9,8 @@ import {
   retryShareCodeDownloadJob,
 } from "../api/matchHistoryApi";
 import CredentialPanel from "../components/matchHistory/CredentialPanel";
-import PlayerOverviewPanel from "../components/matchHistory/PlayerOverviewPanel";
 import MatchHistoryFilterBar from "../components/matchHistory/MatchHistoryFilterBar";
 import MatchHistoryRow from "../components/matchHistory/MatchHistoryRow";
-import API from "../api/api";
 import { useT } from "../i18n/useT.js";
 import { downloadJobPercent, formatTransferBytes, useDemoDownloadStore } from "../stores/demoDownloadStore.js";
 import { desktopBridge } from "../desktop/desktopBridge.js";
@@ -67,11 +65,9 @@ function exportCsv(matches) {
 export default function MatchHistoryPage() {
   const navigate = useNavigate();
   const t = useT();
-  const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
-  const [credOpen, setCredOpen] = useState(false);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [viewMode, setViewMode] = useState("list");
   const [page, setPage] = useState(1);
@@ -80,18 +76,16 @@ export default function MatchHistoryPage() {
   const [shareCodeConsent, setShareCodeConsent] = useState(false);
   const [shareCodeJobId, setShareCodeJobId] = useState(null);
   const [shareCodeError, setShareCodeError] = useState("");
-  const [bulkStarting, setBulkStarting] = useState(false);
   const downloadJobs = useDemoDownloadStore((state) => state.jobs);
   const upsertDownloadJob = useDemoDownloadStore((state) => state.upsertJob);
   const shareCodeJob = downloadJobs.find((job) => job.job_id === shareCodeJobId) || null;
 
-  const doFetch = useCallback(async () => {
+  const doFetch = useCallback(async (acceptGplSidecar = false) => {
     setLoading(true);
     setErr("");
     try {
-      const res = await fetchMatchHistory();
+      const res = await fetchMatchHistory(acceptGplSidecar);
       setData(res);
-      setCredOpen(false);
     } catch (e) {
       setErr(e?.response?.data?.detail || t("match.fetchFail"));
     } finally {
@@ -100,14 +94,7 @@ export default function MatchHistoryPage() {
   }, [t]);
 
   useEffect(() => {
-    API.get("/config").then(({ data: cfg }) => {
-      setConfig(cfg);
-      if (cfg.steam_api_key && cfg.steam_id64 && cfg.steam_game_auth_code && cfg.steam_known_share_code) {
-        doFetch();
-      } else {
-        setCredOpen(true);
-      }
-    }).catch(() => setCredOpen(true));
+    void doFetch(false);
   }, [doFetch]);
 
   useEffect(() => {
@@ -121,12 +108,6 @@ export default function MatchHistoryPage() {
       }
     }
   }, [downloadJobs, shareCodeJobId]);
-
-  async function handleCredSaved() {
-    const { data: cfg } = await API.get("/config");
-    setConfig(cfg);
-    doFetch();
-  }
 
   async function handleDownload(demoUrl, matchId, filename) {
     const job = await downloadMatchDemo(demoUrl, matchId, filename);
@@ -167,30 +148,6 @@ export default function MatchHistoryPage() {
     }
   }
 
-  async function handleDownloadAllNew() {
-    const pending = (data?.match_codes || []).filter((item) => (
-      !item.demo_in_library
-      && !localLibrary[item.match_id]
-      && !downloadJobs.some((job) => job.share_code === item.share_code && ["running", "complete"].includes(job.status))
-    ));
-    if (!pending.length || !shareCodeConsent) return;
-    setBulkStarting(true);
-    setShareCodeError("");
-    try {
-      let newestJob = null;
-      for (const item of pending) {
-        const job = await startShareCodeDownloadJob(item.share_code, true);
-        upsertDownloadJob(job);
-        newestJob = job;
-      }
-      if (newestJob) setShareCodeJobId(newestJob.job_id);
-    } catch (e) {
-      setShareCodeError(e?.response?.data?.detail || "批量下载任务启动失败");
-    } finally {
-      setBulkStarting(false);
-    }
-  }
-
   function handleGoToLibrary() {
     navigate("/library");
   }
@@ -204,12 +161,6 @@ export default function MatchHistoryPage() {
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const pageMatches = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const configured = !!(
-    config?.steam_api_key
-    && config?.steam_id64
-    && config?.steam_game_auth_code
-    && config?.steam_known_share_code
-  );
   const shareCodeBusy = shareCodeJob?.status === "running";
   const shareCodeProgress = downloadJobPercent(shareCodeJob);
 
@@ -228,13 +179,7 @@ export default function MatchHistoryPage() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setCredOpen((v) => !v)}
-            className="rounded-[7px] border border-cs2-border px-3 py-1.5 text-[13px] font-semibold text-cs2-text-secondary hover:text-cs2-text-primary"
-          >
-            {t("match.btnEditCred")}
-          </button>
-          <button
-            onClick={doFetch}
+            onClick={() => void doFetch(false)}
             disabled={loading}
             className="flex items-center gap-1.5 rounded-[7px] border border-cs2-border px-3 py-1.5 text-[13px] font-semibold text-cs2-text-secondary hover:text-cs2-text-primary disabled:opacity-50"
           >
@@ -263,6 +208,7 @@ export default function MatchHistoryPage() {
         </span>
       </div>
 
+      <CredentialPanel connected={data?.source === "steam_game_coordinator"} player={data?.player} loading={loading} onConnect={(accepted) => void doFetch(accepted)} />
 
       <form
         onSubmit={handleShareCodeDownload}
@@ -362,66 +308,6 @@ export default function MatchHistoryPage() {
         </div>
       </form>
 
-      {/* Credential panel */}
-      {(credOpen || !configured) && (
-        <CredentialPanel
-          configured={configured && !credOpen}
-          maskedKey={config?.steam_api_key}
-          maskedAuthCode={config?.steam_game_auth_code}
-          maskedKnownCode={config?.steam_known_share_code}
-          steamId64={config?.steam_id64}
-          matchMode={config?.match_mode}
-          matchCount={config?.match_count}
-          onSaved={handleCredSaved}
-          onSync={doFetch}
-        />
-      )}
-
-      {/* Player overview */}
-      {data?.player && (
-        <PlayerOverviewPanel player={data.player} stats={data.stats_summary} />
-      )}
-
-      {data?.source === "official_share_codes" && (
-        <section className="rounded-[10px] border border-cs2-border bg-cs2-bg-card p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="text-[14px] font-semibold text-cs2-text-primary">Steam 官方比赛记录</h2>
-              <p className="mt-1 text-[11.5px] text-cs2-text-muted">Steam API 只同步比赛分享码；完整地图、比分和玩家评价会在下载并解析 Demo 后生成。</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={handleDownloadAllNew} disabled={bulkStarting || !shareCodeConsent || !(data.match_codes || []).some((item) => !item.demo_in_library && !localLibrary[item.match_id] && !downloadJobs.some((job) => job.share_code === item.share_code && ["running", "complete"].includes(job.status)))} title={!shareCodeConsent ? "请先勾选上方 Game Coordinator 组件同意项" : "Steam 客户端保持登录即可，无需启动 CS2"} className="flex items-center gap-1.5 rounded-[7px] bg-cs2-accent px-3 py-1.5 text-[10px] font-bold text-black disabled:cursor-not-allowed disabled:opacity-40"><Download className="h-3.5 w-3.5" />{bulkStarting ? "正在建立任务" : "下载全部新 Demo"}</button>
-              <span className="rounded-full border border-cs2-border bg-cs2-bg-input px-2.5 py-1 font-mono text-[10px] text-cs2-text-secondary">
-                {data.newest_reached ? "已同步至最新" : `已读取最近 ${data.total || 0} 场`}
-              </span>
-            </div>
-          </div>
-          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-            {(data.match_codes || []).map((item, index) => (
-              <article key={item.match_id} className="rounded-[9px] border border-cs2-border bg-cs2-bg-input/35 p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="text-[11px] font-semibold text-cs2-text-primary">比赛 {(data.total || 0) - index}</p>
-                    <p className="mt-1 truncate font-mono text-[9px] text-cs2-text-muted" title={item.match_id}>Match ID · {item.match_id}</p>
-                  </div>
-                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold ${item.demo_in_library ? "bg-cs2-success/15 text-cs2-success" : "bg-cs2-accent-soft text-cs2-accent"}`}>
-                    {item.demo_in_library ? "已入库" : "可下载"}
-                  </span>
-                </div>
-                <p className="mt-3 truncate rounded bg-black/20 px-2 py-1.5 font-mono text-[9px] text-cs2-text-secondary" title={item.share_code}>{item.share_code}</p>
-                <button
-                  type="button"
-                  onClick={() => item.demo_in_library ? navigate("/library") : setShareCode(item.share_code)}
-                  className="mt-2 w-full rounded-[7px] border border-cs2-border px-2.5 py-1.5 text-[11px] font-semibold text-cs2-text-secondary transition-[color,border-color,background-color,transform] duration-150 ease-out hover:border-cs2-accent/45 hover:bg-cs2-accent-soft hover:text-cs2-text-primary active:scale-[0.98]"
-                >
-                  {item.demo_in_library ? "前往 Demo 库" : "填入上方下载框"}
-                </button>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
-
       {/* Error */}
       {err && (
         <div className="rounded-[10px] border border-cs2-fail/30 bg-cs2-fail/10 px-4 py-3 text-[13px] text-cs2-fail">
@@ -438,7 +324,7 @@ export default function MatchHistoryPage() {
       )}
 
       {/* Match list */}
-      {data && data.source !== "official_share_codes" && !loading && (
+      {data && !loading && (
         <>
           <MatchHistoryFilterBar
             filters={filters}

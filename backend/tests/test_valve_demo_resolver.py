@@ -39,6 +39,10 @@ def _field_bytes(number: int, value: bytes) -> bytes:
     return _varint((number << 3) | 2) + _varint(len(value)) + value
 
 
+def _packed_varints(number: int, values: list[int]) -> bytes:
+    return _field_bytes(number, b"".join(_varint(value) for value in values))
+
+
 def _match_list(match_id: int, demo_url: str | None, match_time: int = 0) -> bytes:
     round_stats = _field_bytes(3, demo_url.encode("utf-8")) if demo_url else b""
     match_info = _field_varint(1, match_id)
@@ -87,6 +91,46 @@ def test_parse_match_list_metadata_keeps_server_match_time_without_replay_url():
 
     assert metadata.demo_url is None
     assert metadata.played_at == "2024-09-09T16:40:00Z"
+
+
+def test_parse_recent_match_list_returns_gc_scoreboard_without_inventing_demo_stats():
+    account_id = 123
+    accounts = [account_id, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    reservation = _packed_varints(1, accounts) + _field_varint(2, (1 << 1) << 8)
+
+    def round_stats(score_own: int, score_opp: int, *, include_totals: bool = False) -> bytes:
+        data = _packed_varints(12, [score_own, score_opp])
+        if include_totals:
+            data += _field_bytes(2, reservation)
+            data += _field_bytes(3, b"https://replay123.valve.net/730/recent.dem.bz2")
+            data += _packed_varints(5, [24, 0, 0, 0, 0, 10, 0, 0, 0, 0])
+            data += _packed_varints(6, [3, 0, 0, 0, 0, 2, 0, 0, 0, 0])
+            data += _packed_varints(7, [13, 0, 0, 0, 0, 18, 0, 0, 0, 0])
+            data += _field_varint(15, 1800)
+            data += _packed_varints(17, [7, 0, 0, 0, 0, 4, 0, 0, 0, 0])
+            data += _packed_varints(21, [4, 0, 0, 0, 0, 1, 0, 0, 0, 0])
+        return data
+
+    match = _field_varint(1, 99) + _field_varint(2, 1_786_540_800)
+    match += _field_bytes(5, round_stats(1, 0))
+    match += _field_bytes(5, round_stats(1, 1))
+    match += _field_bytes(5, round_stats(2, 1, include_totals=True))
+    payload = _field_varint(2, account_id) + _field_bytes(4, match)
+
+    result = resolver.parse_recent_match_list(payload)
+
+    assert result.steam_id64 == str(0x0110000100000000 + account_id)
+    assert len(result.matches) == 1
+    recent = result.matches[0]
+    assert recent.match_id == 99
+    assert recent.map_name == "de_dust2"
+    assert recent.result == "win"
+    assert (recent.score_own, recent.score_opp) == (2, 1)
+    assert (recent.kills, recent.deaths, recent.assists) == (24, 13, 3)
+    assert recent.headshot_kills == 7
+    assert recent.mvp_count == 4
+    assert recent.rounds == (True, False, True)
+    assert recent.demo_url == "https://replay123.valve.net/730/recent.dem.bz2"
 
 
 def test_parse_match_list_demo_url_rejects_non_valve_host():
