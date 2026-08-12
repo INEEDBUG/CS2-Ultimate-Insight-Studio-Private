@@ -51,6 +51,8 @@ export default function MatchHistoryRow({ match, onDownload, onGoToLibrary }) {
   const adrDisplay = Number.isFinite(match.adr) ? match.adr : "—";
   const ratingDisplay = Number.isFinite(match.rating) ? match.rating : "—";
   const needsDemoStats = !Number.isFinite(match.adr) || !Number.isFinite(match.rating);
+  const mapName = match.map || "unknown";
+  const mapThumbnail = `/images/maps/${mapName}.webp`;
 
   return (
     <div
@@ -62,11 +64,23 @@ export default function MatchHistoryRow({ match, onDownload, onGoToLibrary }) {
 
       {/* Col 2: map */}
       <div className="flex flex-col items-center gap-1 p-2">
-        <div className="flex h-14 w-[92px] items-center justify-center rounded-[5px] bg-cs2-bg-elevated text-[10px] text-cs2-text-muted">
-          {match.map}
+        <div className="relative h-14 w-[92px] overflow-hidden rounded-[5px] border border-white/10 bg-cs2-bg-elevated shadow-inner">
+          <img
+            src={mapThumbnail}
+            alt={t("match.mapThumbnailAlt", { map: mapName.replace(/^(de|cs)_/, "") })}
+            loading="lazy"
+            draggable="false"
+            className="h-full w-full object-cover opacity-80"
+            onError={(event) => {
+              if (!event.currentTarget.src.endsWith("/images/maps/thumbnail_unknown.webp")) {
+                event.currentTarget.src = "/images/maps/thumbnail_unknown.webp";
+              }
+            }}
+          />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-white/5" />
         </div>
         <div className="text-center text-[14.5px] font-semibold text-cs2-text-primary leading-none">
-          {match.map.replace("de_", "")}
+          {mapName.replace(/^(de|cs)_/, "")}
         </div>
         <div className="font-mono text-[11.5px] uppercase text-cs2-text-muted">
           {MODE_LABEL[match.mode] || match.mode}

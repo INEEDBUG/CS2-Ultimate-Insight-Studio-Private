@@ -2067,6 +2067,7 @@ export default {
   // match — MatchHistoryPage
   "match.pageTitle": "Official Match History",
   "match.pageSubtitle": "Connect to the local Steam session, view the latest 8 official matches, and download a demo only when analysis is needed.",
+  "match.mapThumbnailAlt": "{map} map thumbnail",
   "match.btnEditCred": "Edit credentials",
   "match.btnRefresh": "Refresh history",
   "match.btnDownloadSelected": "Download selected demo",
