@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 import weakref
 import zipfile
@@ -2812,9 +2813,23 @@ async def _run_share_code_download_job(job: DemoDownloadJob) -> dict:
         raise RuntimeError(str(exc)) from exc
 
     filename = f"match730_{resolved.match_id}.dem"
+    job.filename = filename
+    job.source_url = resolved.demo_url
+    job.destination_path = str(Path(watch_paths[0]) / filename)
     job.update(stage="downloading", progress=0.15, message="已获取真实 Valve 地址，正在下载")
 
+    last_sample_at = time.monotonic()
+    last_sample_bytes = 0
+
     def report_download(downloaded: int, total: int | None) -> None:
+        nonlocal last_sample_at, last_sample_bytes
+        now = time.monotonic()
+        interval = max(0.001, now - last_sample_at)
+        speed_bps = max(0.0, (downloaded - last_sample_bytes) / interval)
+        if now - last_sample_at >= 0.2 or total == downloaded:
+            last_sample_at = now
+            last_sample_bytes = downloaded
+        job.update_transfer(downloaded=downloaded, total=total, speed_bps=speed_bps)
         if total and total > 0:
             progress = 0.15 + 0.68 * min(1.0, downloaded / total)
             message = f"正在下载 {downloaded / 1048576:.1f} / {total / 1048576:.1f} MB"
@@ -2849,6 +2864,60 @@ async def _run_share_code_download_job(job: DemoDownloadJob) -> dict:
         "filename": filename,
         "match_id": str(resolved.match_id),
         "share_code": resolved.share_code,
+        "demo_id": demo_id,
+    }
+
+
+async def _run_direct_demo_download_job(job: DemoDownloadJob) -> dict:
+    """Download a known replay URL as a backend-owned task."""
+
+    if not job.source_url or not job.filename or not job.destination_path:
+        raise RuntimeError("下载任务缺少来源地址或保存路径")
+    destination = Path(job.destination_path)
+    last_sample_at = time.monotonic()
+    last_sample_bytes = 0
+    job.update(stage="downloading", progress=0.05, message="正在下载比赛 Demo")
+
+    def report_download(downloaded: int, total: int | None) -> None:
+        nonlocal last_sample_at, last_sample_bytes
+        now = time.monotonic()
+        interval = max(0.001, now - last_sample_at)
+        speed_bps = max(0.0, (downloaded - last_sample_bytes) / interval)
+        if now - last_sample_at >= 0.2 or total == downloaded:
+            last_sample_at = now
+            last_sample_bytes = downloaded
+        job.update_transfer(downloaded=downloaded, total=total, speed_bps=speed_bps)
+        if total and total > 0:
+            progress = 0.05 + 0.82 * min(1.0, downloaded / total)
+            message = f"正在下载 {downloaded / 1048576:.1f} / {total / 1048576:.1f} MB"
+        else:
+            progress = min(0.84, 0.05 + downloaded / (256 * 1048576))
+            message = f"正在下载 {downloaded / 1048576:.1f} MB"
+        job.update(stage="downloading", progress=progress, message=message)
+
+    try:
+        dem_path = await download_demo(
+            job.source_url,
+            destination.parent,
+            destination.name,
+            progress_callback=report_download,
+            cancel_event=job.cancel_event,
+        )
+    except httpx.HTTPStatusError as exc:
+        _, message = _valve_demo_download_http_error(exc.response.status_code)
+        raise RuntimeError(message) from exc
+    except httpx.RequestError as exc:
+        raise RuntimeError(f"下载超时或网络错误: {exc}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Demo 写入或解压失败: {exc}") from exc
+
+    job.update(stage="ingesting", progress=0.92, message="下载与解压完成，正在加入 Demo 库")
+    demo_id = await _enqueue_and_ingest_demo_path(dem_path)
+    return {
+        "ok": True,
+        "path": str(dem_path),
+        "filename": job.filename,
+        "match_id": job.share_code,
         "demo_id": demo_id,
     }
 
@@ -2909,6 +2978,33 @@ async def start_share_code_download_job(body: MatchShareCodeDownloadBody):
     return demo_download_jobs.start(body.share_code, True, _run_share_code_download_job)
 
 
+@app.post("/api/match-history/download/jobs")
+async def start_direct_demo_download_job(body: MatchHistoryDownloadBody):
+    cfg = load_config()
+    watch_paths = [path for path in cfg.demo_watch_paths if path.strip()]
+    if not watch_paths:
+        raise HTTPException(400, "未配置 Demo 库监听目录，请先在 Demo 库设置监听路径")
+    requested_filename = Path(body.filename).name.strip()
+    if not requested_filename or requested_filename in {".", ".."}:
+        raise HTTPException(400, "Demo 文件名无效")
+    filename = requested_filename if requested_filename.lower().endswith(".dem") else requested_filename + ".dem"
+    destination_path = str(Path(watch_paths[0]) / filename)
+    return demo_download_jobs.start(
+        str(body.match_id),
+        False,
+        _run_direct_demo_download_job,
+        kind="direct_url",
+        filename=filename,
+        source_url=body.demo_url,
+        destination_path=destination_path,
+    )
+
+
+@app.get("/api/match-history/download-jobs")
+async def list_demo_download_jobs(active_only: bool = Query(default=False)):
+    return {"jobs": demo_download_jobs.list(active_only=active_only)}
+
+
 @app.get("/api/match-history/download-share-code/jobs/{job_id}")
 async def get_share_code_download_job(job_id: str):
     snapshot = demo_download_jobs.get(job_id)
@@ -2927,8 +3023,10 @@ async def cancel_share_code_download_job(job_id: str):
 
 @app.post("/api/match-history/download-share-code/jobs/{job_id}/retry")
 async def retry_share_code_download_job(job_id: str):
+    current = demo_download_jobs.get(job_id)
+    worker = _run_direct_demo_download_job if current and current.get("kind") == "direct_url" else _run_share_code_download_job
     try:
-        snapshot = demo_download_jobs.retry(job_id, _run_share_code_download_job)
+        snapshot = demo_download_jobs.retry(job_id, worker)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     if snapshot is None:

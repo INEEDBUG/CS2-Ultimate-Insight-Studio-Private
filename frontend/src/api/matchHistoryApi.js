@@ -16,8 +16,15 @@ export async function testSteamConnection(steam_api_key, steam_id64, steam_game_
 }
 
 export async function downloadMatchDemo(demo_url, match_id, filename) {
-  const { data } = await API.post("/match-history/download", { demo_url, match_id, filename });
+  const { data } = await API.post("/match-history/download/jobs", { demo_url, match_id, filename });
   return data;
+}
+
+export async function fetchDemoDownloadJobs(activeOnly = false) {
+  const { data } = await API.get("/match-history/download-jobs", {
+    params: { active_only: activeOnly },
+  });
+  return data.jobs || [];
 }
 
 export async function downloadMatchDemoFromShareCode(share_code, accept_gpl_sidecar) {
