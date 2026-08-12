@@ -16,6 +16,7 @@ def test_download_job_completes_with_progress_and_result():
 
         async def worker(job):
             job.update(stage="downloading", progress=0.5, message="half")
+            job.update_transfer(downloaded=1024, total=2048, speed_bps=512)
             await asyncio.sleep(0)
             return {"filename": "match.dem"}
 
@@ -27,6 +28,10 @@ def test_download_job_completes_with_progress_and_result():
     assert snapshot["status"] == "complete"
     assert snapshot["progress"] == 1
     assert snapshot["result"]["filename"] == "match.dem"
+    assert snapshot["download_bytes"] == 1024
+    assert snapshot["download_total_bytes"] == 2048
+    assert snapshot["download_speed_bps"] == 0
+    assert snapshot["upload_bytes"] == 0
 
 
 def test_download_job_can_be_cancelled_and_retried():
@@ -53,6 +58,38 @@ def test_download_job_can_be_cancelled_and_retried():
     assert old_job["status"] == "cancelled"
     assert new_job["status"] == "complete"
     assert new_job["job_id"] != old_job["job_id"]
+
+
+def test_job_list_and_retry_preserve_transfer_metadata():
+    async def scenario():
+        manager = DemoDownloadJobManager()
+
+        async def fail(_job):
+            raise RuntimeError("network")
+
+        started = manager.start(
+            "123",
+            False,
+            fail,
+            kind="direct_url",
+            filename="match.dem",
+            source_url="https://example.test/match.dem.bz2",
+            destination_path="D:/Demos/match.dem",
+        )
+        await manager._jobs[started["job_id"]].task
+
+        async def success(_job):
+            return {"ok": True}
+
+        retried = manager.retry(started["job_id"], success)
+        await manager._jobs[retried["job_id"]].task
+        return manager.list(), manager.get(retried["job_id"])
+
+    jobs, retried = asyncio.run(scenario())
+    assert len(jobs) == 2
+    assert retried["kind"] == "direct_url"
+    assert retried["source_url"] == "https://example.test/match.dem.bz2"
+    assert retried["destination_path"] == "D:/Demos/match.dem"
 
 
 def test_running_job_cannot_be_retried():

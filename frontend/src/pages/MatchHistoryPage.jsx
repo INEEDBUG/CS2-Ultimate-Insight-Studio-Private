@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Trophy, RefreshCw, Download, Info, Loader2, Link2, RotateCcw, X } from "lucide-react";
+import { Trophy, RefreshCw, Download, Info, Loader2, Link2, RotateCcw, X, ArrowDown, ArrowUp, Gauge, FolderOpen, Globe2 } from "lucide-react";
 import {
   fetchMatchHistory,
   downloadMatchDemo,
   startShareCodeDownloadJob,
-  fetchShareCodeDownloadJob,
   cancelShareCodeDownloadJob,
   retryShareCodeDownloadJob,
 } from "../api/matchHistoryApi";
@@ -15,6 +14,8 @@ import MatchHistoryFilterBar from "../components/matchHistory/MatchHistoryFilter
 import MatchHistoryRow from "../components/matchHistory/MatchHistoryRow";
 import API from "../api/api";
 import { useT } from "../i18n/useT.js";
+import { downloadJobPercent, formatTransferBytes, useDemoDownloadStore } from "../stores/demoDownloadStore.js";
+import { desktopBridge } from "../desktop/desktopBridge.js";
 import {
   FILTER_ALL_MAPS,
   FILTER_ALL_RESULTS,
@@ -77,8 +78,11 @@ export default function MatchHistoryPage() {
   const [localLibrary, setLocalLibrary] = useState({});
   const [shareCode, setShareCode] = useState("");
   const [shareCodeConsent, setShareCodeConsent] = useState(false);
-  const [shareCodeJob, setShareCodeJob] = useState(null);
+  const [shareCodeJobId, setShareCodeJobId] = useState(null);
   const [shareCodeError, setShareCodeError] = useState("");
+  const downloadJobs = useDemoDownloadStore((state) => state.jobs);
+  const upsertDownloadJob = useDemoDownloadStore((state) => state.upsertJob);
+  const shareCodeJob = downloadJobs.find((job) => job.job_id === shareCodeJobId) || null;
 
   const doFetch = useCallback(async () => {
     setLoading(true);
@@ -106,34 +110,16 @@ export default function MatchHistoryPage() {
   }, [doFetch]);
 
   useEffect(() => {
-    if (!shareCodeJob?.job_id || shareCodeJob.status !== "running") return undefined;
-
-    let active = true;
-    let timer;
-    const poll = async () => {
-      try {
-        const next = await fetchShareCodeDownloadJob(shareCodeJob.job_id);
-        if (!active) return;
-        setShareCodeError("");
-        setShareCodeJob(next);
-        if (next.status === "complete" && next.result?.match_id) {
-          setLocalLibrary((prev) => ({ ...prev, [next.result.match_id]: true }));
-        } else if (next.status === "running") {
-          timer = window.setTimeout(poll, 500);
-        }
-      } catch (error) {
-        if (!active) return;
-        setShareCodeError(error?.response?.data?.detail || t("match.shareCodePollFail"));
-        timer = window.setTimeout(poll, 1500);
+    if (!shareCodeJobId) {
+      const latest = downloadJobs.find((job) => job.status === "running") || downloadJobs[0];
+      if (latest) setShareCodeJobId(latest.job_id);
+    }
+    for (const job of downloadJobs) {
+      if (job.status === "complete" && job.result?.match_id) {
+        setLocalLibrary((prev) => prev[job.result.match_id] ? prev : ({ ...prev, [job.result.match_id]: true }));
       }
-    };
-
-    timer = window.setTimeout(poll, 350);
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
-  }, [shareCodeJob?.job_id, shareCodeJob?.status, t]);
+    }
+  }, [downloadJobs, shareCodeJobId]);
 
   async function handleCredSaved() {
     const { data: cfg } = await API.get("/config");
@@ -142,8 +128,9 @@ export default function MatchHistoryPage() {
   }
 
   async function handleDownload(demoUrl, matchId, filename) {
-    await downloadMatchDemo(demoUrl, matchId, filename);
-    setLocalLibrary((prev) => ({ ...prev, [matchId]: true }));
+    const job = await downloadMatchDemo(demoUrl, matchId, filename);
+    upsertDownloadJob(job);
+    setShareCodeJobId(job.job_id);
   }
 
   async function handleShareCodeDownload(event) {
@@ -151,7 +138,8 @@ export default function MatchHistoryPage() {
     setShareCodeError("");
     try {
       const job = await startShareCodeDownloadJob(shareCode.trim(), shareCodeConsent);
-      setShareCodeJob(job);
+      upsertDownloadJob(job);
+      setShareCodeJobId(job.job_id);
     } catch (e) {
       setShareCodeError(e?.response?.data?.detail || t("match.shareCodeFail"));
     }
@@ -160,7 +148,7 @@ export default function MatchHistoryPage() {
   async function handleCancelShareCodeDownload() {
     if (!shareCodeJob?.job_id) return;
     try {
-      setShareCodeJob(await cancelShareCodeDownloadJob(shareCodeJob.job_id));
+      upsertDownloadJob(await cancelShareCodeDownloadJob(shareCodeJob.job_id));
     } catch (e) {
       setShareCodeError(e?.response?.data?.detail || t("match.shareCodeCancelFail"));
     }
@@ -170,7 +158,9 @@ export default function MatchHistoryPage() {
     if (!shareCodeJob?.job_id) return;
     setShareCodeError("");
     try {
-      setShareCodeJob(await retryShareCodeDownloadJob(shareCodeJob.job_id));
+      const job = await retryShareCodeDownloadJob(shareCodeJob.job_id);
+      upsertDownloadJob(job);
+      setShareCodeJobId(job.job_id);
     } catch (e) {
       setShareCodeError(e?.response?.data?.detail || t("match.shareCodeRetryFail"));
     }
@@ -196,7 +186,7 @@ export default function MatchHistoryPage() {
     && config?.steam_known_share_code
   );
   const shareCodeBusy = shareCodeJob?.status === "running";
-  const shareCodeProgress = Math.round((shareCodeJob?.progress ?? 0) * 100);
+  const shareCodeProgress = downloadJobPercent(shareCodeJob);
 
   return (
     <div className="flex flex-col gap-5 p-7">
@@ -302,6 +292,24 @@ export default function MatchHistoryPage() {
                     className={`h-full rounded-full transition-[width] duration-300 ${shareCodeJob.status === "failed" ? "bg-cs2-fail" : "bg-cs2-accent"}`}
                     style={{ width: `${shareCodeProgress}%` }}
                   />
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {[
+                    [ArrowDown, t("match.networkDownloaded"), formatTransferBytes(shareCodeJob.download_bytes)],
+                    [Gauge, t("match.networkDownloadSpeed"), `${formatTransferBytes(shareCodeJob.download_speed_bps)}/s`],
+                    [ArrowUp, t("match.networkUploaded"), formatTransferBytes(shareCodeJob.upload_bytes)],
+                    [Gauge, t("match.networkUploadSpeed"), `${formatTransferBytes(shareCodeJob.upload_speed_bps)}/s`],
+                  ].map(([Icon, label, value]) => (
+                    <div key={label} className="rounded-lg border border-cs2-border-subtle bg-black/15 px-2.5 py-2">
+                      <div className="flex items-center gap-1 text-[9px] text-cs2-text-muted"><Icon className="h-3 w-3" />{label}</div>
+                      <div className="mt-1 font-mono text-[11px] font-bold tabular-nums text-cs2-text-primary">{value}</div>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-2 text-[9px] leading-4 text-cs2-text-muted">{t("match.networkUploadNote")}</p>
+                <div className="mt-2 space-y-1.5 rounded-lg border border-cs2-border-subtle bg-black/10 p-2.5 text-[10px]">
+                  <div className="flex min-w-0 items-start gap-2"><Globe2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cs2-accent" /><span className="w-16 shrink-0 text-cs2-text-muted">{t("match.sourceAddress")}</span><span className="min-w-0 break-all font-mono text-cs2-text-secondary">{shareCodeJob.source_url || t("match.sourceResolving")}</span></div>
+                  <div className="flex min-w-0 items-start gap-2"><FolderOpen className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cs2-accent" /><span className="w-16 shrink-0 text-cs2-text-muted">{t("match.saveLocation")}</span><span className="min-w-0 flex-1 break-all font-mono text-cs2-text-secondary">{shareCodeJob.destination_path || t("match.sourceResolving")}</span>{shareCodeJob.destination_path && desktopBridge?.showItemInFolder ? <button type="button" onClick={() => void desktopBridge.showItemInFolder(shareCodeJob.destination_path)} className="shrink-0 rounded border border-cs2-border px-2 py-0.5 text-[9px] text-cs2-text-secondary transition-[border-color,transform] duration-150 hover:border-cs2-accent/50 active:scale-[0.97]">{t("match.openFolder")}</button> : null}</div>
                 </div>
                 {(shareCodeJob.error || shareCodeError) && (
                   <div className="mt-2 text-[12px] text-cs2-fail">{shareCodeJob.error || shareCodeError}</div>
