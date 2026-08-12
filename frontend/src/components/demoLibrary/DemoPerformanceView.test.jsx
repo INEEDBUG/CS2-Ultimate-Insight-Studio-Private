@@ -51,7 +51,7 @@ describe("DemoPerformanceView", () => {
 
     expect(screen.getByText("比赛时间未知")).toBeTruthy();
     expect(screen.getByText("Steam 比赛时间")).toBeTruthy();
-    expect(screen.getByText("Rating Pro 是本地透明估算，不是 HLTV 官方评分。比赛日期仅在 Steam Game Coordinator 返回 `matchtime` 时标记为真实比赛时间。")).toBeTruthy();
+    expect(screen.getByText(/Est\. R2 使用公开社区 Estimated HLTV Rating 2\.0 估算式/)).toBeTruthy();
     expect(screen.getByText("本场英雄")).toBeTruthy();
     expect(screen.getByText("本场战犯")).toBeTruthy();
     expect(screen.getAllByText("Hero").length).toBeGreaterThan(0);

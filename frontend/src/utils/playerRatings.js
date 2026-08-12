@@ -18,6 +18,25 @@ function subrating(value, expected, deviation, strength = 0.22) {
   return clamp(1 + z * strength, 0.15, 2.35);
 }
 
+// Public community estimator for HLTV Rating 2.0. HLTV does not publish the
+// production formula, so this value must remain labelled as estimated. Keeping
+// the estimator isolated makes screenshots and external calculators directly
+// reproducible instead of applying our former second shrink toward 1.00.
+export function estimateHltvRating2(player, rounds) {
+  const roundCount = Math.max(1, safe(rounds));
+  const kpr = safe(player?.kpr) || safe(player?.kills) / roundCount;
+  const dpr = safe(player?.dpr) || safe(player?.deaths) / roundCount;
+  const apr = safe(player?.assists) / roundCount;
+  const impact = 2.13 * kpr + 0.42 * apr - 0.41;
+  const estimate = 0.0073 * safe(player?.kast)
+    + 0.3591 * kpr
+    - 0.5329 * dpr
+    + 0.2372 * impact
+    + 0.0032 * safe(player?.adr)
+    + 0.1587;
+  return clamp(estimate, 0.05, 3.00);
+}
+
 function sigmoid(value) {
   return 1 / (1 + Math.exp(-value));
 }
@@ -299,8 +318,7 @@ export function buildMatchRatingPro(data = {}) {
     const kast = subrating(adjustedKast, weightedExpected(context, "kast"), DEVIATION.kast);
     const damage = subrating(safe(player.adr), weightedExpected(context, "adr"), DEVIATION.adr);
     const impact = subrating(impactIndex, 0.15, DEVIATION.impact, 0.24);
-    const ratingPro2Raw = (kill + survival + kast + damage + impact) / 5;
-    const ratingPro2 = clamp(shrinkTowardAverage(ratingPro2Raw, rounds), 0.18, 2.25);
+    const ratingPro2 = estimateHltvRating2(player, rounds);
 
     const ecoFactorRaw = context.ecoKillCount ? context.ecoKillPoints / context.ecoKillCount : 1;
     const ecoSample = clamp(context.ecoKillCount / 8, 0, 1);
@@ -367,7 +385,7 @@ export function buildMatchRatingPro(data = {}) {
     players: rated.map((row) => ({ ...row, player: undefined })),
     hero: hero ? { ...hero, detail: verdictDetail(hero, "hero"), player: undefined } : null,
     culprit: culprit ? { ...culprit, detail: verdictDetail(culprit, "culprit"), player: undefined } : null,
-    model_version: "rating-pro-2025.10-public-principles-v2",
-    model_note: "Rating Pro 为本地透明估算：RP2 按攻守方基准计算击杀、生存、KAST、伤害与影响并降低失利纯保枪收益；RP3 加入逐回合经济、多杀、助攻/补枪与 Round Swing，采用 HLTV 2025-10 公开的偏重击杀、弱化 Swing 原则。不是 HLTV 官方评分。",
+    model_version: "rating-pro-estimated-hltv2-v3",
+    model_note: "Estimated R2 使用公开社区估算式，以 KPR、DPR、APR、ADR、KAST 和 Impact 计算，便于和 csstats.gg 的 Estimated HLTV Rating 2.0 对照；RP3 继续加入逐回合经济、多杀、助攻/补枪与 Round Swing。两者都不是 HLTV 官方评分。",
   };
 }

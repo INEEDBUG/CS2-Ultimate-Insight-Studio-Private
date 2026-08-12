@@ -58,7 +58,7 @@ export default function DemoDownloadActivityCenter() {
       <div className="flex items-start gap-2.5">
         <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-cs2-accent-soft text-cs2-accent"><Download className="h-4 w-4" /></span>
         <span className="min-w-0 flex-1">
-          <span className="flex items-center justify-between gap-3"><span className="truncate text-[11px] font-bold text-cs2-text-primary">{current.filename || "正在解析官匹 Demo"}</span><span className="font-mono text-[10px] font-bold text-cs2-accent">{percent}%</span></span>
+          <span className="flex items-center justify-between gap-3"><span className="truncate text-[11px] font-bold text-cs2-text-primary">{current.filename || "正在解析官匹 Demo"}{active.length > 1 ? ` · 另有 ${active.length - 1} 项` : ""}</span><span className="font-mono text-[10px] font-bold text-cs2-accent">{percent}%</span></span>
           <span className="mt-0.5 block truncate text-[9px] text-cs2-text-muted">{current.message}</span>
         </span>
       </div>

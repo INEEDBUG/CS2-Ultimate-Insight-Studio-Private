@@ -2073,7 +2073,7 @@ export default {
   "match.demoRetentionTitle": "Demo retention: ",
   "match.demoRetentionBody": "Valve official match demos are kept for {days} days after the match ends. Matches beyond the retention period show as \"Expired\" and cannot be downloaded — ingest demos early if you need historical footage.",
   "match.shareCodeTitle": "Download an official demo from a match share code",
-  "match.shareCodeDescription": "Paste a CSGO-… share code or the full steam://rungame link. The app asks your signed-in local Steam client for the real demo URL, then downloads, extracts, and ingests it. Close CS2 first.",
+  "match.shareCodeDescription": "Paste a CSGO-… share code or the full steam://rungame link. The app asks your signed-in local Steam client for the real demo URL, then downloads, extracts, and ingests it. CS2 does not need to be launched; close it first if it is already using the Game Coordinator.",
   "match.shareCodePlaceholder": "CSGO-xxxxx-xxxxx-xxxxx-xxxxx-xxxxx or steam://rungame/…",
   "match.shareCodeConsent": "I agree to the first-use download and execution of the separate @akiver/boiler-writter 1.7.0 component (GPL-3.0), used only to communicate with the local Steam Game Coordinator.",
   "match.shareCodeDownload": "Resolve & download",

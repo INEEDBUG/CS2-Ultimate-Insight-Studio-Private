@@ -155,7 +155,7 @@ export default function DemoPerformanceView({
           </header>
           <TeamTable name={workspace.team_a_name} score={workspace.team_a_score} teamKey="a" players={teamA} ratings={ratings} heroName={ratingModel.hero?.name} culpritName={ratingModel.culprit?.name} />
           <TeamTable name={workspace.team_b_name} score={workspace.team_b_score} teamKey="b" players={teamB} ratings={ratings} heroName={ratingModel.hero?.name} culpritName={ratingModel.culprit?.name} />
-          <p className="px-1 text-[8px] leading-4 text-cs2-text-muted">Rating Pro 是本地透明估算，不是 HLTV 官方评分。比赛日期仅在 Steam Game Coordinator 返回 `matchtime` 时标记为真实比赛时间。</p>
+          <p className="px-1 text-[8px] leading-4 text-cs2-text-muted">Est. R2 使用公开社区 Estimated HLTV Rating 2.0 估算式（通常约 ±0.01），RP3 为本地透明模型；均不是 HLTV 官方评分。比赛日期仅在 Steam Game Coordinator 返回 `matchtime` 时标记为真实比赛时间。</p>
         </div>}
       </main>
     </div>

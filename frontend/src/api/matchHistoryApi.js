@@ -5,6 +5,16 @@ export async function fetchMatchHistory() {
   return data;
 }
 
+export async function startSteamOpenId() {
+  const { data } = await API.post("/steam-openid/start");
+  return data;
+}
+
+export async function fetchSteamOpenIdStatus(state) {
+  const { data } = await API.get(`/steam-openid/status/${encodeURIComponent(state)}`);
+  return data;
+}
+
 export async function testSteamConnection(steam_api_key, steam_id64, steam_game_auth_code, steam_known_share_code) {
   const { data } = await API.post("/match-history/test-connection", {
     steam_api_key,

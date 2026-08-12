@@ -1,7 +1,9 @@
-import { useState } from "react";
-import { Loader2, CircleCheck } from "lucide-react";
-import { testSteamConnection, saveMatchCredentials } from "../../api/matchHistoryApi";
+import { useEffect, useState } from "react";
+import { Loader2, CircleCheck, UserRoundCheck, LogIn } from "lucide-react";
+import { fetchSteamOpenIdStatus, startSteamOpenId, testSteamConnection, saveMatchCredentials } from "../../api/matchHistoryApi";
+import { fetchLocalCs2Settings } from "../../api/trainingApi.js";
 import { useT } from "../../i18n/useT.js";
+import { desktopBridge } from "../../desktop/desktopBridge.js";
 
 export default function CredentialPanel({
   configured,
@@ -32,6 +34,72 @@ export default function CredentialPanel({
   const [saving, setSaving] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [testErr, setTestErr] = useState("");
+  const [localAccount, setLocalAccount] = useState(null);
+  const [steamLogin, setSteamLogin] = useState(null);
+  const [steamLoginBusy, setSteamLoginBusy] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    fetchLocalCs2Settings().then((result) => {
+      if (!active) return;
+      const accounts = result?.accounts || [];
+      const current = accounts.find((item) => item.account_id === result?.active_account_id) || accounts[0];
+      setLocalAccount(current || null);
+      if (!id64 && current?.steam_id64) setId64(current.steam_id64);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []); // Detect once; never reads or stores a Steam password.
+
+  useEffect(() => {
+    if (!steamLogin?.state || !steamLoginBusy) return undefined;
+    let stopped = false;
+    let timer;
+    const poll = async () => {
+      try {
+        const result = await fetchSteamOpenIdStatus(steamLogin.state);
+        if (stopped) return;
+        if (result.status === "complete") {
+          setId64(result.steam_id64);
+          setTestResult({ name: result.name || result.steam_id64 });
+          setSteamLoginBusy(false);
+          await saveMatchCredentials(undefined, result.steam_id64, undefined, undefined, mode, count);
+          if (maskedKey && maskedAuthCode && maskedKnownCode) onSaved?.();
+          return;
+        }
+        if (result.status === "failed") {
+          setTestErr(result.error || "Steam 登录失败");
+          setSteamLoginBusy(false);
+          return;
+        }
+        timer = window.setTimeout(poll, 800);
+      } catch (error) {
+        if (stopped) return;
+        if (error?.response?.status === 404) {
+          setTestErr("Steam 登录请求已过期，请重新登录");
+          setSteamLoginBusy(false);
+          return;
+        }
+        timer = window.setTimeout(poll, 1500);
+      }
+    };
+    timer = window.setTimeout(poll, 600);
+    return () => { stopped = true; window.clearTimeout(timer); };
+  }, [steamLogin?.state, steamLoginBusy]);
+
+  async function handleSteamLogin() {
+    setSteamLoginBusy(true);
+    setTestErr("");
+    setTestResult(null);
+    try {
+      const flow = await startSteamOpenId();
+      setSteamLogin(flow);
+      if (desktopBridge?.openExternal) await desktopBridge.openExternal(flow.auth_url);
+      else window.open(flow.auth_url, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      setSteamLoginBusy(false);
+      setTestErr(error?.response?.data?.detail || "无法发起 Steam 登录");
+    }
+  }
 
   async function handleTest() {
     setTesting(true);
@@ -97,6 +165,24 @@ export default function CredentialPanel({
 
   return (
     <div className="rounded-[10px] border border-cs2-border bg-[#16161a] px-6 py-5">
+      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-[9px] border border-[#66c0f4]/30 bg-[#66c0f4]/[0.08] px-4 py-3">
+        <LogIn className="h-5 w-5 text-[#66c0f4]" />
+        <div className="min-w-0 flex-1">
+          <p className="text-[12.5px] font-semibold text-cs2-text-primary">使用 Steam 登录并绑定账号</p>
+          <p className="mt-0.5 text-[10px] text-cs2-text-muted">密码只在 Steam 官方网页输入；OpenID 仅返回 SteamID，不会读取密码。逐局同步仍需一次性配置下方游戏认证码。</p>
+        </div>
+        <button type="button" onClick={handleSteamLogin} disabled={steamLoginBusy} className="flex items-center gap-1.5 rounded-[7px] bg-[#66c0f4] px-3 py-1.5 text-[11px] font-bold text-[#101820] transition-transform duration-150 active:scale-[0.97] disabled:opacity-50">{steamLoginBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogIn className="h-3.5 w-3.5" />}{steamLoginBusy ? "等待 Steam 确认" : "使用 Steam 登录"}</button>
+      </div>
+      {localAccount && (
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-[9px] border border-sky-400/25 bg-sky-400/[0.07] px-4 py-3">
+          <UserRoundCheck className="h-5 w-5 text-sky-300" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[12.5px] font-semibold text-cs2-text-primary">已识别本机当前 Steam 账号：{localAccount.persona_name || localAccount.account_name}</p>
+            <p className="mt-0.5 font-mono text-[10px] text-cs2-text-muted">{localAccount.steam_id64} · 只读取 Steam 本地账号列表，不读取密码或登录 Cookie</p>
+          </div>
+          <button type="button" onClick={() => setId64(localAccount.steam_id64)} className="rounded-[7px] border border-sky-400/35 px-3 py-1.5 text-[11px] font-semibold text-sky-200 transition-transform duration-150 active:scale-[0.97]">使用此账号</button>
+        </div>
+      )}
       <div className="grid grid-cols-1 gap-x-5 gap-y-4 xl:grid-cols-2">
         {/* API Key */}
         <div>
