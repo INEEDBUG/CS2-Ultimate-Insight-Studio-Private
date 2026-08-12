@@ -107,6 +107,30 @@ class ValveMatchMetadata:
     demo_url: str | None
 
 
+@dataclass(frozen=True)
+class ValveRecentMatch:
+    match_id: int
+    played_at: str | None
+    demo_url: str | None
+    map_name: str
+    duration_sec: int
+    score_own: int
+    score_opp: int
+    result: str
+    kills: int
+    deaths: int
+    assists: int
+    headshot_kills: int
+    mvp_count: int
+    rounds: tuple[bool | None, ...]
+
+
+@dataclass(frozen=True)
+class ValveRecentMatches:
+    steam_id64: str
+    matches: tuple[ValveRecentMatch, ...]
+
+
 def extract_match_share_code(value: str) -> str:
     """Extract and normalize a match code from a code or Steam rungame URL."""
 
@@ -193,6 +217,194 @@ def _first_varint(data: bytes, field_number: int) -> int | None:
         if number == field_number and wire_type == 0:
             return int(value)
     return None
+
+
+def _all_varints(data: bytes, field_number: int) -> list[int]:
+    """Read repeated protobuf integers in packed or unpacked representation."""
+
+    values: list[int] = []
+    for number, wire_type, value in _protobuf_fields(data):
+        if number != field_number:
+            continue
+        if wire_type == 0:
+            values.append(int(value))
+        elif wire_type == 2:
+            packed = bytes(value)
+            offset = 0
+            while offset < len(packed):
+                item, offset = _read_varint(packed, offset)
+                values.append(item)
+    return values
+
+
+def _first_message(data: bytes, field_number: int) -> bytes | None:
+    for number, wire_type, value in _protobuf_fields(data):
+        if number == field_number and wire_type == 2:
+            return bytes(value)
+    return None
+
+
+def _steam_id64_from_account_id(account_id: int) -> str:
+    return str(0x0110000100000000 + account_id)
+
+
+def _map_name_from_game_type(game_type: int) -> str:
+    """Map Valve's GC game_type bit field using CS Demo Manager's table."""
+
+    map_flag = (game_type >> 8) & 0xFFFFFF
+    game_mode = game_type & 0xFF
+    mapping: dict[int, str | dict[int, str]] = {
+        1 << 0: "de_warden",
+        1 << 1: "de_dust2",
+        1 << 2: "de_train",
+        1 << 3: "de_ancient",
+        1 << 4: "de_inferno",
+        1 << 5: "de_nuke",
+        1 << 6: "de_vertigo",
+        1 << 7: {8: "de_mirage", 10: "de_debris"},
+        1 << 8: "cs_office",
+        1 << 9: "de_poseidon",
+        1 << 10: "de_eldorado",
+        1 << 11: "de_sanctum",
+        1 << 12: "de_cache",
+        1 << 13: "de_stronghold",
+        1 << 14: "de_boulder",
+        1 << 15: "de_anubis",
+        1 << 16: "de_tuscan",
+        1 << 18: "de_fachwerk",
+        1 << 19: "cs_shelter",
+        1 << 20: "de_overpass",
+        1 << 21: "de_cobblestone",
+        1 << 22: "de_canals",
+    }
+    mapped = mapping.get(map_flag)
+    if isinstance(mapped, dict):
+        return mapped.get(game_mode, "unknown")
+    return mapped or "unknown"
+
+
+def _safe_index(values: list[int], index: int, default: int = 0) -> int:
+    return int(values[index]) if 0 <= index < len(values) else default
+
+
+def parse_recent_match_list(payload: bytes) -> ValveRecentMatches:
+    """Decode the current local Steam account's last eight GC matches.
+
+    The field mapping follows the protobuf definitions used by
+    ``akiver/cs-demo-manager``. The GC summary contains scoreboard totals but
+    not ADR/KAST; those remain available only after the Demo is downloaded and
+    parsed locally.
+    """
+
+    account_id = _first_varint(payload, 2)
+    if not account_id:
+        raise MatchInfoDecodeError("Game Coordinator 未返回当前 Steam 账号")
+
+    parsed_matches: list[ValveRecentMatch] = []
+    for number, wire_type, value in _protobuf_fields(payload):
+        if number != 4 or wire_type != 2:
+            continue
+        match_message = bytes(value)
+        match_id = _first_varint(match_message, 1)
+        match_time = _first_varint(match_message, 2)
+        if not match_id:
+            continue
+        round_messages = [
+            bytes(item)
+            for field, kind, item in _protobuf_fields(match_message)
+            if field == 5 and kind == 2
+        ]
+        legacy_round = _first_message(match_message, 4)
+        if not round_messages and legacy_round:
+            round_messages = [legacy_round]
+        if not round_messages:
+            continue
+
+        last_round = round_messages[-1]
+        reservation = _first_message(last_round, 2)
+        if reservation is None:
+            continue
+        account_ids = _all_varints(reservation, 1)
+        try:
+            player_index = account_ids.index(account_id)
+        except ValueError:
+            continue
+
+        switched_at_end = bool(_first_varint(last_round, 27) or 0)
+        # The last GC snapshot is ordered by the teams' current sides. Convert
+        # the player's slot back to the team they started on so score deltas
+        # stay stable across halftime and overtime.
+        if player_index < 5:
+            player_started_team = 1 if switched_at_end else 0
+        else:
+            player_started_team = 0 if switched_at_end else 1
+
+        current_started_scores = [0, 0]
+        round_results: list[bool | None] = []
+        for round_message in round_messages:
+            team_scores = _all_varints(round_message, 12)
+            if len(team_scores) < 2:
+                continue
+            switched = bool(_first_varint(round_message, 27) or 0)
+            started_scores = [team_scores[1], team_scores[0]] if switched else team_scores[:2]
+            own_delta = started_scores[player_started_team] - current_started_scores[player_started_team]
+            opp_delta = started_scores[1 - player_started_team] - current_started_scores[1 - player_started_team]
+            round_results.append(True if own_delta > opp_delta else False if opp_delta > own_delta else None)
+            current_started_scores = started_scores
+
+        kills = _safe_index(_all_varints(last_round, 5), player_index)
+        assists = _safe_index(_all_varints(last_round, 6), player_index)
+        deaths = _safe_index(_all_varints(last_round, 7), player_index)
+        headshots = _safe_index(_all_varints(last_round, 17), player_index)
+        mvps = _safe_index(_all_varints(last_round, 21), player_index)
+        score_own = current_started_scores[player_started_team]
+        score_opp = current_started_scores[1 - player_started_team]
+        result = "win" if score_own > score_opp else "loss" if score_own < score_opp else "tie"
+        played_at = None
+        if match_time:
+            try:
+                played_at = datetime.fromtimestamp(match_time, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            except (OverflowError, OSError, ValueError):
+                played_at = None
+
+        demo_url = None
+        for field, kind, item in _protobuf_fields(last_round):
+            if field != 3 or kind != 2:
+                continue
+            try:
+                candidate = bytes(item).decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            if candidate.startswith(("http://", "https://")):
+                demo_url = _validate_demo_url(candidate)
+                break
+
+        parsed_matches.append(
+            ValveRecentMatch(
+                match_id=match_id,
+                played_at=played_at,
+                demo_url=demo_url,
+                map_name=_map_name_from_game_type(_first_varint(reservation, 2) or 0),
+                duration_sec=_first_varint(last_round, 15) or 0,
+                score_own=score_own,
+                score_opp=score_opp,
+                result=result,
+                kills=kills,
+                deaths=deaths,
+                assists=assists,
+                headshot_kills=headshots,
+                mvp_count=mvps,
+                rounds=tuple(round_results),
+            )
+        )
+
+    if not parsed_matches:
+        raise MatchInfoDecodeError("Game Coordinator 未返回最近官匹记录")
+    parsed_matches.sort(key=lambda item: item.played_at or "", reverse=True)
+    return ValveRecentMatches(
+        steam_id64=_steam_id64_from_account_id(account_id),
+        matches=tuple(parsed_matches[:8]),
+    )
 
 
 def _validate_demo_url(value: str) -> str:
@@ -424,6 +636,90 @@ async def run_boiler_runtime(
         output_path.unlink(missing_ok=True)
 
 
+async def run_boiler_recent_runtime(
+    executable: Path,
+    output_path: Path,
+    timeout_seconds: float = 15.0,
+) -> bytes:
+    """Ask the local signed-in Steam client for its recent GC match list."""
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.unlink(missing_ok=True)
+    try:
+        process = await asyncio.create_subprocess_exec(
+            str(executable),
+            str(output_path),
+            cwd=str(executable.parent),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except NotImplementedError:
+        return await asyncio.to_thread(
+            _run_boiler_recent_runtime_sync,
+            executable,
+            output_path,
+            timeout_seconds,
+        )
+    try:
+        _, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+    except TimeoutError as exc:
+        process.kill()
+        await process.wait()
+        raise BoilerProcessError(-1, "连接 Steam Game Coordinator 超时") from exc
+    if process.returncode != 0:
+        message = _BOILER_EXIT_MESSAGES.get(
+            int(process.returncode or 1),
+            f"Game Coordinator 组件退出，代码 {process.returncode}",
+        )
+        detail = stderr.decode("utf-8", errors="replace").strip()
+        if detail:
+            message = f"{message}：{detail[:300]}"
+        raise BoilerProcessError(int(process.returncode or 1), message)
+    try:
+        return output_path.read_bytes()
+    except OSError as exc:
+        raise BoilerProcessError(9, "Game Coordinator 未生成最近比赛信息") from exc
+    finally:
+        output_path.unlink(missing_ok=True)
+
+
+def _run_boiler_recent_runtime_sync(
+    executable: Path,
+    output_path: Path,
+    timeout_seconds: float,
+) -> bytes:
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    process = subprocess.Popen(
+        [str(executable), str(output_path)],
+        cwd=str(executable.parent),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        creationflags=creation_flags,
+    )
+    try:
+        try:
+            _, stderr = process.communicate(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            process.communicate()
+            raise BoilerProcessError(-1, "连接 Steam Game Coordinator 超时") from exc
+        if process.returncode != 0:
+            message = _BOILER_EXIT_MESSAGES.get(
+                int(process.returncode or 1),
+                f"Game Coordinator 组件退出，代码 {process.returncode}",
+            )
+            detail = stderr.decode("utf-8", errors="replace").strip()
+            if detail:
+                message = f"{message}：{detail[:300]}"
+            raise BoilerProcessError(int(process.returncode or 1), message)
+        try:
+            return output_path.read_bytes()
+        except OSError as exc:
+            raise BoilerProcessError(9, "Game Coordinator 未生成最近比赛信息") from exc
+    finally:
+        output_path.unlink(missing_ok=True)
+
+
 def _run_boiler_runtime_sync(
     executable: Path,
     output_path: Path,
@@ -490,6 +786,20 @@ async def resolve_valve_demo(
         demo_url=metadata.demo_url,
         played_at=metadata.played_at,
     )
+
+
+async def resolve_recent_valve_matches(
+    runtime_parent: Path,
+    *,
+    runtime_installer: Callable[[Path], Awaitable[Path]] = ensure_boiler_runtime,
+    process_runner: Callable[[Path, Path], Awaitable[bytes]] = run_boiler_recent_runtime,
+) -> ValveRecentMatches:
+    """Return the last eight matches for the account signed into local Steam."""
+
+    executable = await runtime_installer(runtime_parent)
+    output_path = runtime_parent / "work" / f"recent-matches-{uuid.uuid4().hex}.info"
+    payload = await process_runner(executable, output_path)
+    return parse_recent_match_list(payload)
 
 
 async def resolve_valve_match_metadata(

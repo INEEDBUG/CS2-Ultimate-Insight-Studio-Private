@@ -46,7 +46,7 @@ CS2 Insight Agent 在编译与运行时依赖以下开源组件。常规编译�
 
 - **CPython Windows runtime** (installer and portable zip): sourced from the Astral `python-build-standalone` project (`install_only` tarball), Python Software Foundation license. See `packaging/windows/python-runtime.json` for the pinned URL.
 - **Optional FFmpeg** (GPL): when the user selects the matching Inno task, the installer downloads `ffmpeg-8.1.1-essentials_build.zip` from the GyanD `codexffmpeg` GitHub release (see `packaging/windows/ffmpeg-redist.json`). FFmpeg is a trademark of the FFmpeg project.
-- **Optional @akiver/boiler-writter 1.7.0** (GPL-3.0): downloaded from the npm registry only after the user explicitly accepts the first-use notice. It remains an unmodified, separately executed Windows helper used to ask the locally signed-in Steam Game Coordinator for the real demo URL. Its package integrity is pinned by SHA-512, and its complete license is installed next to the executable. Source: https://github.com/akiver/boiler-writter
+- **Optional @akiver/boiler-writter 1.7.0** (GPL-3.0): downloaded from the npm registry only after the user explicitly accepts the first-use notice. It remains an unmodified, separately executed Windows helper used to ask the locally signed-in Steam Game Coordinator for the latest eight match summaries or a real demo URL. Its package integrity is pinned by SHA-512, and its complete license is installed next to the executable. Source: https://github.com/akiver/boiler-writter
 
 ## Adapted source
 

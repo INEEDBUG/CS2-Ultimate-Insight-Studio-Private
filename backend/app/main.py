@@ -121,6 +121,7 @@ from .valve_demo_resolver import (
     MatchInfoDecodeError,
     BOILER_VERSION,
     decode_match_share_code,
+    resolve_recent_valve_matches,
     resolve_valve_demo,
     resolve_valve_match_metadata,
 )
@@ -978,6 +979,10 @@ class MatchHistoryDownloadBody(BaseModel):
 
 class MatchShareCodeDownloadBody(BaseModel):
     share_code: str
+    accept_gpl_sidecar: bool = False
+
+
+class RecentValveMatchesBody(BaseModel):
     accept_gpl_sidecar: bool = False
 
 
@@ -2694,75 +2699,75 @@ async def steam_openid_status(state: str):
     return {key: value for key, value in flow.items() if key != "created_at"}
 
 
-@app.get("/api/match-history/matches")
-async def get_match_history():
-    cfg = load_config()
-    if not all((
-        cfg.steam_api_key,
-        cfg.steam_id64,
-        cfg.steam_game_auth_code,
-        cfg.steam_known_share_code,
-    )):
+@app.post("/api/match-history/matches")
+async def get_match_history(body: RecentValveMatchesBody):
+    """Read the signed-in local Steam account's latest GC scoreboard rows."""
+
+    runtime_parent = resolve_config_path().parent / "third_party" / "boiler-writter"
+    runtime_executable = runtime_parent / BOILER_VERSION / "boiler-writter.exe"
+    if not runtime_executable.is_file() and not body.accept_gpl_sidecar:
         raise HTTPException(
-            400,
-            "Steam 官方比赛同步需要 API Key、SteamID64、游戏认证码和一场已知比赛分享码",
+            409,
+            "首次读取前，请确认允许下载并运行独立的 Game Coordinator 组件",
         )
-
     try:
-        player = await fetch_player_summary(cfg.steam_api_key, cfg.steam_id64)
-        share_codes, newest_reached = await sync_match_share_codes(
-            cfg.steam_api_key,
-            cfg.steam_id64,
-            cfg.steam_game_auth_code,
-            cfg.steam_known_share_code,
-            cfg.steam_match_share_codes,
-            cfg.match_count,
+        async with _steam_gc_download_lock:
+            recent = await resolve_recent_valve_matches(runtime_parent)
+    except BoilerProcessError as exc:
+        raise HTTPException(409 if exc.exit_code in {4, 5, 6, 7} else 502, str(exc)) from exc
+    except BoilerRuntimeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except MatchInfoDecodeError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+    filenames = [f"match730_{item.match_id}.dem" for item in recent.matches]
+    library_rows = await demo_db.find_demo_rows_by_filenames(filenames)
+    matches: list[dict[str, Any]] = []
+    for item, filename in zip(recent.matches, filenames, strict=True):
+        library = library_rows.get(filename)
+        kills = item.kills
+        headshot_pct = round(item.headshot_kills / kills * 100) if kills > 0 else 0
+        matches.append(
+            {
+                "match_id": str(item.match_id),
+                "map": (library or {}).get("map_name") or item.map_name,
+                "mode": "competitive",
+                "result": item.result,
+                "score_own": item.score_own,
+                "score_opp": item.score_opp,
+                "duration_sec": item.duration_sec,
+                "played_at": item.played_at,
+                "rounds": list(item.rounds),
+                "kills": kills,
+                "deaths": item.deaths,
+                "assists": item.assists,
+                "headshot_kills": item.headshot_kills,
+                "headshot_pct": headshot_pct,
+                "damage": None,
+                "adr": None,
+                "mvp_count": item.mvp_count,
+                "rating": None,
+                "demo_url": item.demo_url,
+                "demo_expired": item.demo_url is None,
+                "demo_expires_at": None,
+                "demo_in_library": library is not None,
+                "demo_id": (library or {}).get("id"),
+                "stats_source": "steam_gc_scoreboard",
+            }
         )
-    except httpx.HTTPStatusError as e:
-        status = e.response.status_code
-        if status == 403:
-            raise HTTPException(403, "Steam API Key 或游戏认证码无效，请检查凭据")
-        if status == 412:
-            raise HTTPException(412, "已知比赛分享码无效，或不属于当前 Steam 账号")
-        if status == 429:
-            raise HTTPException(429, "Steam API 请求频率超限，请稍后再试")
-        if status == 503:
-            raise HTTPException(503, "Steam API 暂时繁忙，请稍后再试")
-        raise HTTPException(502, f"Steam API 返回 HTTP {status}")
-    except httpx.RequestError:
-        raise HTTPException(502, "无法连接 Steam API，请检查网络后重试")
-    except InvalidShareCodeError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-    if share_codes != cfg.steam_match_share_codes:
-        cfg.steam_match_share_codes = share_codes
-        save_config(cfg)
-
-    visible_codes = share_codes[-max(1, min(int(cfg.match_count), 100)):]
-    decoded = [decode_match_share_code(code) for code in visible_codes]
-    filenames = [f"match730_{item.match_id}.dem" for item in decoded]
-    existing_filenames = await demo_db.find_existing_filenames(filenames)
-    rows = [
-        {
-            "share_code": item.share_code,
-            "match_id": str(item.match_id),
-            "filename": filename,
-            "demo_in_library": filename in existing_filenames,
-        }
-        for item, filename in zip(decoded, filenames, strict=True)
-    ][::-1]
 
     return {
-        "source": "official_share_codes",
+        "source": "steam_game_coordinator",
         "player": {
-            "name": player.get("personaname", ""),
-            "avatar": player.get("avatarfull", ""),
-            "steam_id64": cfg.steam_id64,
+            "name": "",
+            "avatar": "",
+            "steam_id64": recent.steam_id64,
         },
-        "match_codes": rows,
-        "matches": [],
-        "newest_reached": newest_reached,
-        "total": len(rows),
+        "match_codes": [],
+        "matches": matches,
+        "newest_reached": True,
+        "total": len(matches),
+        "limit": 8,
     }
 
 

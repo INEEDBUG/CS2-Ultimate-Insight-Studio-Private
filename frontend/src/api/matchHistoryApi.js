@@ -1,7 +1,7 @@
 import API from "./api";
 
-export async function fetchMatchHistory() {
-  const { data } = await API.get("/match-history/matches");
+export async function fetchMatchHistory(accept_gpl_sidecar = false) {
+  const { data } = await API.post("/match-history/matches", { accept_gpl_sidecar });
   return data;
 }
 
