@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildMatchRatingPro } from "./playerRatings";
+import { buildMatchRatingPro, estimateHltvRating2 } from "./playerRatings";
 
 const player = (name, team, stats) => ({
   name, team_key: team, average_equipment_value: 4000,
@@ -37,11 +37,30 @@ describe("Rating Pro match model", () => {
     expect(result.players.find((row) => row.name === "Hero").rating_pro_3).toBeGreaterThan(1);
     expect(result.players.find((row) => row.name === "Culprit").rating_pro_2).toBeLessThan(1);
     expect(result.model_note).toContain("不是 HLTV 官方评分");
-    expect(result.model_version).toContain("public-principles-v2");
+    expect(result.model_version).toContain("estimated-hltv2-v3");
     expect(result.players[0].subratings).toMatchObject({
       kill: expect.any(Number), damage: expect.any(Number), survival: expect.any(Number),
       kast: expect.any(Number), multi: expect.any(Number), swing: expect.any(Number),
     });
+  });
+
+  test("stays within one hundredth of the csstats.gg Estimated HLTV Rating 2.0 reference scoreboard", () => {
+    const reference = [
+      ["MantiZ", 20, 11, 5, 119.3, 94.1, 1.84],
+      ["iceeeeeeman", 20, 11, 4, 115.5, 88.2, 1.78],
+      ["Quanta SKINS", 14, 12, 6, 95.4, 82.4, 1.35],
+      ["KAPAHT", 12, 8, 1, 62.1, 70.6, 1.15],
+      ["asd!!!", 8, 13, 9, 65.1, 76.5, 0.89],
+      ["Dann0ng1", 24, 13, 3, 134.6, 82.4, 1.93],
+      ["DD29", 12, 14, 0, 69.1, 70.6, 0.98],
+      ["CARPE DIEM", 8, 15, 4, 66.2, 64.7, 0.71],
+      ["我太牛了", 5, 15, 1, 41.8, 47.1, 0.33],
+      ["迈乐鱼", 4, 17, 5, 47.1, 52.9, 0.30],
+    ];
+    for (const [name, kills, deaths, assists, adr, kast, expected] of reference) {
+      const actual = estimateHltvRating2({ name, kills, deaths, assists, adr, kast }, 17);
+      expect(Math.abs(actual - expected), name).toBeLessThanOrEqual(0.011);
+    }
   });
 
   test("credits high-leverage kills and discounts a stronger economy", () => {
@@ -83,7 +102,7 @@ describe("Rating Pro match model", () => {
     expect(saver.pure_lost_saves).toBe(2);
     expect(saver.adjusted_kast).toBe(0);
     expect(saver.adjusted_survival).toBe(35);
-    expect(saver.rating_pro_2).toBeLessThan(1);
+    expect(saver.rating_pro_3).toBeLessThan(saver.rating_pro_2);
   });
 
   test("credits a quick revenge as a trade and shares flash-assisted swing", () => {

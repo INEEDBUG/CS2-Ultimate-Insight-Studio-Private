@@ -2074,7 +2074,7 @@ export default {
   "match.demoRetentionTitle": "关于 Demo 保留期：",
   "match.demoRetentionBody": "Valve 官方匹配 Demo 一般保留 {days} 天（赛后开始计算）。超过保留期的对局会显示「已过期」，无法下载——若需要历史 Demo，请尽早入库。",
   "match.shareCodeTitle": "通过比赛分享代码下载官匹 Demo",
-  "match.shareCodeDescription": "粘贴 CSGO-… 分享代码或完整 steam://rungame 链接。软件会通过本机已登录的 Steam 获取真实 Demo 地址，下载、解压并自动加入 Demo 库。请先关闭 CS2。",
+  "match.shareCodeDescription": "粘贴 CSGO-… 分享代码或完整 steam://rungame 链接。软件会通过本机已登录的 Steam 获取真实 Demo 地址，下载、解压并自动加入 Demo 库。无需启动 CS2；若游戏正在运行，请先关闭以释放 Game Coordinator。",
   "match.shareCodePlaceholder": "CSGO-xxxxx-xxxxx-xxxxx-xxxxx-xxxxx 或 steam://rungame/…",
   "match.shareCodeConsent": "我同意首次使用时从 npm 下载并运行独立的 @akiver/boiler-writter 1.7.0 组件（GPL-3.0）；组件只用于和本机 Steam Game Coordinator 通信。",
   "match.shareCodeDownload": "解析并下载",

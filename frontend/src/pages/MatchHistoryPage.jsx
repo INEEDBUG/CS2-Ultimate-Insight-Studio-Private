@@ -80,6 +80,7 @@ export default function MatchHistoryPage() {
   const [shareCodeConsent, setShareCodeConsent] = useState(false);
   const [shareCodeJobId, setShareCodeJobId] = useState(null);
   const [shareCodeError, setShareCodeError] = useState("");
+  const [bulkStarting, setBulkStarting] = useState(false);
   const downloadJobs = useDemoDownloadStore((state) => state.jobs);
   const upsertDownloadJob = useDemoDownloadStore((state) => state.upsertJob);
   const shareCodeJob = downloadJobs.find((job) => job.job_id === shareCodeJobId) || null;
@@ -163,6 +164,30 @@ export default function MatchHistoryPage() {
       setShareCodeJobId(job.job_id);
     } catch (e) {
       setShareCodeError(e?.response?.data?.detail || t("match.shareCodeRetryFail"));
+    }
+  }
+
+  async function handleDownloadAllNew() {
+    const pending = (data?.match_codes || []).filter((item) => (
+      !item.demo_in_library
+      && !localLibrary[item.match_id]
+      && !downloadJobs.some((job) => job.share_code === item.share_code && ["running", "complete"].includes(job.status))
+    ));
+    if (!pending.length || !shareCodeConsent) return;
+    setBulkStarting(true);
+    setShareCodeError("");
+    try {
+      let newestJob = null;
+      for (const item of pending) {
+        const job = await startShareCodeDownloadJob(item.share_code, true);
+        upsertDownloadJob(job);
+        newestJob = job;
+      }
+      if (newestJob) setShareCodeJobId(newestJob.job_id);
+    } catch (e) {
+      setShareCodeError(e?.response?.data?.detail || "批量下载任务启动失败");
+    } finally {
+      setBulkStarting(false);
     }
   }
 
@@ -364,9 +389,12 @@ export default function MatchHistoryPage() {
               <h2 className="text-[14px] font-semibold text-cs2-text-primary">Steam 官方比赛记录</h2>
               <p className="mt-1 text-[11.5px] text-cs2-text-muted">Steam API 只同步比赛分享码；完整地图、比分和玩家评价会在下载并解析 Demo 后生成。</p>
             </div>
-            <span className="rounded-full border border-cs2-border bg-cs2-bg-input px-2.5 py-1 font-mono text-[10px] text-cs2-text-secondary">
-              {data.newest_reached ? "已同步至最新" : `已读取最近 ${data.total || 0} 场`}
-            </span>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={handleDownloadAllNew} disabled={bulkStarting || !shareCodeConsent || !(data.match_codes || []).some((item) => !item.demo_in_library && !localLibrary[item.match_id] && !downloadJobs.some((job) => job.share_code === item.share_code && ["running", "complete"].includes(job.status)))} title={!shareCodeConsent ? "请先勾选上方 Game Coordinator 组件同意项" : "Steam 客户端保持登录即可，无需启动 CS2"} className="flex items-center gap-1.5 rounded-[7px] bg-cs2-accent px-3 py-1.5 text-[10px] font-bold text-black disabled:cursor-not-allowed disabled:opacity-40"><Download className="h-3.5 w-3.5" />{bulkStarting ? "正在建立任务" : "下载全部新 Demo"}</button>
+              <span className="rounded-full border border-cs2-border bg-cs2-bg-input px-2.5 py-1 font-mono text-[10px] text-cs2-text-secondary">
+                {data.newest_reached ? "已同步至最新" : `已读取最近 ${data.total || 0} 场`}
+              </span>
+            </div>
           </div>
           <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {(data.match_codes || []).map((item, index) => (

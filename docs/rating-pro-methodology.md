@@ -1,19 +1,16 @@
-# Rating Pro 2.0 / 3.0 方法说明
+# Estimated HLTV Rating 2.0 / Rating Pro 3.0 方法说明
 
 Rating Pro 是本项目根据本地 Demo 事件生成的透明估算模型，不是 HLTV 官方 Rating，也不会联网抓取或冒充 HLTV/CSStats 的比赛结果。
 
-## Rating Pro 2.0
+## Estimated HLTV Rating 2.0
 
-模型以 1.00 为中性基准，分别估算击杀、存活、KAST、伤害和影响五个等权分项。各项先按 T/CT 侧使用不同公开原则基准换算为标准差偏离，再按本场两侧回合数合并；影响分项使用多杀、首杀/首死、残局胜利、助攻与补枪。
+界面中的 `Est. R2` 采用公开社区逆向估算式：
 
-Rating Pro 2.0 当前实际遵循的是 HLTV 2.1 对 CS2/MR12 的公开修正思路：
+`0.0073 × KAST + 0.3591 × KPR - 0.5329 × DPR + 0.2372 × Impact + 0.0032 × ADR + 0.1587`
 
-- 输掉回合时，没有击杀或助攻的纯保枪不再获得 KAST 点；
-- 失利回合存活只获得折减后的生存贡献；
-- 被及时补枪的死亡获得部分生存质量补偿；
-- 五个分项等权，避免旧 CS2 环境中过度奖励存活与 KAST。
+其中 `Impact ≈ 2.13 × KPR + 0.42 × APR - 0.41`。这解决了旧模型把完整比赛再次向 1.00 收缩、导致高输出局被明显低估的问题。项目使用用户提供的 csstats.gg 十人记分板作为固定回归样本，结果与其 `Estimated HLTV Rating 2.0` 显示值相差不超过 0.01。
 
-设计维度参考 HLTV 对 Rating 2.0/2.1 的公开说明；HLTV 明确没有公开精确公式、标准差和攻守方常数，因此软件始终显示“本地估算”。
+HLTV 明确没有公开实际生产公式、攻守方常数和所有细节，因此这里始终显示 `Estimated`，不会冒充 HLTV 官方评分。失利纯保枪、回合经济和 Swing 等修正保留在 RP3，不再混入 Est. R2，便于与外部 Estimated R2 工具直接对照。
 
 ## Rating Pro 3.0
 
@@ -38,6 +35,7 @@ HLTV Rating 3.0 的官方模型还使用地图级历史胜率、个人武器装�
 ## 公开参考
 
 - [HLTV: Introducing Rating 2.0](https://www.hltv.org/news/20695/introducing-rating-20)
+- [Reverse Engineering the HLTV 2.0 Rating](https://dave.xn--tckwe/posts/reverse-engineering-hltv-rating/)
 - [HLTV: Introducing Rating 2.1](https://www.hltv.org/news/40051/introducing-rating-21)
 - [HLTV: Introducing Rating 3.0](https://www.hltv.org/news/42485/introducing-rating-30)
 - [HLTV: Rating 3.0 adjustments go live](https://www.hltv.org/news/43047/rating-30-adjustments-go-live)

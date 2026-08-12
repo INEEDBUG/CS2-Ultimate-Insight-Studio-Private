@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -27,7 +28,7 @@ import faulthandler
 
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -160,6 +161,8 @@ montage_db = MontageDB(DB_PATH)
 lite_cut_db = LiteCutDB(DB_PATH)
 demo_watcher: DemoWatcher | None = None
 demo_download_jobs = DemoDownloadJobManager()
+_steam_gc_download_lock = asyncio.Lock()
+_steam_openid_flows: dict[str, dict[str, Any]] = {}
 _demo_roster_locks: weakref.WeakValueDictionary[int, asyncio.Lock] = (
     weakref.WeakValueDictionary()
 )
@@ -2602,6 +2605,95 @@ async def demo_library_event_stream():
     )
 
 
+def _prune_steam_openid_flows(now: float | None = None) -> None:
+    cutoff = (time.time() if now is None else now) - 600
+    for key in [key for key, value in _steam_openid_flows.items() if float(value.get("created_at") or 0) < cutoff]:
+        _steam_openid_flows.pop(key, None)
+
+
+@app.post("/api/steam-openid/start")
+async def start_steam_openid(request: Request):
+    """Start a browser-owned Steam OpenID flow; never receives a Steam password."""
+    from urllib.parse import urlencode
+
+    _prune_steam_openid_flows()
+    state = secrets.token_urlsafe(24)
+    port = request.url.port or (443 if request.url.scheme == "https" else 80)
+    realm = f"{request.url.scheme}://127.0.0.1:{port}/"
+    callback = realm.rstrip("/") + "/api/steam-openid/callback?state=" + state
+    params = {
+        "openid.ns": "http://specs.openid.net/auth/2.0",
+        "openid.mode": "checkid_setup",
+        "openid.return_to": callback,
+        "openid.realm": realm,
+        "openid.identity": "http://specs.openid.net/auth/2.0/identifier_select",
+        "openid.claimed_id": "http://specs.openid.net/auth/2.0/identifier_select",
+    }
+    _steam_openid_flows[state] = {"created_at": time.time(), "status": "pending"}
+    return {
+        "state": state,
+        "auth_url": "https://steamcommunity.com/openid/login?" + urlencode(params),
+        "expires_in": 600,
+    }
+
+
+@app.get("/api/steam-openid/callback", name="complete_steam_openid")
+async def complete_steam_openid(request: Request, state: str = Query(..., min_length=16, max_length=128)):
+    flow = _steam_openid_flows.get(state)
+    if not flow or time.time() - float(flow.get("created_at") or 0) > 600:
+        return HTMLResponse("<h2>Steam 登录请求已过期</h2><p>请返回软件重新发起登录。</p>", status_code=400)
+    verification = dict(request.query_params)
+    verification.pop("state", None)
+    if verification.get("openid.mode") != "id_res":
+        flow.update(status="failed", error="Steam 登录已取消")
+        return HTMLResponse("<h2>Steam 登录已取消</h2><p>可以关闭此窗口并返回软件。</p>", status_code=400)
+    verification["openid.mode"] = "check_authentication"
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
+            response = await client.post("https://steamcommunity.com/openid/login", data=verification)
+            response.raise_for_status()
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        flow.update(status="failed", error="无法向 Steam 验证登录结果")
+        return HTMLResponse("<h2>无法验证 Steam 登录</h2><p>请返回软件稍后重试。</p>", status_code=502)
+    if "is_valid:true" not in response.text:
+        flow.update(status="failed", error="Steam OpenID 签名验证失败")
+        return HTMLResponse("<h2>Steam 登录验证失败</h2><p>请返回软件重新发起登录。</p>", status_code=400)
+    claimed_id = verification.get("openid.claimed_id", "")
+    match = re.fullmatch(r"https?://steamcommunity\.com/openid/id/(\d{17})", claimed_id)
+    if not match:
+        flow.update(status="failed", error="Steam 未返回有效 SteamID64")
+        return HTMLResponse("<h2>SteamID 验证失败</h2><p>请返回软件重新发起登录。</p>", status_code=400)
+    steam_id64 = match.group(1)
+    cfg = load_config()
+    player: dict[str, Any] = {}
+    if cfg.steam_api_key:
+        try:
+            player = await fetch_player_summary(cfg.steam_api_key, steam_id64)
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            player = {}
+    flow.update(
+        status="complete",
+        steam_id64=steam_id64,
+        name=player.get("personaname", ""),
+        avatar=player.get("avatarfull", ""),
+    )
+    return HTMLResponse(
+        "<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width'>"
+        "<title>Steam 登录成功</title><body style='margin:0;background:#111318;color:#f4f6f8;font:16px system-ui;display:grid;place-items:center;min-height:100vh'>"
+        "<main style='padding:32px;text-align:center'><h2 style='color:#66c0f4'>Steam 登录成功</h2>"
+        "<p>账号已安全返回 CS2 Ultimate Insight Studio。</p><p style='color:#8993a4'>现在可以关闭此窗口。</p></main></body>"
+    )
+
+
+@app.get("/api/steam-openid/status/{state}")
+async def steam_openid_status(state: str):
+    _prune_steam_openid_flows()
+    flow = _steam_openid_flows.get(state)
+    if not flow:
+        raise HTTPException(404, "Steam 登录请求不存在或已过期")
+    return {key: value for key, value in flow.items() if key != "created_at"}
+
+
 @app.get("/api/match-history/matches")
 async def get_match_history():
     cfg = load_config()
@@ -2806,9 +2898,13 @@ async def _run_share_code_download_job(job: DemoDownloadJob) -> dict:
         raise RuntimeError("未配置 Demo 库监听目录，请先在「Demo 库」设置监听路径")
 
     runtime_parent = resolve_config_path().parent / "third_party" / "boiler-writter"
-    job.update(stage="resolving", progress=0.08, message="正在连接本机 Steam Game Coordinator")
+    job.update(stage="resolving", progress=0.05, message="正在等待 Steam Game Coordinator")
     try:
-        resolved = await resolve_valve_demo(job.share_code, runtime_parent)
+        async with _steam_gc_download_lock:
+            if job.cancel_event.is_set():
+                raise asyncio.CancelledError
+            job.update(stage="resolving", progress=0.08, message="正在连接本机 Steam Game Coordinator")
+            resolved = await resolve_valve_demo(job.share_code, runtime_parent)
     except (InvalidShareCodeError, BoilerProcessError, BoilerRuntimeError, MatchInfoDecodeError) as exc:
         raise RuntimeError(str(exc)) from exc
 
