@@ -2068,6 +2068,7 @@ export default {
   // match — MatchHistoryPage
   "match.pageTitle": "官匹战绩",
   "match.pageSubtitle": "连接当前本机 Steam，直接显示最近 8 场官匹；需要分析时再下载 Demo。",
+  "match.mapThumbnailAlt": "{map} 地图缩略图",
   "match.btnEditCred": "编辑凭据",
   "match.btnRefresh": "刷新战绩",
   "match.btnDownloadSelected": "下载选中 Demo",

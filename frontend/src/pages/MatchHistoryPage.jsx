@@ -165,7 +165,10 @@ export default function MatchHistoryPage() {
   const shareCodeProgress = downloadJobPercent(shareCodeJob);
 
   return (
-    <div className="flex flex-col gap-5 p-7">
+    <div
+      data-testid="match-history-scroll-region"
+      className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-7 custom-scrollbar"
+    >
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
