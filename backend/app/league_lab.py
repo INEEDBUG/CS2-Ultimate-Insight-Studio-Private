@@ -505,6 +505,14 @@ class LeagueLabService:
             if self.phase == "ChampSelect":
                 session = await self.request("GET", "/lol-champ-select/v1/session")
                 self.champ_select = self._normalize_champ_select(session)
+                try:
+                    skin_info, skin_rows = await asyncio.gather(
+                        self.request("GET", "/lol-champ-select/v1/skin-selector-info"),
+                        self.request("GET", "/lol-champ-select/v1/skin-carousel-skins"),
+                    )
+                    self.champ_select["skin_selector"] = _normalize_skin_selector(skin_info, skin_rows)
+                except RuntimeError:
+                    self.champ_select["skin_selector"] = {"available": False, "skins": []}
             else:
                 self.champ_select = {}
         except RuntimeError:
@@ -1013,6 +1021,24 @@ class LeagueLabService:
 
 
 league_lab_service = LeagueLabService()
+
+
+def _normalize_skin_selector(info, rows) -> dict:
+    options = []
+    for skin in rows or []:
+        if not isinstance(skin, dict) or skin.get("disabled") or not skin.get("unlocked"):
+            continue
+        options.append({"id": int(skin.get("id") or 0), "name": skin.get("name") or str(skin.get("id")), "preview_path": skin.get("splashPath") or skin.get("tilePath") or "", "is_chroma": False})
+        for child in skin.get("childSkins") or []:
+            if isinstance(child, dict) and not child.get("disabled") and child.get("unlocked"):
+                options.append({"id": int(child.get("id") or 0), "name": child.get("name") or str(child.get("id")), "preview_path": child.get("chromaPreviewPath") or child.get("splashPath") or "", "is_chroma": True})
+    return {
+        "available": bool(options) and bool((info or {}).get("showSkinSelector", True)),
+        "disabled": bool((info or {}).get("skinSelectionDisabled")),
+        "selected_skin_id": int((info or {}).get("selectedSkinId") or 0),
+        "champion_id": int((info or {}).get("selectedChampionId") or 0),
+        "skins": [row for row in options if row["id"] > 0],
+    }
 
 
 # LeagueAkari's built-in SGP routing table, reduced to the match-history hosts used here.
@@ -1708,6 +1734,28 @@ async def league_champ_select_reroll():
             "/lol-champ-select/v1/session/my-selection/reroll",
         )
         await league_lab_service._refresh_state()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/champ-select/skin/{skin_id}")
+async def league_champ_select_skin(skin_id: int):
+    if skin_id <= 0:
+        raise HTTPException(status_code=422, detail="无效的皮肤 ID")
+    selector = league_lab_service.champ_select.get("skin_selector") or {}
+    allowed = {int(row.get("id") or 0) for row in selector.get("skins") or []}
+    if skin_id not in allowed:
+        raise HTTPException(status_code=409, detail="该皮肤当前不可用或不属于本账号")
+    if selector.get("disabled"):
+        raise HTTPException(status_code=409, detail="当前阶段不可切换皮肤")
+    try:
+        await league_lab_service.request(
+            "PATCH",
+            "/lol-champ-select/v1/session/my-selection",
+            json_body={"selectedSkinId": skin_id},
+        )
+        await league_lab_service._refresh_state()
+        return league_lab_service.status()
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return league_lab_service.status()

@@ -586,3 +586,34 @@ def test_player_bundle_falls_back_to_sgp_history(monkeypatch):
 
     assert result["match_source"] == "sgp"
     assert result["matches"][0]["game_id"] == 1
+
+
+def test_skin_selector_only_exposes_owned_enabled_skins():
+    result = league_lab._normalize_skin_selector(
+        {"showSkinSelector": True, "selectedSkinId": 22001, "selectedChampionId": 22},
+        [
+            {"id": 22000, "name": "Base", "unlocked": True, "disabled": False, "splashPath": "/base", "childSkins": []},
+            {"id": 22001, "name": "Owned", "unlocked": True, "disabled": False, "splashPath": "/owned", "childSkins": [
+                {"id": 22002, "name": "Chroma", "unlocked": True, "disabled": False, "chromaPreviewPath": "/chroma"},
+                {"id": 22003, "name": "Locked chroma", "unlocked": False, "disabled": False},
+            ]},
+            {"id": 22004, "name": "Locked", "unlocked": False, "disabled": False, "childSkins": []},
+        ],
+    )
+
+    assert result["available"] is True
+    assert result["selected_skin_id"] == 22001
+    assert [row["id"] for row in result["skins"]] == [22000, 22001, 22002]
+    assert result["skins"][-1]["is_chroma"] is True
+
+
+def test_skin_change_rejects_skin_outside_owned_snapshot(monkeypatch):
+    league_lab.league_lab_service.champ_select = {
+        "skin_selector": {"skins": [{"id": 22001}], "disabled": False}
+    }
+    try:
+        asyncio.run(league_lab.league_champ_select_skin(99999))
+    except league_lab.HTTPException as exc:
+        assert exc.status_code == 409
+    else:
+        raise AssertionError("unowned skin should be rejected")

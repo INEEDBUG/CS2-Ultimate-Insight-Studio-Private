@@ -74,3 +74,8 @@ export async function rerollLeagueChampion() {
   const { data } = await API.post("/league-lab/champ-select/reroll");
   return data;
 }
+
+export async function selectLeagueChampionSkin(skinId) {
+  const { data } = await API.post(`/league-lab/champ-select/skin/${skinId}`);
+  return data;
+}

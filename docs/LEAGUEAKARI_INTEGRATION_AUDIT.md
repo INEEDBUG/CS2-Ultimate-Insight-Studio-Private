@@ -47,6 +47,7 @@ This document prevents the League integration from becoming a collection of unre
 - League Mini ARAM bench card with current champion, bench choices, reroll count, manual swap and reroll actions.
 - Independent resizable real-time match window, sharing the cached team/premade/champion-usage analysis with the main lab.
 - SGP match-history fallback for Tencent and supported global regions, using an on-demand in-memory entitlements token and exposing the active LCU/SGP source in the player center.
+- League Mini owned-skin selector with chroma support; options come from the current LCU inventory snapshot and unowned/disabled IDs are rejected server-side.
 
 ### Partially implemented; upstream behavior is richer
 
@@ -55,7 +56,7 @@ This document prevents the League integration from becoming a collection of unre
 - Honor: strategy parity is implemented; the UI intentionally keeps the feature opt-in and disabled by default.
 - Invitations: per-type strategy, priority ordering and away gating are implemented; the UI still needs the complete upstream dynamic invite-type catalog.
 - Match history: current and cross-player rows, Riot ID lookup, pagination, ranked/mastery summary, recently encountered players, local tags, result/mode/champion/position/minimum-kills/maximum-deaths/minimum-KDA filters, SGP fallback and expanded match cards exist; upstream-level challenge presentation and the full composable-filter language remain.
-- Mini window: phase-driven show/hide, safe manual close, dedicated `mini.html`, ARAM bench swap/reroll and respawn countdown are implemented; skin selection, action countdowns and remaining auxiliary cards remain.
+- Mini window: phase-driven show/hide, safe manual close, dedicated `mini.html`, ARAM bench swap/reroll, owned-skin selection and respawn countdown are implemented; action countdowns and remaining auxiliary cards remain.
 
 ### Not implemented yet
 
@@ -63,7 +64,6 @@ This document prevents the League integration from becoming a collection of unre
 - Ongoing-game jungle-path analysis (live team/profile cards, premade detection and champion-usage summaries work now).
 - Match-history collect mode and filter presets/combinators.
 - OP.GG and remaining specialized auxiliary overlay windows (an independent native real-time match window and Mini respawn timer now work).
-- Champion skin selector auxiliary window.
 - Reward/mission/event claiming plus mutating loot and friend tools (the read-only overview works now; writes require separate safety review).
 - In-game preset messaging and chat availability/status tools.
 - Client window sizing, game-client process controls and streamer mode.
