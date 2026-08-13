@@ -21,6 +21,19 @@
         "center": true,
         "decorations": false,
         "dragDropEnabled": false
+      },
+      {
+        "label": "league-mini",
+        "title": "Insight · League Mini",
+        "url": "mini.html",
+        "width": 340,
+        "height": 480,
+        "minWidth": 300,
+        "minHeight": 380,
+        "visible": false,
+        "resizable": true,
+        "decorations": true,
+        "alwaysOnTop": true
       }
     ],
     "security": {
