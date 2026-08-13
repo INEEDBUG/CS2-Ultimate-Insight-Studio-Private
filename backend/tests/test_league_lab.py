@@ -1,5 +1,7 @@
 import asyncio
+import subprocess
 
+from app import league_lab
 from app.league_lab import LeagueLabService, LeagueLabSettings, parse_league_client_command_line
 
 
@@ -19,6 +21,20 @@ def test_parse_league_client_command_line_extracts_lcu_credentials():
 
 def test_parse_league_client_command_line_rejects_incomplete_input():
     assert parse_league_client_command_line("--app-port=54321") is None
+
+
+def test_discovery_uses_thread_compatible_subprocess(monkeypatch):
+    command = b'LeagueClientUx.exe --app-port=54321 --remoting-auth-token=memory_only'
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 0, stdout=command)
+
+    monkeypatch.setattr(league_lab.os, "name", "nt")
+    monkeypatch.setattr(league_lab.subprocess, "run", fake_run)
+    parsed = asyncio.run(league_lab.discover_lcu_credentials())
+    assert parsed is not None
+    assert parsed.port == 54321
+    assert parsed.token == "memory_only"
 
 
 def test_settings_are_persisted_without_lcu_credentials(tmp_path, monkeypatch):

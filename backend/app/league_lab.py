@@ -83,19 +83,20 @@ async def discover_lcu_credentials() -> LcuCredentials | None:
         "| Select-Object -First 1 -ExpandProperty CommandLine; if($p){[Console]::Out.Write($p)}"
     )
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "powershell.exe",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            script,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+    def read_command_line() -> bytes:
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5.0,
+            check=False,
             creationflags=creation_flags,
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
-    except (OSError, asyncio.TimeoutError):
+        return completed.stdout
+
+    try:
+        stdout = await asyncio.to_thread(read_command_line)
+    except (OSError, subprocess.TimeoutExpired):
         return None
     return parse_league_client_command_line(stdout.decode("utf-8", errors="ignore"))
 
