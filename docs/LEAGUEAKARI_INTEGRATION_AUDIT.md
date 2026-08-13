@@ -48,6 +48,7 @@ This document prevents the League integration from becoming a collection of unre
 - Independent resizable real-time match window, sharing the cached team/premade/champion-usage analysis with the main lab.
 - SGP match-history fallback for Tencent and supported global regions, using an on-demand in-memory entitlements token and exposing the active LCU/SGP source in the player center.
 - League Mini owned-skin selector with chroma support; options come from the current LCU inventory snapshot and unowned/disabled IDs are rejected server-side.
+- Visual rune and summoner-spell loadout editor backed by the current LCU catalog; perk selection no longer requires manually typing numeric IDs.
 
 ### Partially implemented; upstream behavior is richer
 
