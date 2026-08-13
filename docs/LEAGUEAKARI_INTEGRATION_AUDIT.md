@@ -53,7 +53,7 @@ This document prevents the League integration from becoming a collection of unre
 ### Partially implemented; upstream behavior is richer
 
 - Pick/ban: core upstream behavior is implemented; remaining work is exact upstream queue-group metadata refresh, subset-card modes, special vote actions and champion artwork/role metadata parity.
-- Champion config: data model supports saved loadouts, but the editor still uses numeric IDs instead of upstream champion/rune/spell galleries and position presets.
+- Champion config: saved loadouts plus LCU-backed rune/spell selection are implemented; upstream-style champion artwork search and mode/position-specific presets remain.
 - Honor: strategy parity is implemented; the UI intentionally keeps the feature opt-in and disabled by default.
 - Invitations: per-type strategy, priority ordering and away gating are implemented; the UI still needs the complete upstream dynamic invite-type catalog.
 - Match history: current and cross-player rows, Riot ID lookup, pagination, ranked/mastery summary, recently encountered players, local tags, result/mode/champion/position/minimum-kills/maximum-deaths/minimum-KDA filters, SGP fallback, one-click 100-match SQLite collection that survives restarts, aggregate KDA/participation/vision/damage challenge metrics and expanded match cards exist; the full upstream challenge catalog and composable-filter language remain.
@@ -61,9 +61,9 @@ This document prevents the League integration from becoming a collection of unre
 
 ### Not implemented yet
 
-- SGP summoner fallback and cross-region lookup beyond the implemented match-history and ranked-stat routing. Champion mastery remains LCU-only, matching current LeagueAkari behavior.
+- Full cross-region Riot ID search through SGP; direct PUUID summoner fallback, match history and ranked-stat routing are implemented. Champion mastery remains LCU-only, matching current LeagueAkari behavior.
 - Ongoing-game jungle-path analysis (live team/profile cards, premade detection and champion-usage summaries work now).
-- Match-history durable collection workspace and filter presets/combinators (one-click 100-match in-memory collection works now).
+- Saved filter presets and the full upstream composable-filter language (the durable SQLite collection workspace works now).
 - OP.GG and remaining specialized auxiliary overlay windows (an independent native real-time match window and Mini respawn timer now work).
 - Reward/mission/event claiming plus mutating loot and friend tools (the read-only overview works now; writes require separate safety review).
 - In-game preset messaging and chat availability/status tools.
