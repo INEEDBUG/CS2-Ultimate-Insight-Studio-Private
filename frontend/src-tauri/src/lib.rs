@@ -58,7 +58,10 @@ struct LeagueMiniLifecycle {
 #[tauri::command]
 fn sync_league_mini(app: AppHandle, should_show: bool, context: String) -> Result<(), String> {
     let mini = app.state::<LeagueMiniLifecycle>();
-    let mut saved_context = mini.context.lock().map_err(|_| "mini lifecycle lock poisoned".to_string())?;
+    let mut saved_context = mini
+        .context
+        .lock()
+        .map_err(|_| "mini lifecycle lock poisoned".to_string())?;
     if *saved_context != context {
         *saved_context = context;
         mini.manually_hidden.store(false, Ordering::SeqCst);
