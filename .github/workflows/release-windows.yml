@@ -215,12 +215,15 @@ jobs:
           $manifestPath = "frontend/src-tauri/target/release/bundle/nsis/latest.json"
           if (-not (Test-Path -LiteralPath $manifestPath)) { throw "latest.json was not generated" }
           $branch = "updater"
-          $ref = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/$branch" 2>$null | ConvertFrom-Json
-          if (-not $ref) {
+          gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/$branch" --silent 2>$null
+          $branchExists = $LASTEXITCODE -eq 0
+          if (-not $branchExists) {
             gh api --method POST "repos/$env:GITHUB_REPOSITORY/git/refs" -f ref="refs/heads/$branch" -f sha="$env:GITHUB_SHA" | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "Failed to create updater branch" }
           }
-          $existing = gh api "repos/$env:GITHUB_REPOSITORY/contents/latest.json?ref=$branch" 2>$null | ConvertFrom-Json
+          $existingJson = gh api "repos/$env:GITHUB_REPOSITORY/contents/latest.json?ref=$branch" 2>$null
+          $fileExists = $LASTEXITCODE -eq 0
+          $existing = if ($fileExists) { $existingJson | ConvertFrom-Json } else { $null }
           $content = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path $manifestPath)))
           $args = @(
             "api", "--method", "PUT", "repos/$env:GITHUB_REPOSITORY/contents/latest.json",
