@@ -999,6 +999,10 @@ def _player_tags_path() -> Path:
     return get_data_dir() / "league-player-tags.json"
 
 
+def _recent_players_path() -> Path:
+    return get_data_dir() / "league-recent-players.json"
+
+
 def _read_player_tags() -> dict[str, dict]:
     try:
         body = json.loads(_player_tags_path().read_text(encoding="utf-8"))
@@ -1013,6 +1017,46 @@ def _write_player_tags(body: dict[str, dict]) -> None:
     temp = path.with_suffix(".tmp")
     temp.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
     temp.replace(path)
+
+
+def _read_recent_players() -> list[dict]:
+    try:
+        body = json.loads(_recent_players_path().read_text(encoding="utf-8"))
+        return body if isinstance(body, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _write_recent_players(rows: list[dict]) -> None:
+    path = _recent_players_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(".tmp")
+    temp.write_text(json.dumps(rows[:200], ensure_ascii=False, indent=2), encoding="utf-8")
+    temp.replace(path)
+
+
+def _remember_recent_players(players: list[dict], game_id=None) -> None:
+    existing = {str(row.get("puuid")): row for row in _read_recent_players() if row.get("puuid")}
+    now = int(time.time() * 1000)
+    for player in players:
+        puuid = str(player.get("puuid") or "")
+        if not puuid:
+            continue
+        summoner = player.get("summoner") or {}
+        previous = existing.get(puuid) or {}
+        existing[puuid] = {
+            **previous,
+            "puuid": puuid,
+            "game_name": summoner.get("gameName") or summoner.get("displayName") or previous.get("game_name") or "",
+            "tag_line": summoner.get("tagLine") or previous.get("tag_line") or "",
+            "profile_icon_id": summoner.get("profileIconId") or previous.get("profile_icon_id"),
+            "last_seen_at": now,
+            "last_game_id": game_id or previous.get("last_game_id"),
+            "team": player.get("team"),
+            "champion_id": player.get("champion_id"),
+            "champion_name": player.get("champion_name"),
+        }
+    _write_recent_players(sorted(existing.values(), key=lambda row: int(row.get("last_seen_at") or 0), reverse=True))
 
 
 def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "") -> list[dict]:
@@ -1042,7 +1086,10 @@ def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "")
                 "played_at": game.get("gameCreationDate") or game.get("gameCreation"),
                 "duration_seconds": game.get("gameDuration"),
                 "game_mode": game.get("gameMode"),
+                "game_type": game.get("gameType"),
                 "queue_id": game.get("queueId"),
+                "position": participant.get("teamPosition") or participant.get("timeline", {}).get("lane"),
+                "role": participant.get("individualPosition") or participant.get("timeline", {}).get("role"),
                 "champion_id": champion_id,
                 "champion_name": names.get(champion_id, str(champion_id)),
                 "spell1_id": participant.get("spell1Id"),
@@ -1094,16 +1141,45 @@ async def current_league_player():
     return await _load_player_bundle(summoner)
 
 
+@router.get("/players/search")
+async def search_league_player(game_name: str, tag_line: str):
+    if not game_name.strip() or not tag_line.strip():
+        raise HTTPException(status_code=422, detail="请输入完整的游戏名称和标签")
+    try:
+        rows = await league_lab_service.request(
+            "POST",
+            "/lol-summoner/v1/summoners/aliases",
+            json_body=[{"gameName": game_name.strip(), "tagLine": tag_line.strip()}],
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    summoner = rows[0] if isinstance(rows, list) and rows else None
+    if not summoner:
+        raise HTTPException(status_code=404, detail="未找到该 Riot ID")
+    return await _load_player_bundle(summoner)
+
+
+@router.get("/players/recent")
+async def recent_league_players(limit: int = 40):
+    rows = _read_recent_players()[: max(1, min(limit, 200))]
+    tags = _read_player_tags()
+    return {"players": [{**row, "tag": tags.get(str(row.get("puuid"))) or {}} for row in rows], "count": len(rows)}
+
+
 @router.get("/players/{puuid}")
-async def league_player_bundle(puuid: str, match_limit: int = 20):
+async def league_player_bundle(puuid: str, match_limit: int = 20, beg_index: int = 0):
     try:
         summoner = await league_lab_service.request("GET", f"/lol-summoner/v2/summoners/puuid/{puuid}")
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return await _load_player_bundle(summoner, match_limit=max(1, min(match_limit, 40)))
+    return await _load_player_bundle(
+        summoner,
+        match_limit=max(1, min(match_limit, 40)),
+        beg_index=max(0, beg_index),
+    )
 
 
-async def _load_player_bundle(summoner, match_limit: int = 20) -> dict:
+async def _load_player_bundle(summoner, match_limit: int = 20, beg_index: int = 0) -> dict:
     if not isinstance(summoner, dict) or not summoner.get("puuid"):
         raise HTTPException(status_code=404, detail="未找到召唤师")
     puuid = str(summoner["puuid"])
@@ -1120,7 +1196,7 @@ async def _load_player_bundle(summoner, match_limit: int = 20) -> dict:
         optional(
             "GET",
             f"/lol-match-history/v1/products/lol/{puuid}/matches",
-            params={"begIndex": 0, "endIndex": match_limit - 1},
+            params={"begIndex": beg_index, "endIndex": beg_index + match_limit - 1},
         ),
         _champion_names(),
     )
@@ -1136,6 +1212,11 @@ async def _load_player_bundle(summoner, match_limit: int = 20) -> dict:
         "ranked": ranked or {},
         "mastery": mastery or {},
         "matches": _normalize_match_rows(history or {}, names, puuid),
+        "page": {
+            "beg_index": beg_index,
+            "end_index": beg_index + match_limit - 1,
+            "has_more": len(_normalize_match_rows(history or {}, names, puuid)) >= match_limit,
+        },
         "tag": tags,
     }
 
@@ -1193,13 +1274,16 @@ async def league_ongoing_game():
                 "tag": _read_player_tags().get(puuid) or {},
             }
         )
-    return {
+    result = {
         "phase": league_lab_service.phase,
         "queue": game_data.get("queue") or {},
         "game_id": game_data.get("gameId"),
         "players": players,
         "available": bool(players),
     }
+    if players:
+        _remember_recent_players(players, game_data.get("gameId"))
+    return result
 
 
 @router.get("/champions")

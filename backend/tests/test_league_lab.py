@@ -338,3 +338,52 @@ def test_auto_invite_online_friend_removes_completed_target(monkeypatch, tmp_pat
 
     assert calls == [("POST", "/lol-lobby/v2/lobby/invitations", [{"toSummonerId": 42}])]
     assert service.settings.auto_invite_friend_puuids == []
+
+
+def test_player_search_uses_lcu_riot_id_alias(monkeypatch):
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, json_body, params))
+        if path.endswith("/aliases"):
+            return [{"puuid": "player-1", "gameName": "Player", "tagLine": "CN1"}]
+        return {}
+
+    async def bundle(summoner, match_limit=20, beg_index=0):
+        return {"summoner": summoner, "matches": []}
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    monkeypatch.setattr(league_lab, "_load_player_bundle", bundle)
+    result = asyncio.run(league_lab.search_league_player(" Player ", " CN1 "))
+
+    assert result["summoner"]["puuid"] == "player-1"
+    assert calls == [
+        (
+            "POST",
+            "/lol-summoner/v1/summoners/aliases",
+            [{"gameName": "Player", "tagLine": "CN1"}],
+            None,
+        )
+    ]
+
+
+def test_recent_players_are_deduplicated_and_sorted(monkeypatch, tmp_path):
+    monkeypatch.setattr(league_lab, "_recent_players_path", lambda: tmp_path / "recent.json")
+    monkeypatch.setattr(league_lab.time, "time", lambda: 10)
+    league_lab._remember_recent_players(
+        [{"puuid": "one", "summoner": {"gameName": "One"}, "champion_id": 1}],
+        100,
+    )
+    monkeypatch.setattr(league_lab.time, "time", lambda: 20)
+    league_lab._remember_recent_players(
+        [
+            {"puuid": "one", "summoner": {"gameName": "One Renamed"}, "champion_id": 2},
+            {"puuid": "two", "summoner": {"gameName": "Two"}, "champion_id": 3},
+        ],
+        200,
+    )
+
+    rows = league_lab._read_recent_players()
+    assert [row["puuid"] for row in rows] == ["one", "two"]
+    assert rows[0]["game_name"] == "One Renamed"
+    assert rows[0]["last_game_id"] == 200

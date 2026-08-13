@@ -39,6 +39,7 @@ This document prevents the League integration from becoming a collection of unre
 - Ongoing-game foundation: current Gameflow teams, champion assignments, ranked/profile enrichment, local tags and click-through to player details.
 - Event-driven private-chat auto reply, away-only gating, offline-status lock and one-shot ARAM side announcements.
 - Event-driven friend auto-invitation queue: waits for an opted-in friend to become online, checks lobby permissions/membership, invites once and removes the completed target.
+- Riot ID (`game name#tag`) cross-player lookup through the local LCU alias endpoint, paginated match history and durable recently encountered player indexing.
 
 ### Partially implemented; upstream behavior is richer
 
@@ -46,14 +47,13 @@ This document prevents the League integration from becoming a collection of unre
 - Champion config: data model supports saved loadouts, but the editor still uses numeric IDs instead of upstream champion/rune/spell galleries and position presets.
 - Honor: strategy parity is implemented; the UI intentionally keeps the feature opt-in and disabled by default.
 - Invitations: per-type strategy, priority ordering and away gating are implemented; the UI still needs the complete upstream dynamic invite-type catalog.
-- Match history: current and cross-player rows, ranked/mastery summary and local tags exist; upstream-level challenges, detailed cards, pagination and composable filters remain.
+- Match history: current and cross-player rows, Riot ID lookup, pagination, ranked/mastery summary, recently encountered players and local tags exist; upstream-level challenges, detailed cards and composable filters remain.
 - Mini window: phase-driven show/hide, safe manual close and a dedicated `mini.html` entry are implemented; skin selection, bench controls, action countdowns and all auxiliary cards remain.
 
 ### Not implemented yet
 
-- SGP-backed historical analysis and name/tag cross-player lookup (LCU PUUID lookup works now).
+- SGP-backed historical analysis and multi-source fallback (LCU Riot ID and PUUID lookup work now).
 - Ongoing-game premade detection, champion-usage rates and jungle-path analysis (live team/profile cards work now).
-- Recently encountered player indexing (reusable saved-player/tag storage works now).
 - Match-history advanced filters, collect mode and multi-source fallback.
 - Respawn timer and the ongoing-game/OP.GG/auxiliary overlay windows.
 - Champion skin selector auxiliary window.

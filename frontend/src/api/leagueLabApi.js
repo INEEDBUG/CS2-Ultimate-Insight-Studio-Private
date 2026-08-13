@@ -35,8 +35,18 @@ export async function fetchCurrentLeaguePlayer() {
   return data;
 }
 
-export async function fetchLeaguePlayer(puuid, matchLimit = 20) {
-  const { data } = await API.get(`/league-lab/players/${encodeURIComponent(puuid)}`, { params: { match_limit: matchLimit } });
+export async function fetchLeaguePlayer(puuid, matchLimit = 20, begIndex = 0) {
+  const { data } = await API.get(`/league-lab/players/${encodeURIComponent(puuid)}`, { params: { match_limit: matchLimit, beg_index: begIndex } });
+  return data;
+}
+
+export async function searchLeaguePlayer(gameName, tagLine) {
+  const { data } = await API.get("/league-lab/players/search", { params: { game_name: gameName, tag_line: tagLine } });
+  return data;
+}
+
+export async function fetchRecentLeaguePlayers(limit = 40) {
+  const { data } = await API.get("/league-lab/players/recent", { params: { limit } });
   return data;
 }
 
