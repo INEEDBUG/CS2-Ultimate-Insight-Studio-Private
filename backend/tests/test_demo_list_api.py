@@ -187,6 +187,12 @@ def test_match_history_reads_local_gc_and_batches_library_lookup(tmp_path, monke
     monkeypatch.setattr(main, "resolve_config_path", lambda: tmp_path / "config.json")
     monkeypatch.setattr(main, "resolve_recent_valve_matches", fake_recent)
     monkeypatch.setattr(main.demo_db, "find_demo_rows_by_filenames", fake_rows)
+    update_match_date = AsyncMock(return_value=True)
+    notify = AsyncMock()
+    async def fake_notify(_self, reason):
+        await notify(reason)
+    monkeypatch.setattr(main.demo_db, "update_match_date", update_match_date)
+    monkeypatch.setattr(type(main.demo_library_hub), "notify", fake_notify)
 
     response = _run(main.get_match_history(main.RecentValveMatchesBody(accept_gpl_sidecar=True)))
 
@@ -198,6 +204,9 @@ def test_match_history_reads_local_gc_and_batches_library_lookup(tmp_path, monke
     assert response["matches"][0]["adr"] is None
     assert response["matches"][0]["rating"] is None
     assert response["matches"][0]["demo_in_library"] is True
+    assert response["matches"][0]["played_at"] == "2026-08-12T12:00:00Z"
+    update_match_date.assert_awaited_once_with(7, "2026-08-12T12:00:00Z", source="steam_gc")
+    notify.assert_awaited_once_with("match_times")
 
 
 def test_batch_summary_reports_corrupt_result_as_item_error(monkeypatch):

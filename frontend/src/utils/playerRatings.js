@@ -381,10 +381,20 @@ export function buildMatchRatingPro(data = {}) {
   const culpritPool = loserKey ? rated.filter((row) => row.team_key === loserKey) : rated;
   const hero = [...heroPool].sort((a, b) => b.rating_pro_3 - a.rating_pro_3)[0] || null;
   const culprit = [...culpritPool].sort((a, b) => a.rating_pro_3 - b.rating_pro_3)[0] || null;
+  const verdictForTeam = (teamKey) => {
+    const teamRows = rated.filter((row) => row.team_key === teamKey);
+    const teamHero = [...teamRows].sort((a, b) => b.rating_pro_3 - a.rating_pro_3)[0] || null;
+    const teamCulprit = [...teamRows].sort((a, b) => a.rating_pro_3 - b.rating_pro_3)[0] || null;
+    return {
+      hero: teamHero ? { ...teamHero, detail: verdictDetail(teamHero, "hero"), player: undefined } : null,
+      culprit: teamCulprit ? { ...teamCulprit, detail: verdictDetail(teamCulprit, "culprit"), player: undefined } : null,
+    };
+  };
   return {
     players: rated.map((row) => ({ ...row, player: undefined })),
     hero: hero ? { ...hero, detail: verdictDetail(hero, "hero"), player: undefined } : null,
     culprit: culprit ? { ...culprit, detail: verdictDetail(culprit, "culprit"), player: undefined } : null,
+    team_verdicts: { a: verdictForTeam("a"), b: verdictForTeam("b") },
     model_version: "rating-pro-estimated-hltv2-v3",
     model_note: "Estimated R2 使用公开社区估算式，以 KPR、DPR、APR、ADR、KAST 和 Impact 计算，便于和 csstats.gg 的 Estimated HLTV Rating 2.0 对照；RP3 继续加入逐回合经济、多杀、助攻/补枪与 Round Swing。两者都不是 HLTV 官方评分。",
   };

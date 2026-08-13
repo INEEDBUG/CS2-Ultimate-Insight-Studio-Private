@@ -132,6 +132,15 @@ def test_parse_recent_match_list_returns_gc_scoreboard_without_inventing_demo_st
     assert recent.rounds == (True, False, True)
     assert recent.demo_url == "https://replay123.valve.net/730/recent.dem.bz2"
 
+    invalid_url_payload = payload.replace(
+        b"https://replay123.valve.net/730/recent.dem.bz2",
+        b"https://replay123.evilx.net/730/recent.dem.bz2",
+    )
+    invalid_url_recent = resolver.parse_recent_match_list(invalid_url_payload).matches[0]
+    assert invalid_url_recent.demo_url is None
+    assert invalid_url_recent.played_at == recent.played_at
+    assert invalid_url_recent.match_id == recent.match_id
+
 
 def test_parse_match_list_demo_url_rejects_non_valve_host():
     decoded = resolver.decode_match_share_code(USER_SHARE_CODE)

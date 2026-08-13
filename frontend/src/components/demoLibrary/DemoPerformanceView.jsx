@@ -1,5 +1,25 @@
-import { AlertTriangle, CalendarClock, ChevronRight, Crosshair, Loader2, RefreshCw, Trophy } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, CalendarClock, ChevronRight, Crosshair, ExternalLink, Loader2, RefreshCw, Trophy } from "lucide-react";
+import { getSteamPlayerAvatarUrl } from "../../api/api.js";
+import { desktopBridge } from "../../desktop/desktopBridge.js";
 import { buildMatchRatingPro } from "../../utils/playerRatings.js";
+
+function steamProfileUrl(steamId64) {
+  const value = String(steamId64 || "").trim();
+  return /^\d{17}$/.test(value) ? `https://steamcommunity.com/profiles/${value}` : "";
+}
+
+function SteamPlayerAvatar({ player, teamKey }) {
+  const [failed, setFailed] = useState(false);
+  const steamId64 = player.steam_id64 || player.steamid64;
+  const tone = teamKey === "a" ? "bg-sky-400/15 text-sky-300" : "bg-emerald-400/15 text-emerald-300";
+  return (
+    <span className={`relative flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-md text-[10px] font-black ${tone}`}>
+      {String(player.name || "?").slice(0, 1).toUpperCase()}
+      {steamId64 && !failed ? <img src={getSteamPlayerAvatarUrl(steamId64)} onError={() => setFailed(true)} className="absolute inset-0 h-full w-full object-cover" alt={`${player.name} 的 Steam 头像`} /> : null}
+    </span>
+  );
+}
 
 function formatDate(value, withTime = false) {
   if (!value) return "";
@@ -73,14 +93,24 @@ function TeamTable({ name, score, teamKey, players, ratings, heroName, culpritNa
           const rating = ratings.get(player.name) || {};
           const hero = player.name === heroName;
           const culprit = player.name === culpritName;
+          const profileUrl = steamProfileUrl(player.steam_id64 || player.steamid64);
+          const openProfile = () => {
+            if (!profileUrl) return;
+            if (desktopBridge?.openExternal) void desktopBridge.openExternal(profileUrl);
+            else window.open(profileUrl, "_blank", "noopener,noreferrer");
+          };
           return (
             <div key={player.name} className={`grid grid-cols-[minmax(150px,1.5fr)_74px_58px_58px_66px_66px] items-center px-3 py-2.5 ${hero ? "bg-emerald-400/[0.08]" : culprit ? "bg-rose-400/[0.08]" : ""}`}>
               <div className="flex min-w-0 items-center gap-2">
-                <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[10px] font-black ${teamKey === "a" ? "bg-sky-400/15 text-sky-300" : "bg-emerald-400/15 text-emerald-300"}`}>{String(player.name || "?").slice(0, 1).toUpperCase()}</span>
+                <SteamPlayerAvatar player={player} teamKey={teamKey} />
                 <div className="min-w-0">
-                  <p className="truncate text-[10px] font-bold text-cs2-text-primary">{player.name}</p>
-                  {hero ? <p className="flex items-center gap-1 text-[8px] font-bold text-emerald-300"><Trophy className="h-2.5 w-2.5" />本场英雄</p> : null}
-                  {culprit ? <p className="flex items-center gap-1 text-[8px] font-bold text-rose-300"><AlertTriangle className="h-2.5 w-2.5" />本场战犯</p> : null}
+                  {profileUrl ? (
+                    <button type="button" onClick={openProfile} aria-label={`打开 ${player.name} 的 Steam 主页`} title={`打开 ${player.name} 的 Steam 主页`} className="group/profile flex max-w-full items-center gap-1 text-left text-[10px] font-bold text-cs2-text-primary transition-colors duration-150 hover:text-cs2-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cs2-accent/50">
+                      <span className="truncate">{player.name}</span><ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-0 transition-opacity duration-150 group-hover/profile:opacity-100" />
+                    </button>
+                  ) : <p className="truncate text-[10px] font-bold text-cs2-text-primary">{player.name}</p>}
+                  {hero ? <p className="flex items-center gap-1 text-[8px] font-bold text-emerald-300"><Trophy className="h-2.5 w-2.5" />队内英雄</p> : null}
+                  {culprit ? <p className="flex items-center gap-1 text-[8px] font-bold text-rose-300"><AlertTriangle className="h-2.5 w-2.5" />队内战犯</p> : null}
                 </div>
               </div>
               <span className="text-center font-mono text-[10px] font-bold text-cs2-text-primary">{player.kills}/{player.deaths}/{player.assists}</span>
@@ -108,7 +138,7 @@ export default function DemoPerformanceView({
   syncingMatchTimes,
 }) {
   const workspace = detail?.result?.analysis_workspace || null;
-  const ratingModel = workspace?.players?.length ? buildMatchRatingPro(workspace) : { players: [], hero: null, culprit: null };
+  const ratingModel = workspace?.players?.length ? buildMatchRatingPro(workspace) : { players: [], hero: null, culprit: null, team_verdicts: {} };
   const ratings = new Map((ratingModel.players || []).map((item) => [item.name, item]));
   const teamA = (workspace?.players || []).filter((player) => player.team_key === "a");
   const teamB = (workspace?.players || []).filter((player) => player.team_key === "b");
@@ -153,8 +183,8 @@ export default function DemoPerformanceView({
             <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-4 rounded-lg border border-cs2-border bg-cs2-bg-input/25 p-3"><div className="text-right"><p className="text-[9px] font-bold text-sky-300">{workspace.team_a_name || "队伍 A"}</p></div><div className="font-mono text-3xl font-black"><span className="text-sky-300">{workspace.team_a_score ?? detail.team_a_score ?? 0}</span><span className="mx-2 text-cs2-text-muted">:</span><span className="text-emerald-300">{workspace.team_b_score ?? detail.team_b_score ?? 0}</span></div><div><p className="text-[9px] font-bold text-emerald-300">{workspace.team_b_name || "队伍 B"}</p></div></div>
             <div className="mt-3"><RoundStrip rounds={workspace.rounds} /></div>
           </header>
-          <TeamTable name={workspace.team_a_name} score={workspace.team_a_score} teamKey="a" players={teamA} ratings={ratings} heroName={ratingModel.hero?.name} culpritName={ratingModel.culprit?.name} />
-          <TeamTable name={workspace.team_b_name} score={workspace.team_b_score} teamKey="b" players={teamB} ratings={ratings} heroName={ratingModel.hero?.name} culpritName={ratingModel.culprit?.name} />
+          <TeamTable name={workspace.team_a_name} score={workspace.team_a_score} teamKey="a" players={teamA} ratings={ratings} heroName={ratingModel.team_verdicts?.a?.hero?.name} culpritName={ratingModel.team_verdicts?.a?.culprit?.name} />
+          <TeamTable name={workspace.team_b_name} score={workspace.team_b_score} teamKey="b" players={teamB} ratings={ratings} heroName={ratingModel.team_verdicts?.b?.hero?.name} culpritName={ratingModel.team_verdicts?.b?.culprit?.name} />
           <p className="px-1 text-[8px] leading-4 text-cs2-text-muted">Est. R2 使用公开社区 Estimated HLTV Rating 2.0 估算式（通常约 ±0.01），RP3 为本地透明模型；均不是 HLTV 官方评分。比赛日期仅在 Steam Game Coordinator 返回 `matchtime` 时标记为真实比赛时间。</p>
         </div>}
       </main>

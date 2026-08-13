@@ -376,7 +376,13 @@ def parse_recent_match_list(payload: bytes) -> ValveRecentMatches:
             except UnicodeDecodeError:
                 continue
             if candidate.startswith(("http://", "https://")):
-                demo_url = _validate_demo_url(candidate)
+                # A retired or malformed replay URL must not hide the rest of
+                # the GC scoreboard. Keep the verified match metadata and
+                # expose this one replay as unavailable instead.
+                try:
+                    demo_url = _validate_demo_url(candidate)
+                except MatchInfoDecodeError:
+                    demo_url = None
                 break
 
         parsed_matches.append(

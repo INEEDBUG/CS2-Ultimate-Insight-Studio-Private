@@ -28,7 +28,7 @@ import faulthandler
 
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -87,6 +87,7 @@ from .obs_tuning_agent import review_tuning_plan
 from .runtime_session import runtime_session_dependency, runtime_session_state
 from .obs_bootstrap import ObsBootstrapRequest, bootstrap_obs_environment
 from .session_auth import authorize_websocket_protocols
+from .steam_profiles import get_public_steam_avatar
 from .recording.api import router as recording_router
 from .lite_cut.api import router as lite_cut_router
 from .training_api import get_training_db, router as training_router
@@ -2723,8 +2724,14 @@ async def get_match_history(body: RecentValveMatchesBody):
     filenames = [f"match730_{item.match_id}.dem" for item in recent.matches]
     library_rows = await demo_db.find_demo_rows_by_filenames(filenames)
     matches: list[dict[str, Any]] = []
+    match_dates_updated = False
     for item, filename in zip(recent.matches, filenames, strict=True):
         library = library_rows.get(filename)
+        if library and item.played_at and not str(library.get("match_date") or "").strip():
+            if await demo_db.update_match_date(int(library["id"]), item.played_at, source="steam_gc"):
+                library["match_date"] = item.played_at
+                library["match_date_source"] = "steam_gc"
+                match_dates_updated = True
         kills = item.kills
         headshot_pct = round(item.headshot_kills / kills * 100) if kills > 0 else 0
         matches.append(
@@ -2756,6 +2763,9 @@ async def get_match_history(body: RecentValveMatchesBody):
             }
         )
 
+    if match_dates_updated:
+        await demo_library_hub.notify("match_times")
+
     return {
         "source": "steam_game_coordinator",
         "player": {
@@ -2769,6 +2779,16 @@ async def get_match_history(body: RecentValveMatchesBody):
         "total": len(matches),
         "limit": 8,
     }
+
+
+@app.get("/api/steam/players/{steam_id64}/avatar")
+async def steam_player_avatar(steam_id64: str):
+    """Redirect to a player's public Steam avatar without requiring a Web API key."""
+
+    avatar_url = await get_public_steam_avatar(steam_id64)
+    if not avatar_url:
+        raise HTTPException(404, "Steam 头像不可用")
+    return RedirectResponse(avatar_url, status_code=307)
 
 
 @app.post("/api/match-history/test-connection")

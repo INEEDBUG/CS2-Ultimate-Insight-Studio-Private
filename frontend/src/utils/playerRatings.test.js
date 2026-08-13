@@ -34,6 +34,10 @@ describe("Rating Pro match model", () => {
     const result = buildMatchRatingPro(data);
     expect(result.hero.name).toBe("Hero");
     expect(result.culprit.name).toBe("Culprit");
+    expect(result.team_verdicts.a.hero.name).toBe("Hero");
+    expect(result.team_verdicts.a.culprit.name).toBe("Mate");
+    expect(result.team_verdicts.b.hero.name).toBe("Opponent");
+    expect(result.team_verdicts.b.culprit.name).toBe("Culprit");
     expect(result.players.find((row) => row.name === "Hero").rating_pro_3).toBeGreaterThan(1);
     expect(result.players.find((row) => row.name === "Culprit").rating_pro_2).toBeLessThan(1);
     expect(result.model_note).toContain("不是 HLTV 官方评分");

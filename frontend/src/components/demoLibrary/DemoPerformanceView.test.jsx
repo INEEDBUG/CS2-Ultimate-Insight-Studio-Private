@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import DemoPerformanceView from "./DemoPerformanceView";
 
 const players = [
-  { name: "Hero", team_key: "a", team_number: 2, kills: 25, deaths: 10, assists: 5, kd: 2.5, kpr: 1, dpr: 0.4, adr: 108, kast: 84, first_kills: 5, first_deaths: 1 },
+  { name: "Hero", steam_id64: "76561198000000001", team_key: "a", team_number: 2, kills: 25, deaths: 10, assists: 5, kd: 2.5, kpr: 1, dpr: 0.4, adr: 108, kast: 84, first_kills: 5, first_deaths: 1 },
   { name: "Mate", team_key: "a", team_number: 2, kills: 14, deaths: 14, assists: 4, kd: 1, kpr: 0.56, dpr: 0.56, adr: 72, kast: 70 },
   { name: "Culprit", team_key: "b", team_number: 3, kills: 6, deaths: 22, assists: 2, kd: 0.27, kpr: 0.24, dpr: 0.88, adr: 41, kast: 48, first_kills: 0, first_deaths: 6 },
   { name: "Opponent", team_key: "b", team_number: 3, kills: 18, deaths: 17, assists: 3, kd: 1.06, kpr: 0.72, dpr: 0.68, adr: 81, kast: 72 },
@@ -52,9 +52,11 @@ describe("DemoPerformanceView", () => {
     expect(screen.getByText("比赛时间未知")).toBeTruthy();
     expect(screen.getByText("Steam 比赛时间")).toBeTruthy();
     expect(screen.getByText(/Est\. R2 使用公开社区 Estimated HLTV Rating 2\.0 估算式/)).toBeTruthy();
-    expect(screen.getByText("本场英雄")).toBeTruthy();
-    expect(screen.getByText("本场战犯")).toBeTruthy();
+    expect(screen.getAllByText("队内英雄")).toHaveLength(2);
+    expect(screen.getAllByText("队内战犯")).toHaveLength(2);
     expect(screen.getAllByText("Hero").length).toBeGreaterThan(0);
+    expect(screen.getByAltText("Hero 的 Steam 头像").getAttribute("src")).toContain("/api/steam/players/76561198000000001/avatar");
+    expect(screen.getByRole("button", { name: "打开 Hero 的 Steam 主页" })).toBeTruthy();
   });
 
   test("selects a recent match and can start match-time sync", () => {

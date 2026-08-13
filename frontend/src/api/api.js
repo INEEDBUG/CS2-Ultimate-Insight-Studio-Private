@@ -72,6 +72,15 @@ export function getDemoUtilityMaskUrl(mapName, layer = "") {
   return withDesktopSessionToken(`${API_BASE_URL}/api/demo/utility-mask/${name}${query}`);
 }
 
+/** Keyless public Steam avatar, proxied and cached by the local backend. */
+export function getSteamPlayerAvatarUrl(steamId64) {
+  const id = encodeURIComponent(String(steamId64 || "").trim());
+  const url = API_BASE_URL
+    ? `${API_BASE_URL}/api/steam/players/${id}/avatar`
+    : `/api/steam/players/${id}/avatar`;
+  return withDesktopSessionToken(url);
+}
+
 console.log(`[API Init] Protocol: ${window.location.protocol}, IsDesktop: ${IS_DESKTOP_APP}, BaseURL: ${API_BASE_URL}`);
 
 const API = axios.create({
