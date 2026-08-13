@@ -53,14 +53,14 @@ This document prevents the League integration from becoming a collection of unre
 - Champion config: data model supports saved loadouts, but the editor still uses numeric IDs instead of upstream champion/rune/spell galleries and position presets.
 - Honor: strategy parity is implemented; the UI intentionally keeps the feature opt-in and disabled by default.
 - Invitations: per-type strategy, priority ordering and away gating are implemented; the UI still needs the complete upstream dynamic invite-type catalog.
-- Match history: current and cross-player rows, Riot ID lookup, pagination, ranked/mastery summary, recently encountered players, local tags, result/mode/champion filters and expanded match cards exist; upstream-level challenges and the full composable-filter language remain.
+- Match history: current and cross-player rows, Riot ID lookup, pagination, ranked/mastery summary, recently encountered players, local tags, result/mode/champion/position/minimum-kills/maximum-deaths/minimum-KDA filters and expanded match cards exist; upstream-level challenges and the full composable-filter language remain.
 - Mini window: phase-driven show/hide, safe manual close, dedicated `mini.html`, ARAM bench swap/reroll and respawn countdown are implemented; skin selection, action countdowns and remaining auxiliary cards remain.
 
 ### Not implemented yet
 
 - SGP-backed historical analysis and multi-source fallback (LCU Riot ID and PUUID lookup work now).
 - Ongoing-game jungle-path analysis (live team/profile cards, premade detection and champion-usage summaries work now).
-- Match-history advanced filters, collect mode and multi-source fallback.
+- Match-history collect mode, filter presets/combinators and multi-source fallback.
 - OP.GG and remaining specialized auxiliary overlay windows (an independent native real-time match window and Mini respawn timer now work).
 - Champion skin selector auxiliary window.
 - Reward/mission/event claiming plus mutating loot and friend tools (the read-only overview works now; writes require separate safety review).
