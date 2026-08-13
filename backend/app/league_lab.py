@@ -1085,6 +1085,52 @@ async def league_champion_catalog():
     return {"champions": champions, "count": len(champions), "source": "lcu" if league_lab_service.credentials else "cache"}
 
 
+@router.get("/loadout-catalog")
+async def league_loadout_catalog():
+    try:
+        styles, spells = await asyncio.gather(
+            league_lab_service.request("GET", "/lol-game-data/assets/v1/perkstyles.json"),
+            league_lab_service.request("GET", "/lol-game-data/assets/v1/summoner-spells.json"),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    normalized_styles = []
+    for style in styles if isinstance(styles, list) else []:
+        if not isinstance(style, dict) or not style.get("id"):
+            continue
+        perks = []
+        for slot in style.get("slots") or []:
+            perks.extend(
+                {
+                    "id": int(perk.get("id")),
+                    "name": str(perk.get("name") or perk.get("id")),
+                    "icon_path": perk.get("iconPath") or "",
+                }
+                for perk in (slot.get("perks") or [])
+                if isinstance(perk, dict) and perk.get("id")
+            )
+        normalized_styles.append(
+            {
+                "id": int(style["id"]),
+                "name": str(style.get("name") or style["id"]),
+                "icon_path": style.get("iconPath") or "",
+                "perks": perks,
+            }
+        )
+    spell_rows = spells if isinstance(spells, list) else list(spells.values()) if isinstance(spells, dict) else []
+    normalized_spells = [
+        {
+            "id": int(spell.get("id")),
+            "name": str(spell.get("name") or spell.get("id")),
+            "description": str(spell.get("description") or ""),
+            "icon_path": spell.get("iconPath") or "",
+        }
+        for spell in spell_rows
+        if isinstance(spell, dict) and spell.get("id")
+    ]
+    return {"styles": normalized_styles, "spells": normalized_spells}
+
+
 @router.post("/actions/{action}")
 async def run_league_lab_action(action: Literal["accept", "play-again", "reconnect", "start-matchmaking", "stop-matchmaking"]):
     endpoints = {

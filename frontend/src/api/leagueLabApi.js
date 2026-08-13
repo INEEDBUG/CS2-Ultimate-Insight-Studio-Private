@@ -25,6 +25,11 @@ export async function fetchLeagueChampions() {
   return data;
 }
 
+export async function fetchLeagueLoadoutCatalog() {
+  const { data } = await API.get("/league-lab/loadout-catalog");
+  return data;
+}
+
 export async function fetchCurrentLeaguePlayer() {
   const { data } = await API.get("/league-lab/players/current");
   return data;
