@@ -70,6 +70,11 @@ export async function fetchLeagueToolkitOverview() {
   return data;
 }
 
+export async function updateLeagueChatPresence(payload) {
+  const { data } = await API.put("/league-lab/toolkit/chat-presence", payload);
+  return data;
+}
+
 export async function swapLeagueBenchChampion(championId) {
   const { data } = await API.post(`/league-lab/champ-select/bench/swap/${championId}`);
   return data;

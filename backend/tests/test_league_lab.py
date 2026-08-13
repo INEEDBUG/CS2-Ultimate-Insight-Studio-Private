@@ -554,6 +554,7 @@ def test_toolkit_overview_is_read_only(monkeypatch):
             "/lol-rewards/v1/grants": [{"id": "reward", "viewed": False}],
             "/lol-loot/v1/player-loot-map": {"loot": {"lootId": "loot"}},
             "/lol-chat/v1/friends": [{"puuid": "friend"}],
+            "/lol-chat/v1/me": {"availability": "chat", "statusMessage": ""},
         }
         return payloads[path]
 
@@ -752,3 +753,21 @@ def test_skin_change_rejects_skin_outside_owned_snapshot(monkeypatch):
         assert exc.status_code == 409
     else:
         raise AssertionError("unowned skin should be rejected")
+
+
+def test_chat_presence_update_is_explicit_and_uses_lcu(monkeypatch):
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, json_body))
+        if method == "GET":
+            return {"availability": "away", "statusMessage": "休息中"}
+        return None
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    result = asyncio.run(league_lab.league_update_chat_presence(
+        league_lab.ChatPresenceUpdate(availability="away", status_message="休息中")
+    ))
+
+    assert calls[0] == ("PUT", "/lol-chat/v1/me", {"availability": "away", "statusMessage": "休息中"})
+    assert result["chat_presence"]["availability"] == "away"

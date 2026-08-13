@@ -126,6 +126,11 @@ class ChampionLoadout(BaseModel):
     spell2_id: int = Field(gt=0)
 
 
+class ChatPresenceUpdate(BaseModel):
+    availability: Literal["chat", "mobile", "away", "offline", "dnd", "spectating", "online"] | None = None
+    status_message: str | None = Field(default=None, max_length=500)
+
+
 LeagueLabSettings.model_rebuild()
 
 
@@ -1913,12 +1918,13 @@ async def league_toolkit_overview():
         except RuntimeError:
             return None
 
-    missions, mission_series, rewards, loot, friends = await asyncio.gather(
+    missions, mission_series, rewards, loot, friends, chat_me = await asyncio.gather(
         optional("/lol-missions/v1/missions"),
         optional("/lol-missions/v1/series"),
         optional("/lol-rewards/v1/grants"),
         optional("/lol-loot/v1/player-loot-map"),
         optional("/lol-chat/v1/friends"),
+        optional("/lol-chat/v1/me"),
     )
     mission_rows = missions if isinstance(missions, list) else []
     reward_rows = rewards if isinstance(rewards, list) else []
@@ -1930,6 +1936,7 @@ async def league_toolkit_overview():
         "unclaimed_rewards": [row for row in reward_rows if not row.get("viewed") or not row.get("selected")],
         "loot": loot_rows,
         "friends": friend_rows,
+        "chat_presence": chat_me if isinstance(chat_me, dict) else None,
         "counts": {
             "missions": len(mission_rows),
             "unclaimed_rewards": len([row for row in reward_rows if not row.get("viewed") or not row.get("selected")]),
@@ -1938,6 +1945,23 @@ async def league_toolkit_overview():
         },
         "read_only": True,
     }
+
+
+@router.put("/toolkit/chat-presence")
+async def league_update_chat_presence(body: ChatPresenceUpdate):
+    patch: dict[str, str] = {}
+    if body.availability is not None:
+        patch["availability"] = body.availability
+    if body.status_message is not None:
+        patch["statusMessage"] = body.status_message
+    if not patch:
+        raise HTTPException(status_code=422, detail="没有需要应用的聊天状态")
+    try:
+        await league_lab_service.request("PUT", "/lol-chat/v1/me", json_body=patch)
+        current = await league_lab_service.request("GET", "/lol-chat/v1/me")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"chat_presence": current if isinstance(current, dict) else patch, "applied": True}
 
 
 @router.post("/actions/{action}")
