@@ -24,3 +24,23 @@ export async function fetchLeagueChampions() {
   const { data } = await API.get("/league-lab/champions");
   return data;
 }
+
+export async function fetchCurrentLeaguePlayer() {
+  const { data } = await API.get("/league-lab/players/current");
+  return data;
+}
+
+export async function fetchLeaguePlayer(puuid, matchLimit = 20) {
+  const { data } = await API.get(`/league-lab/players/${encodeURIComponent(puuid)}`, { params: { match_limit: matchLimit } });
+  return data;
+}
+
+export async function saveLeaguePlayerTag(puuid, tag) {
+  const { data } = await API.put(`/league-lab/players/${encodeURIComponent(puuid)}/tag`, tag);
+  return data;
+}
+
+export async function fetchLeagueOngoingGame() {
+  const { data } = await API.get("/league-lab/ongoing-game");
+  return data;
+}

@@ -219,6 +219,7 @@ class LeagueLabService:
         self.credentials: LcuCredentials | None = None
         self.phase = ""
         self.summoner_name = ""
+        self.current_summoner: dict = {}
         self.last_error = ""
         self.last_action = ""
         self.last_action_at = 0.0
@@ -303,6 +304,7 @@ class LeagueLabService:
             self.credentials = credentials
             self.phase = ""
             self.summoner_name = ""
+            self.current_summoner = {}
             self._acted_phase = ""
             self._phase_action_done = ""
             self._phase_action_due_at = None
@@ -378,6 +380,7 @@ class LeagueLabService:
             "connected": credentials is not None,
             "phase": self.phase,
             "summoner_name": self.summoner_name,
+            "current_summoner": self.current_summoner,
             "region": credentials.region if credentials else "",
             "platform_id": credentials.platform_id if credentials else "",
             "last_error": self.last_error,
@@ -399,6 +402,13 @@ class LeagueLabService:
             summoner = await self.request("GET", "/lol-summoner/v1/current-summoner")
             if isinstance(summoner, dict):
                 self.summoner_name = str(summoner.get("gameName") or summoner.get("displayName") or "")
+                self.current_summoner = {
+                    "puuid": summoner.get("puuid"),
+                    "game_name": summoner.get("gameName") or summoner.get("displayName"),
+                    "tag_line": summoner.get("tagLine") or "",
+                    "summoner_level": summoner.get("summonerLevel"),
+                    "profile_icon_id": summoner.get("profileIconId"),
+                }
             self.last_error = ""
             if self.phase == "ChampSelect":
                 session = await self.request("GET", "/lol-champ-select/v1/session")
@@ -862,6 +872,71 @@ async def _champion_catalog() -> list[dict]:
     return normalized
 
 
+def _player_tags_path() -> Path:
+    return get_data_dir() / "league-player-tags.json"
+
+
+def _read_player_tags() -> dict[str, dict]:
+    try:
+        body = json.loads(_player_tags_path().read_text(encoding="utf-8"))
+        return body if isinstance(body, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_player_tags(body: dict[str, dict]) -> None:
+    path = _player_tags_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(".tmp")
+    temp.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp.replace(path)
+
+
+def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "") -> list[dict]:
+    games = ((payload or {}).get("games") or {}).get("games") or []
+    normalized = []
+    for game in games:
+        identities = game.get("participantIdentities") or []
+        identity = next(
+            (
+                row
+                for row in identities
+                if not puuid or str((row.get("player") or {}).get("puuid") or row.get("puuid") or "") == puuid
+            ),
+            identities[0] if identities else None,
+        )
+        participant_id = identity.get("participantId") if identity else None
+        participant = next(
+            (p for p in (game.get("participants") or []) if p.get("participantId") == participant_id), None
+        )
+        if not participant:
+            continue
+        stats = participant.get("stats") or {}
+        champion_id = int(participant.get("championId") or 0)
+        normalized.append(
+            {
+                "game_id": game.get("gameId"),
+                "played_at": game.get("gameCreationDate") or game.get("gameCreation"),
+                "duration_seconds": game.get("gameDuration"),
+                "game_mode": game.get("gameMode"),
+                "queue_id": game.get("queueId"),
+                "champion_id": champion_id,
+                "champion_name": names.get(champion_id, str(champion_id)),
+                "spell1_id": participant.get("spell1Id"),
+                "spell2_id": participant.get("spell2Id"),
+                "kills": stats.get("kills", 0),
+                "deaths": stats.get("deaths", 0),
+                "assists": stats.get("assists", 0),
+                "win": bool(stats.get("win")),
+                "cs": int(stats.get("totalMinionsKilled", 0)) + int(stats.get("neutralMinionsKilled", 0)),
+                "gold": stats.get("goldEarned", 0),
+                "damage": stats.get("totalDamageDealtToChampions", 0),
+                "items": [stats.get(f"item{i}") for i in range(7) if stats.get(f"item{i}")],
+            }
+        )
+    return normalized
+
+
 @router.get("/status")
 async def league_lab_status():
     return await league_lab_service.snapshot()
@@ -883,27 +958,125 @@ async def league_match_history(limit: int = 20):
         names = await _champion_names()
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    games = ((payload or {}).get("games") or {}).get("games") or []
-    normalized = []
-    for game in games:
-        identities = game.get("participantIdentities") or []
-        participant_id = identities[0].get("participantId") if identities else None
-        participant = next((p for p in (game.get("participants") or []) if p.get("participantId") == participant_id), None)
-        if not participant:
-            continue
-        stats = participant.get("stats") or {}
-        champion_id = int(participant.get("championId") or 0)
-        normalized.append({
-            "game_id": game.get("gameId"), "played_at": game.get("gameCreationDate") or game.get("gameCreation"),
-            "duration_seconds": game.get("gameDuration"), "game_mode": game.get("gameMode"), "queue_id": game.get("queueId"),
-            "champion_id": champion_id, "champion_name": names.get(champion_id, str(champion_id)),
-            "spell1_id": participant.get("spell1Id"), "spell2_id": participant.get("spell2Id"),
-            "kills": stats.get("kills", 0), "deaths": stats.get("deaths", 0), "assists": stats.get("assists", 0),
-            "win": bool(stats.get("win")), "cs": int(stats.get("totalMinionsKilled", 0)) + int(stats.get("neutralMinionsKilled", 0)),
-            "gold": stats.get("goldEarned", 0), "damage": stats.get("totalDamageDealtToChampions", 0),
-            "items": [stats.get(f"item{i}") for i in range(7) if stats.get(f"item{i}")],
-        })
+    normalized = _normalize_match_rows(payload, names)
     return {"matches": normalized, "count": len(normalized)}
+
+
+@router.get("/players/current")
+async def current_league_player():
+    try:
+        summoner = await league_lab_service.request("GET", "/lol-summoner/v1/current-summoner")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return await _load_player_bundle(summoner)
+
+
+@router.get("/players/{puuid}")
+async def league_player_bundle(puuid: str, match_limit: int = 20):
+    try:
+        summoner = await league_lab_service.request("GET", f"/lol-summoner/v2/summoners/puuid/{puuid}")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return await _load_player_bundle(summoner, match_limit=max(1, min(match_limit, 40)))
+
+
+async def _load_player_bundle(summoner, match_limit: int = 20) -> dict:
+    if not isinstance(summoner, dict) or not summoner.get("puuid"):
+        raise HTTPException(status_code=404, detail="未找到召唤师")
+    puuid = str(summoner["puuid"])
+
+    async def optional(method: str, path: str, **kwargs):
+        try:
+            return await league_lab_service.request(method, path, **kwargs)
+        except RuntimeError:
+            return None
+
+    ranked, mastery, history, names = await asyncio.gather(
+        optional("GET", f"/lol-ranked/v1/ranked-stats/{puuid}"),
+        optional("POST", f"/lol-champion-mastery/v1/{puuid}/champion-mastery/top", json_body={"skipCache": True}, params={"count": 10}),
+        optional(
+            "GET",
+            f"/lol-match-history/v1/products/lol/{puuid}/matches",
+            params={"begIndex": 0, "endIndex": match_limit - 1},
+        ),
+        _champion_names(),
+    )
+    tags = _read_player_tags().get(puuid) or {}
+    return {
+        "summoner": {
+            "puuid": puuid,
+            "game_name": summoner.get("gameName") or summoner.get("displayName"),
+            "tag_line": summoner.get("tagLine") or "",
+            "summoner_level": summoner.get("summonerLevel"),
+            "profile_icon_id": summoner.get("profileIconId"),
+        },
+        "ranked": ranked or {},
+        "mastery": mastery or {},
+        "matches": _normalize_match_rows(history or {}, names, puuid),
+        "tag": tags,
+    }
+
+
+class PlayerTagBody(BaseModel):
+    label: str = Field(default="", max_length=40)
+    note: str = Field(default="", max_length=500)
+    color: str = Field(default="emerald", max_length=24)
+
+
+@router.put("/players/{puuid}/tag")
+async def save_league_player_tag(puuid: str, body: PlayerTagBody):
+    tags = _read_player_tags()
+    if body.label or body.note:
+        tags[puuid] = body.model_dump()
+    else:
+        tags.pop(puuid, None)
+    _write_player_tags(tags)
+    return {"puuid": puuid, "tag": tags.get(puuid)}
+
+
+@router.get("/ongoing-game")
+async def league_ongoing_game():
+    try:
+        gameflow = await league_lab_service.request("GET", "/lol-gameflow/v1/session")
+        names = await _champion_names()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    game_data = (gameflow or {}).get("gameData") or {}
+    selections = game_data.get("playerChampionSelections") or []
+    players = []
+    for row in selections:
+        if not isinstance(row, dict):
+            continue
+        puuid = str(row.get("puuid") or row.get("playerPuuid") or "")
+        summoner = None
+        ranked = None
+        if puuid:
+            try:
+                summoner, ranked = await asyncio.gather(
+                    league_lab_service.request("GET", f"/lol-summoner/v2/summoners/puuid/{puuid}"),
+                    league_lab_service.request("GET", f"/lol-ranked/v1/ranked-stats/{puuid}"),
+                )
+            except RuntimeError:
+                pass
+        champion_id = int(row.get("championId") or 0)
+        players.append(
+            {
+                "puuid": puuid,
+                "team": row.get("team") or row.get("teamId"),
+                "champion_id": champion_id,
+                "champion_name": names.get(champion_id, str(champion_id)),
+                "summoner": summoner or {},
+                "ranked": ranked or {},
+                "tag": _read_player_tags().get(puuid) or {},
+            }
+        )
+    return {
+        "phase": league_lab_service.phase,
+        "queue": game_data.get("queue") or {},
+        "game_id": game_data.get("gameId"),
+        "players": players,
+        "available": bool(players),
+    }
 
 
 @router.get("/champions")

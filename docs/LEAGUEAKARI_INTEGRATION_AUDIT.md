@@ -35,6 +35,8 @@ This document prevents the League integration from becoming a collection of unre
 - LCU `OnJsonApiEvent` WebSocket subscription with authenticated local event wakeups; timed polling remains only as recovery/fallback.
 - LeagueAkari-equivalent automatic matchmaking gates: leader check, minimum members, pending invitees, penalty wait, start delay and fixed/estimated rematch cancellation.
 - All upstream honor strategies: prefer lobby members, lobby-only, allies, allies plus opponents, and automatic opt-out.
+- Player center foundation: current/cross-player summoner profile, ranked queues, top mastery, recent matches and durable local player tags.
+- Ongoing-game foundation: current Gameflow teams, champion assignments, ranked/profile enrichment, local tags and click-through to player details.
 
 ### Partially implemented; upstream behavior is richer
 
@@ -42,16 +44,16 @@ This document prevents the League integration from becoming a collection of unre
 - Champion config: data model supports saved loadouts, but the editor still uses numeric IDs instead of upstream champion/rune/spell galleries and position presets.
 - Honor: strategy parity is implemented; the UI intentionally keeps the feature opt-in and disabled by default.
 - Invitations: per-type strategy, priority ordering and away gating are implemented; the UI still needs the complete upstream dynamic invite-type catalog.
-- Match history: core rows exist; upstream includes player tabs, summaries, ranked/mastery/challenges, detailed cards, pagination and composable filters.
+- Match history: current and cross-player rows, ranked/mastery summary and local tags exist; upstream-level challenges, detailed cards, pagination and composable filters remain.
 - Mini window: phase-driven show/hide, safe manual close and a dedicated `mini.html` entry are implemented; skin selection, bench controls, action countdowns and all auxiliary cards remain.
 
 ### Not implemented yet
 
 - ARAM team-side messaging.
 - Automatic reply and automatic invitations.
-- SGP-backed historical analysis and cross-player lookup.
-- Ongoing-game scouting, premade detection, player tags, champion usage and jungle-path analysis.
-- Recently encountered players and reusable saved-player/tag storage.
+- SGP-backed historical analysis and name/tag cross-player lookup (LCU PUUID lookup works now).
+- Ongoing-game premade detection, champion-usage rates and jungle-path analysis (live team/profile cards work now).
+- Recently encountered player indexing (reusable saved-player/tag storage works now).
 - Match-history advanced filters, collect mode and multi-source fallback.
 - Respawn timer and the ongoing-game/OP.GG/auxiliary overlay windows.
 - Champion skin selector auxiliary window.
