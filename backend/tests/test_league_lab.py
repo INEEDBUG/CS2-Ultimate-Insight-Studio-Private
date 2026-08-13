@@ -24,13 +24,18 @@ def test_parse_league_client_command_line_rejects_incomplete_input():
 
 
 def test_discovery_uses_thread_compatible_subprocess(monkeypatch):
-    command = b'LeagueClientUx.exe --app-port=54321 --remoting-auth-token=memory_only'
+    command = b"1234\r\n"
 
     def fake_run(*args, **kwargs):
         return subprocess.CompletedProcess(args[0], 0, stdout=command)
 
     monkeypatch.setattr(league_lab.os, "name", "nt")
     monkeypatch.setattr(league_lab.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        league_lab,
+        "_read_windows_process_command_line",
+        lambda pid: 'LeagueClientUx.exe --app-port=54321 --remoting-auth-token=memory_only' if pid == 1234 else "",
+    )
     parsed = asyncio.run(league_lab.discover_lcu_credentials())
     assert parsed is not None
     assert parsed.port == 54321
@@ -87,3 +92,46 @@ def test_play_again_waits_for_phase_buffer(monkeypatch):
     service._phase_action_due_at = 0
     asyncio.run(service._run_automation())
     assert calls == [("已自动返回房间", "POST", "/lol-lobby/v2/play-again")]
+
+
+def test_auto_select_uses_the_first_available_preference(monkeypatch):
+    service = LeagueLabService()
+    service.settings = LeagueLabSettings(
+        automation_enabled=True,
+        auto_select_enabled=True,
+        auto_pick_champion_ids=[157, 103],
+        champion_action_delay_seconds=0,
+    )
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if path == "/lol-champ-select/v1/session":
+            return {"localPlayerCellId": 2, "actions": [[{"id": 8, "actorCellId": 2, "type": "pick", "isInProgress": True}]]}
+        if path == "/lol-champ-select/v1/pickable-champion-ids":
+            return [103]
+        calls.append((method, path, json_body))
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(service._run_auto_select())
+    asyncio.run(service._run_auto_select())
+
+    assert calls == [("PATCH", "/lol-champ-select/v1/session/actions/8", {"championId": 103, "type": "pick", "completed": True})]
+
+
+def test_auto_honor_submits_votes_and_finishes_ballot(monkeypatch):
+    service = LeagueLabService()
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if method == "GET":
+            return {"gameId": 77, "votePool": {"votes": 1}, "eligibleAllies": [{"puuid": "ally", "botPlayer": False}], "eligibleOpponents": []}
+        calls.append((method, path, json_body))
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(service._run_auto_honor())
+    asyncio.run(service._run_auto_honor())
+
+    assert calls == [
+        ("POST", "/lol-honor/v1/honor", {"honorType": "COOL", "recipientPuuid": "ally"}),
+        ("POST", "/lol-honor/v1/ballot", None),
+    ]

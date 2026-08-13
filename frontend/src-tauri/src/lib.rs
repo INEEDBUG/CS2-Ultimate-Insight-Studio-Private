@@ -15,7 +15,7 @@ use std::{
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, RunEvent, State, WindowEvent,
+    AppHandle, Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
@@ -23,6 +23,29 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use std::os::windows::process::CommandExt;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[tauri::command]
+fn open_league_mini(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("league-mini") {
+        window.show().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(
+        &app,
+        "league-mini",
+        WebviewUrl::App("index.html?window=league-mini".into()),
+    )
+    .title("Insight · League Mini")
+    .inner_size(340.0, 480.0)
+    .min_inner_size(300.0, 380.0)
+    .resizable(true)
+    .decorations(true)
+    .always_on_top(true)
+    .build()
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
 
 struct BackendProcess {
     child: Mutex<Option<ManagedBackend>>,
@@ -491,7 +514,8 @@ pub fn run() {
             set_close_action,
             get_close_action,
             hide_to_tray,
-            quit_app
+            quit_app,
+            open_league_mini
         ])
         .setup(|app| {
             let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;

@@ -1,163 +1,35 @@
-import { useCallback, useEffect, useState } from "react";
-import {
-  CheckCircle2,
-  Gamepad2,
-  Loader2,
-  Play,
-  RefreshCw,
-  RotateCcw,
-  ShieldCheck,
-  Users,
-  WifiOff,
-} from "lucide-react";
-import { fetchLeagueLabStatus, runLeagueLabAction, saveLeagueLabSettings } from "../api/leagueLabApi";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { CheckCircle2, Gamepad2, History, Loader2, MonitorUp, RefreshCw, ShieldCheck, SlidersHorizontal, Sparkles, Swords, WifiOff } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { fetchLeagueLabStatus, fetchLeagueMatches, runLeagueLabAction, saveLeagueLabSettings } from "../api/leagueLabApi";
 
-const DEFAULT_SETTINGS = {
-  automation_enabled: false,
-  auto_accept_enabled: false,
-  auto_accept_delay_seconds: 1,
-  play_again_enabled: false,
-  auto_reconnect_enabled: false,
-  invitation_strategy: "ignore",
-};
+const DEFAULT_SETTINGS = { automation_enabled:false, auto_accept_enabled:false, auto_accept_delay_seconds:1, play_again_enabled:false, auto_reconnect_enabled:false, invitation_strategy:"ignore", auto_select_enabled:false, auto_pick_champion_ids:[], auto_ban_champion_ids:[], champion_action_delay_seconds:1, champion_lock_in:true, auto_champion_config_enabled:false, champion_loadouts:[], auto_honor_enabled:false };
+const numberList = (value) => String(value || "").split(/[,，\s]+/).map(Number).filter((item) => Number.isInteger(item) && item > 0);
 
-function ToggleRow({ title, description, checked, onChange, children }) {
-  return (
-    <div className="flex min-h-[68px] items-center gap-4 border-b border-cs2-border-subtle px-4 py-3 last:border-b-0">
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-semibold text-cs2-text-primary">{title}</div>
-        <div className="mt-1 text-xs leading-5 text-cs2-text-muted">{description}</div>
-      </div>
-      {children}
-      <button
-        type="button"
-        role="switch"
-        aria-label={title}
-        aria-checked={checked}
-        onClick={() => onChange(!checked)}
-        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-150 ${checked ? "bg-emerald-500" : "bg-cs2-bg-input"}`}
-      >
-        <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow transition-transform duration-150 ${checked ? "translate-x-6" : "translate-x-1"}`} />
-      </button>
-    </div>
-  );
+function Switch({ title, description, checked, onChange, children }) {
+  return <div className="flex min-h-[70px] items-center gap-4 border-b border-cs2-border-subtle px-4 py-3 last:border-b-0"><div className="min-w-0 flex-1"><div className="text-sm font-semibold text-cs2-text-primary">{title}</div><div className="mt-1 text-xs leading-5 text-cs2-text-muted">{description}</div></div>{children}<button type="button" role="switch" aria-label={title} aria-checked={checked} onClick={() => onChange(!checked)} className={`relative h-6 w-11 shrink-0 appearance-none rounded-full p-0 transition-colors duration-150 active:scale-[.97] ${checked ? "bg-emerald-500" : "bg-cs2-bg-input"}`}><span className={`absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-150 ${checked ? "translate-x-5" : "translate-x-0"}`} /></button></div>;
 }
 
+function Field({ label, value, onChange, placeholder }) { return <label className="block"><span className="mb-1.5 block text-xs font-semibold text-cs2-text-secondary">{label}</span><input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="w-full rounded-xl border border-cs2-border bg-cs2-bg-input px-3 py-2.5 text-sm text-cs2-text-primary outline-none transition-colors focus:border-emerald-400/50" /></label>; }
+
 export default function LeagueAutomationLabPage() {
-  const [status, setStatus] = useState(null);
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  const load = useCallback(async () => {
-    try {
-      const next = await fetchLeagueLabStatus();
-      setStatus(next);
-      setSettings({ ...DEFAULT_SETTINGS, ...(next.settings || {}) });
-      setError("");
-    } catch (requestError) {
-      setError(requestError?.response?.data?.detail || "无法读取英雄联盟客户端状态");
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-    const timer = window.setInterval(load, 4_000);
-    return () => window.clearInterval(timer);
-  }, [load]);
-
-  const update = async (patch) => {
-    const nextSettings = { ...settings, ...patch };
-    setSettings(nextSettings);
-    setBusy(true);
-    try {
-      const next = await saveLeagueLabSettings(nextSettings);
-      setStatus(next);
-      setError("");
-    } catch (requestError) {
-      setError(requestError?.response?.data?.detail || "设置保存失败");
-      await load();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const runAction = async (action) => {
-    setBusy(true);
-    try {
-      setStatus(await runLeagueLabAction(action));
-      setError("");
-    } catch (requestError) {
-      setError(requestError?.response?.data?.detail || "LCU 操作失败");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const connected = Boolean(status?.connected);
-  return (
-    <div className="mx-auto w-full max-w-[1180px] space-y-5 px-7 py-7">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-emerald-400/25 bg-emerald-400/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-300">
-            <Gamepad2 className="h-3.5 w-3.5" /> League Automation Lab
-          </div>
-          <h1 className="text-2xl font-bold tracking-[-0.03em] text-cs2-text-primary">英雄联盟自动化实验室</h1>
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-cs2-text-secondary">无需切换软件。本页直接连接本机 LeagueClientUx 的 LCU 接口，令牌仅保存在内存中，不会写入磁盘或上传。</p>
-        </div>
-        <button type="button" onClick={load} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border border-cs2-border px-3 py-2 text-xs font-semibold text-cs2-text-secondary transition hover:bg-cs2-bg-hover disabled:opacity-50">
-          <RefreshCw className={`h-4 w-4 ${busy ? "animate-spin" : ""}`} /> 重新检测
-        </button>
-      </header>
-
-      <section className={`rounded-2xl border p-4 ${connected ? "border-emerald-400/30 bg-emerald-400/[0.07]" : "border-amber-400/30 bg-amber-400/[0.06]"}`}>
-        <div className="flex items-center gap-3">
-          <span className={`grid h-10 w-10 place-items-center rounded-xl ${connected ? "bg-emerald-400/15 text-emerald-300" : "bg-amber-400/15 text-amber-300"}`}>
-            {connected ? <CheckCircle2 className="h-5 w-5" /> : <WifiOff className="h-5 w-5" />}
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="font-semibold text-cs2-text-primary">{connected ? `已连接：${status?.summoner_name || "League Client"}` : "尚未检测到英雄联盟客户端"}</div>
-            <div className="mt-1 text-xs text-cs2-text-muted">{connected ? `阶段：${status?.phase || "Unknown"} · ${status?.platform_id || status?.region || "本地区服"}` : "请先启动并登录英雄联盟客户端；连接成功后自动化才会执行。"}</div>
-          </div>
-          {busy && <Loader2 className="h-4 w-4 animate-spin text-cs2-accent" />}
-        </div>
-      </section>
-
-      {error && <div className="rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-300">{error}</div>}
-
-      <section className="overflow-hidden rounded-2xl border border-cs2-border bg-cs2-bg-elevated">
-        <ToggleRow title="启用英雄联盟自动化" description="总开关。关闭后仅显示客户端状态，不会执行任何 LCU 写入操作。" checked={settings.automation_enabled} onChange={(value) => update({ automation_enabled: value })} />
-        <ToggleRow title="自动接受对局" description="进入 ReadyCheck 后按设定延迟自动接受。" checked={settings.auto_accept_enabled} onChange={(value) => update({ auto_accept_enabled: value })}>
-          <label className="flex items-center gap-2 text-xs text-cs2-text-muted">
-            延迟
-            <input type="number" min="0" max="10" step="0.5" value={settings.auto_accept_delay_seconds} onChange={(event) => update({ auto_accept_delay_seconds: Number(event.target.value) })} className="w-16 rounded-lg border border-cs2-border bg-cs2-bg-input px-2 py-1.5 font-mono text-cs2-text-primary outline-none" /> 秒
-          </label>
-        </ToggleRow>
-        <ToggleRow title="自动返回房间" description="结算阶段结束后调用 LCU 返回房间，不依赖鼠标模拟点击。" checked={settings.play_again_enabled} onChange={(value) => update({ play_again_enabled: value })} />
-        <ToggleRow title="自动重新连接" description="客户端进入 Reconnect 阶段时尝试重新连接游戏。" checked={settings.auto_reconnect_enabled} onChange={(value) => update({ auto_reconnect_enabled: value })} />
-        <div className="flex min-h-[76px] items-center gap-4 px-4 py-3">
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-cs2-text-primary">房间邀请策略</div>
-            <div className="mt-1 text-xs leading-5 text-cs2-text-muted">收到邀请时自动接受、拒绝或保持不处理。</div>
-          </div>
-          <select value={settings.invitation_strategy} onChange={(event) => update({ invitation_strategy: event.target.value })} className="rounded-xl border border-cs2-border bg-cs2-bg-input px-3 py-2 text-xs font-semibold text-cs2-text-primary outline-none">
-            <option value="ignore">不处理</option>
-            <option value="accept">自动接受</option>
-            <option value="decline">自动拒绝</option>
-          </select>
-        </div>
-      </section>
-
-      <section className="grid gap-3 md:grid-cols-3">
-        <button type="button" disabled={!connected || busy} onClick={() => runAction("accept")} className="flex items-center gap-3 rounded-2xl border border-cs2-border bg-cs2-bg-elevated p-4 text-left transition hover:-translate-y-0.5 hover:border-emerald-400/30 disabled:pointer-events-none disabled:opacity-40"><Play className="h-5 w-5 text-emerald-300" /><span><span className="block text-sm font-semibold text-cs2-text-primary">立即接受</span><span className="mt-1 block text-xs text-cs2-text-muted">用于 ReadyCheck 阶段</span></span></button>
-        <button type="button" disabled={!connected || busy} onClick={() => runAction("play-again")} className="flex items-center gap-3 rounded-2xl border border-cs2-border bg-cs2-bg-elevated p-4 text-left transition hover:-translate-y-0.5 hover:border-emerald-400/30 disabled:pointer-events-none disabled:opacity-40"><Users className="h-5 w-5 text-sky-300" /><span><span className="block text-sm font-semibold text-cs2-text-primary">返回房间</span><span className="mt-1 block text-xs text-cs2-text-muted">跳过结算后的等待</span></span></button>
-        <button type="button" disabled={!connected || busy} onClick={() => runAction("reconnect")} className="flex items-center gap-3 rounded-2xl border border-cs2-border bg-cs2-bg-elevated p-4 text-left transition hover:-translate-y-0.5 hover:border-emerald-400/30 disabled:pointer-events-none disabled:opacity-40"><RotateCcw className="h-5 w-5 text-violet-300" /><span><span className="block text-sm font-semibold text-cs2-text-primary">立即重连</span><span className="mt-1 block text-xs text-cs2-text-muted">用于 Reconnect 阶段</span></span></button>
-      </section>
-
-      <div className="flex items-start gap-3 rounded-2xl border border-cs2-border-subtle bg-cs2-bg-elevated/60 p-4 text-xs leading-5 text-cs2-text-muted">
-        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" />
-        <p>首批迁移的是低风险游戏流程功能。自动英雄选择、符文/召唤师技能配置与自动点赞会在确认不同区服 LCU 数据结构后继续加入，避免先放出无效开关。</p>
-      </div>
-    </div>
-  );
+  const [status,setStatus]=useState(null),[settings,setSettings]=useState(DEFAULT_SETTINGS),[busy,setBusy]=useState(false),[error,setError]=useState(""),[tab,setTab]=useState("flow"),[matches,setMatches]=useState([]);
+  const [draft,setDraft]=useState({champion_id:"",primary_style_id:"",sub_style_id:"",selected_perk_ids:"",spell1_id:"",spell2_id:""});
+  const load=useCallback(async()=>{try{const next=await fetchLeagueLabStatus();setStatus(next);setSettings({...DEFAULT_SETTINGS,...(next.settings||{})});setError("");}catch(e){setError(e?.response?.data?.detail||"无法读取英雄联盟客户端状态");}},[]);
+  useEffect(()=>{load();const timer=setInterval(load,3000);return()=>clearInterval(timer);},[load]);
+  const update=async(patch)=>{const next={...settings,...patch};setSettings(next);setBusy(true);try{setStatus(await saveLeagueLabSettings(next));setError("");}catch(e){setError(e?.response?.data?.detail||"设置保存失败");await load();}finally{setBusy(false);}};
+  const loadMatches=async()=>{setBusy(true);try{const data=await fetchLeagueMatches(20);setMatches(data.matches||[]);setError("");}catch(e){setError(e?.response?.data?.detail||"战绩读取失败");}finally{setBusy(false);}};
+  useEffect(()=>{if(tab==="history")loadMatches();},[tab]);
+  const addLoadout=()=>{const loadout={champion_id:Number(draft.champion_id),primary_style_id:Number(draft.primary_style_id),sub_style_id:Number(draft.sub_style_id),selected_perk_ids:numberList(draft.selected_perk_ids),spell1_id:Number(draft.spell1_id),spell2_id:Number(draft.spell2_id)};if(Object.entries(loadout).some(([key,value])=>key!=="selected_perk_ids"&&(!value||Number.isNaN(value)))){setError("请完整填写英雄、符文系与两个召唤师技能 ID");return;}update({champion_loadouts:[...settings.champion_loadouts.filter((item)=>item.champion_id!==loadout.champion_id),loadout]});setDraft({champion_id:"",primary_style_id:"",sub_style_id:"",selected_perk_ids:"",spell1_id:"",spell2_id:""});};
+  const connected=Boolean(status?.connected), tabs=useMemo(()=>[{id:"flow",label:"游戏流程",icon:SlidersHorizontal},{id:"champion",label:"英雄与配置",icon:Swords},{id:"history",label:"战绩",icon:History}],[]);
+  return <div className="mx-auto w-full max-w-[1220px] space-y-5 overflow-y-auto px-7 py-7">
+    <header className="flex flex-wrap items-start justify-between gap-4"><div><div className="mb-2 inline-flex items-center gap-2 rounded-full border border-emerald-400/25 bg-emerald-400/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[.16em] text-emerald-300"><Gamepad2 className="h-3.5 w-3.5"/> League Automation Lab</div><h1 className="text-2xl font-bold tracking-[-.03em] text-cs2-text-primary">英雄联盟实验室</h1><p className="mt-1 text-sm text-cs2-text-secondary">连接 LeagueClientUx，自动处理对局流程并直接查看本机账号战绩。</p></div><div className="flex gap-2"><button onClick={()=>invoke("open_league_mini")} className="inline-flex items-center gap-2 rounded-xl border border-cs2-border px-3 py-2 text-xs font-semibold text-cs2-text-secondary active:scale-[.97]"><MonitorUp className="h-4 w-4"/> 打开 Mini 面板</button><button onClick={load} className="inline-flex items-center gap-2 rounded-xl border border-cs2-border px-3 py-2 text-xs font-semibold text-cs2-text-secondary active:scale-[.97]"><RefreshCw className={`h-4 w-4 ${busy?"animate-spin":""}`}/> 重新检测</button></div></header>
+    <section className={`rounded-2xl border p-4 ${connected?"border-emerald-400/30 bg-emerald-400/[.07]":"border-amber-400/30 bg-amber-400/[.06]"}`}><div className="flex items-center gap-3"><span className={`grid h-10 w-10 place-items-center rounded-xl ${connected?"bg-emerald-400/15 text-emerald-300":"bg-amber-400/15 text-amber-300"}`}>{connected?<CheckCircle2 className="h-5 w-5"/>:<WifiOff className="h-5 w-5"/>}</span><div className="flex-1"><div className="font-semibold text-cs2-text-primary">{connected?`已连接：${status?.summoner_name||"League Client"}`:"尚未检测到英雄联盟客户端"}</div><div className="mt-1 text-xs text-cs2-text-muted">{connected?`阶段：${status?.phase||"Unknown"} · ${status?.platform_id||status?.region||"本地区服"}`:"支持 WeGame/Tencent 与 Riot 客户端；请先完成登录。"}</div></div>{status?.last_action&&<div className="text-right text-xs text-emerald-300"><div>最近操作</div><div className="mt-1 font-semibold">{status.last_action}</div></div>}</div></section>
+    {error&&<div className="rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-300">{error}</div>}
+    <nav className="flex w-fit rounded-xl border border-cs2-border bg-cs2-bg-elevated p-1">{tabs.map(({id,label,icon:Icon})=><button key={id} onClick={()=>setTab(id)} className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-colors ${tab===id?"bg-emerald-400/15 text-emerald-300":"text-cs2-text-muted hover:text-cs2-text-primary"}`}><Icon className="h-4 w-4"/>{label}</button>)}</nav>
+    {tab==="flow"&&<><section className="overflow-hidden rounded-2xl border border-cs2-border bg-cs2-bg-elevated"><Switch title="启用英雄联盟自动化" description="总开关；关闭时只读取状态和战绩。" checked={settings.automation_enabled} onChange={(v)=>update({automation_enabled:v})}/><Switch title="自动接受对局" description="进入 ReadyCheck 后按设定延迟接受。" checked={settings.auto_accept_enabled} onChange={(v)=>update({auto_accept_enabled:v})}><label className="flex items-center gap-2 text-xs text-cs2-text-muted">延迟<input type="number" value={settings.auto_accept_delay_seconds} onChange={(e)=>update({auto_accept_delay_seconds:Number(e.target.value)})} className="w-16 rounded-lg border border-cs2-border bg-cs2-bg-input px-2 py-1.5"/>秒</label></Switch><Switch title="自动点赞" description="结算时优先为符合条件的队友点赞。" checked={settings.auto_honor_enabled} onChange={(v)=>update({auto_honor_enabled:v})}/><Switch title="自动返回房间" description="结算完成后通过 LCU 返回房间。" checked={settings.play_again_enabled} onChange={(v)=>update({play_again_enabled:v})}/><Switch title="自动重新连接" description="进入 Reconnect 阶段后尝试重新连接。" checked={settings.auto_reconnect_enabled} onChange={(v)=>update({auto_reconnect_enabled:v})}/><div className="flex min-h-[70px] items-center gap-4 px-4 py-3"><div className="flex-1"><div className="text-sm font-semibold">房间邀请策略</div><div className="mt-1 text-xs text-cs2-text-muted">接受、拒绝或保持不处理。</div></div><select value={settings.invitation_strategy} onChange={(e)=>update({invitation_strategy:e.target.value})} className="rounded-xl border border-cs2-border bg-cs2-bg-input px-3 py-2 text-xs"><option value="ignore">不处理</option><option value="accept">自动接受</option><option value="decline">自动拒绝</option></select></div></section><div className="grid gap-3 md:grid-cols-3">{[["accept","立即接受"],["play-again","返回房间"],["reconnect","立即重连"]].map(([action,label])=><button key={action} disabled={!connected||busy} onClick={()=>runLeagueLabAction(action)} className="rounded-2xl border border-cs2-border bg-cs2-bg-elevated p-4 text-left text-sm font-semibold transition-colors hover:border-emerald-400/30 active:scale-[.98] disabled:opacity-40">{label}</button>)}</div></>}
+    {tab==="champion"&&<div className="space-y-4"><section className="overflow-hidden rounded-2xl border border-cs2-border bg-cs2-bg-elevated"><Switch title="自动英雄选择/禁用" description="按优先级选择第一个当前可用英雄，并可自动锁定。" checked={settings.auto_select_enabled} onChange={(v)=>update({auto_select_enabled:v})}/><div className="grid gap-4 p-4 md:grid-cols-2"><Field label="优先选择英雄 ID" value={settings.auto_pick_champion_ids.join(", ")} onChange={(v)=>setSettings({...settings,auto_pick_champion_ids:numberList(v)})} placeholder="例如 157, 103, 238"/><Field label="优先禁用英雄 ID" value={settings.auto_ban_champion_ids.join(", ")} onChange={(v)=>setSettings({...settings,auto_ban_champion_ids:numberList(v)})} placeholder="例如 122, 555"/><button onClick={()=>update(settings)} className="rounded-xl bg-emerald-500/15 px-4 py-2.5 text-sm font-semibold text-emerald-300 active:scale-[.98]">保存选择优先级</button></div><Switch title="自动锁定英雄" description="关闭时只预选，仍由你手动确认。" checked={settings.champion_lock_in} onChange={(v)=>update({champion_lock_in:v})}/></section><section className="rounded-2xl border border-cs2-border bg-cs2-bg-elevated p-4"><Switch title="自动配置符文与召唤师技能" description="英雄确认后应用对应的本地配置。" checked={settings.auto_champion_config_enabled} onChange={(v)=>update({auto_champion_config_enabled:v})}/><div className="mt-4 grid gap-3 md:grid-cols-3"><Field label="英雄 ID" value={draft.champion_id} onChange={(v)=>setDraft({...draft,champion_id:v})}/><Field label="主系 ID" value={draft.primary_style_id} onChange={(v)=>setDraft({...draft,primary_style_id:v})}/><Field label="副系 ID" value={draft.sub_style_id} onChange={(v)=>setDraft({...draft,sub_style_id:v})}/><Field label="符文 ID（逗号分隔）" value={draft.selected_perk_ids} onChange={(v)=>setDraft({...draft,selected_perk_ids:v})}/><Field label="召唤师技能 1 ID" value={draft.spell1_id} onChange={(v)=>setDraft({...draft,spell1_id:v})}/><Field label="召唤师技能 2 ID" value={draft.spell2_id} onChange={(v)=>setDraft({...draft,spell2_id:v})}/></div><button onClick={addLoadout} className="mt-4 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-black active:scale-[.98]">添加/替换英雄配置</button><div className="mt-4 grid gap-2">{settings.champion_loadouts.map((item)=><div key={item.champion_id} className="flex items-center justify-between rounded-xl border border-cs2-border-subtle px-3 py-2 text-xs"><span>英雄 {item.champion_id} · 符文 {item.primary_style_id}/{item.sub_style_id} · 技能 {item.spell1_id}/{item.spell2_id}</span><button onClick={()=>update({champion_loadouts:settings.champion_loadouts.filter((v)=>v.champion_id!==item.champion_id)})} className="text-red-300">删除</button></div>)}</div></section></div>}
+    {tab==="history"&&<section className="space-y-3"><div className="flex justify-between"><div><h2 className="font-bold">最近战绩</h2><p className="mt-1 text-xs text-cs2-text-muted">直接读取当前登录账号的 LCU 战绩，无需打开其他软件。</p></div><button onClick={loadMatches} className="rounded-xl border border-cs2-border px-3 py-2 text-xs">刷新战绩</button></div>{matches.map((m)=><article key={m.game_id} className={`grid grid-cols-[5px_1fr_auto] overflow-hidden rounded-2xl border border-cs2-border bg-cs2-bg-elevated ${m.win?"border-emerald-400/20":"border-rose-400/20"}`}><div className={m.win?"bg-emerald-400":"bg-rose-400"}/><div className="p-4"><div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-white/5 text-sm font-bold">{m.champion_id}</span><div><div className="font-bold">{m.champion_name} · {m.win?"胜利":"失败"}</div><div className="mt-1 text-xs text-cs2-text-muted">{m.game_mode} · {m.played_at||"时间未知"}</div></div></div></div><div className="flex items-center gap-6 p-4 text-right"><div><div className="font-mono text-lg font-bold">{m.kills}/{m.deaths}/{m.assists}</div><div className="text-[11px] text-cs2-text-muted">K / D / A</div></div><div><div className="font-mono text-sm font-bold">{m.damage}</div><div className="text-[11px] text-cs2-text-muted">英雄伤害</div></div></div></article>)}{!busy&&matches.length===0&&<div className="rounded-2xl border border-dashed border-cs2-border p-12 text-center text-sm text-cs2-text-muted">连接客户端后即可读取最近战绩</div>}</section>}
+    <div className="flex items-start gap-3 rounded-2xl border border-cs2-border-subtle bg-cs2-bg-elevated/60 p-4 text-xs leading-5 text-cs2-text-muted"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300"/><p>功能通过本机 League LCU 完成；认证令牌只保存在进程内存，不写入配置、不上传。自动操作受游戏版本和区服接口变动影响，首次使用建议先关闭自动锁定观察一局。</p></div>
+  </div>;
 }

@@ -75,6 +75,7 @@ const MatchHistoryPage = lazy(() => import("./pages/MatchHistoryPage"));
 const SensitivityLabPage = lazy(() => import("./pages/SensitivityLabPage"));
 const MagneticInputLabPage = lazy(() => import("./pages/MagneticInputLabPage"));
 const LeagueAutomationLabPage = lazy(() => import("./pages/LeagueAutomationLabPage"));
+const LeagueMiniPanel = lazy(() => import("./pages/LeagueMiniPanel"));
 const ObsAiTuningPreviewPage = lazy(() => import("./pages/ObsAiTuningPreviewPage"));
 const ObsAiEntryPreviewPage = lazy(() => import("./pages/ObsAiEntryPreviewPage"));
 
@@ -3303,6 +3304,10 @@ export default function App() {
     "/obs-ai-preview",
     "/obs-ai-entry-preview",
   ].includes(location.pathname);
+
+  if (new URLSearchParams(location.search).get("window") === "league-mini") {
+    return <Suspense fallback={<div className="h-screen bg-[#111214]" />}><LeagueMiniPanel /></Suspense>;
+  }
 
   return (
     <AppShellProvider value={shell}>
