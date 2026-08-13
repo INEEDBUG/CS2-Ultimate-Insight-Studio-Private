@@ -113,6 +113,7 @@ class LeagueLabSettings(BaseModel):
     auto_invite_friend_puuids: list[str] = Field(default_factory=list, max_length=20)
     mini_enabled: bool = True
     mini_auto_show: bool = True
+    respawn_timer_enabled: bool = False
 
 
 class ChampionLoadout(BaseModel):
@@ -250,6 +251,7 @@ class LeagueLabService:
         self._last_event_at = 0.0
         self._aram_side_sent_context = ""
         self.champ_select: dict = {}
+        self.respawn_timer: dict = {"available": False, "dead": False, "time_left": 0.0, "total_time": 0.0}
         self._last_discovery_at = 0.0
 
     @staticmethod
@@ -463,6 +465,7 @@ class LeagueLabService:
             "last_event_at": self._last_event_at or None,
             "matchmaking_status": self._matchmaking_status,
             "matchmaking_due_at": (time.time() + max(0.0, self._matchmaking_due_at - time.monotonic())) if self._matchmaking_due_at else None,
+            "respawn_timer": self.respawn_timer,
             "mini_should_show": self.settings.mini_enabled and self.settings.mini_auto_show and self.phase in {"Lobby", "Matchmaking", "ReadyCheck", "ChampSelect"} and not bool(self.champ_select.get("is_spectating")),
             "settings": self.settings.model_dump(),
         }
@@ -490,6 +493,34 @@ class LeagueLabService:
                 self.champ_select = {}
         except RuntimeError:
             return
+
+    async def _refresh_respawn_timer(self) -> None:
+        """Read the local in-game Live Client Data endpoint without external credentials."""
+        if not self.settings.respawn_timer_enabled or self.phase != "InProgress":
+            self.respawn_timer = {"available": False, "dead": False, "time_left": 0.0, "total_time": 0.0}
+            return
+        try:
+            async with httpx.AsyncClient(verify=False, timeout=1.5) as client:
+                response = await client.get("https://127.0.0.1:2999/liveclientdata/playerlist")
+            response.raise_for_status()
+            players = response.json()
+            own_name = str(self.current_summoner.get("game_name") or "").casefold()
+            own_riot_id = f"{self.current_summoner.get('game_name') or ''}#{self.current_summoner.get('tag_line') or ''}".casefold()
+            player = next((row for row in players if isinstance(row, dict) and (
+                str(row.get("riotId") or "").casefold() == own_riot_id
+                or str(row.get("summonerName") or "").casefold() == own_name
+            )), None)
+            timer = float((player or {}).get("respawnTimer") or 0.0)
+            dead = bool((player or {}).get("isDead")) and timer > 0
+            previous_total = float(self.respawn_timer.get("total_time") or 0.0)
+            self.respawn_timer = {
+                "available": player is not None,
+                "dead": dead,
+                "time_left": round(timer if dead else 0.0, 1),
+                "total_time": round(max(previous_total if dead else 0.0, timer), 1),
+            }
+        except (httpx.HTTPError, TypeError, ValueError):
+            self.respawn_timer = {"available": False, "dead": False, "time_left": 0.0, "total_time": 0.0}
 
     async def _record_action(self, label: str, method: str, path: str) -> None:
         await self.request(method, path)
@@ -942,12 +973,13 @@ class LeagueLabService:
             try:
                 if await self.refresh_connection():
                     await self._refresh_state()
+                    await self._refresh_respawn_timer()
                     await self._run_automation()
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("League lab background loop failed")
-            timeout = 5.0 if self.credentials else 5.0
+            timeout = 1.0 if self.credentials and self.settings.respawn_timer_enabled and self.phase == "InProgress" else 5.0
             try:
                 await asyncio.wait_for(self._event_wakeup.wait(), timeout=timeout)
                 self._event_wakeup.clear()
@@ -1287,6 +1319,9 @@ async def save_league_player_tag(puuid: str, body: PlayerTagBody):
     return {"puuid": puuid, "tag": tags.get(puuid)}
 
 
+_ongoing_cache: dict = {"key": "", "expires_at": 0.0, "payload": None}
+
+
 @router.get("/ongoing-game")
 async def league_ongoing_game():
     try:
@@ -1296,6 +1331,18 @@ async def league_ongoing_game():
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     game_data = (gameflow or {}).get("gameData") or {}
     selections = game_data.get("playerChampionSelections") or []
+    cache_key = json.dumps(
+        [
+            game_data.get("gameId"),
+            [
+                [row.get("puuid") or row.get("playerPuuid"), row.get("championId"), row.get("team") or row.get("teamId")]
+                for row in selections if isinstance(row, dict)
+            ],
+        ],
+        ensure_ascii=False,
+    )
+    if _ongoing_cache["key"] == cache_key and time.monotonic() < _ongoing_cache["expires_at"]:
+        return _ongoing_cache["payload"]
     async def enrich(row):
         if not isinstance(row, dict):
             return None, None
@@ -1349,6 +1396,7 @@ async def league_ongoing_game():
     }
     if players:
         _remember_recent_players(players, game_data.get("gameId"))
+    _ongoing_cache.update({"key": cache_key, "expires_at": time.monotonic() + 30.0, "payload": result})
     return result
 
 

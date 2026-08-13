@@ -42,6 +42,8 @@ This document prevents the League integration from becoming a collection of unre
 - Riot ID (`game name#tag`) cross-player lookup through the local LCU alias endpoint, paginated match history and durable recently encountered player indexing.
 - Live-game recent-form and current-champion usage summaries, plus LeagueAkari-style premade inference from repeated same-team match history.
 - Read-only client toolkit overview for missions, reward grants, loot inventory and friends; no claim, craft, redeem or delete action is exposed.
+- Opt-in local respawn countdown in League Mini through the in-game Live Client Data endpoint; disabled by default.
+- Thirty-second enriched live-game cache so frequent UI refreshes do not repeatedly request every player's history.
 
 ### Partially implemented; upstream behavior is richer
 
@@ -57,7 +59,7 @@ This document prevents the League integration from becoming a collection of unre
 - SGP-backed historical analysis and multi-source fallback (LCU Riot ID and PUUID lookup work now).
 - Ongoing-game jungle-path analysis (live team/profile cards, premade detection and champion-usage summaries work now).
 - Match-history advanced filters, collect mode and multi-source fallback.
-- Respawn timer and the ongoing-game/OP.GG/auxiliary overlay windows.
+- Ongoing-game/OP.GG/auxiliary overlay windows (the Mini respawn timer now works through local Live Client Data).
 - Champion skin selector auxiliary window.
 - Reward/mission/event claiming plus mutating loot and friend tools (the read-only overview works now; writes require separate safety review).
 - In-game preset messaging and chat availability/status tools.

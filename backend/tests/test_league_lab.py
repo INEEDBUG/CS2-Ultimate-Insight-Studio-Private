@@ -23,6 +23,46 @@ def test_parse_league_client_command_line_rejects_incomplete_input():
     assert parse_league_client_command_line("--app-port=54321") is None
 
 
+def test_respawn_timer_reads_local_live_client_data(monkeypatch):
+    service = LeagueLabService()
+    service.settings = LeagueLabSettings(respawn_timer_enabled=True)
+    service.phase = "InProgress"
+    service.current_summoner = {"game_name": "Tester", "tag_line": "CN1"}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return [{"riotId": "Tester#CN1", "isDead": True, "respawnTimer": 12.4}]
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url):
+            assert url == "https://127.0.0.1:2999/liveclientdata/playerlist"
+            return FakeResponse()
+
+    monkeypatch.setattr(league_lab.httpx, "AsyncClient", FakeClient)
+    asyncio.run(service._refresh_respawn_timer())
+
+    assert service.respawn_timer == {"available": True, "dead": True, "time_left": 12.4, "total_time": 12.4}
+
+
+def test_respawn_timer_is_off_by_default():
+    service = LeagueLabService()
+    service.phase = "InProgress"
+    asyncio.run(service._refresh_respawn_timer())
+    assert service.respawn_timer["available"] is False
+
+
 def test_discovery_uses_thread_compatible_subprocess(monkeypatch):
     command = b"1234\r\n"
 
