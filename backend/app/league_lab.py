@@ -1119,6 +1119,26 @@ _SGP_MATCH_HISTORY_HOSTS = {
     "KR": "https://apne1-red.pp.sgp.pvp.net",
 }
 
+_SGP_COMMON_HOSTS = {
+    **{key: value for key, value in _SGP_MATCH_HISTORY_HOSTS.items() if key.startswith("TENCENT_")},
+    "TW2": "https://tw2-red.lol.sgp.pvp.net",
+    "SG2": "https://sg2-red.lol.sgp.pvp.net",
+    "PH2": "https://ph2-red.lol.sgp.pvp.net",
+    "VN2": "https://vn2-red.lol.sgp.pvp.net",
+    "PBE": "https://pbe-red.lol.sgp.pvp.net",
+    "EUW": "https://euw-red.lol.sgp.pvp.net",
+    "JP": "https://jp-red.lol.sgp.pvp.net",
+    "RU": "https://ru-red.lol.sgp.pvp.net",
+    "BR1": "https://br-red.lol.sgp.pvp.net",
+    "OC1": "https://oce-red.lol.sgp.pvp.net",
+    "TR1": "https://tr-red.lol.sgp.pvp.net",
+    "LA1": "https://lan-red.lol.sgp.pvp.net",
+    "LA2": "https://las-red.lol.sgp.pvp.net",
+    "NA1": "https://na-red.lol.sgp.pvp.net",
+    "TH2": "https://th2-red.lol.sgp.pvp.net",
+    "KR": "https://kr-red.lol.sgp.pvp.net",
+}
+
 
 def _sgp_server_id(credentials: LcuCredentials | None) -> str:
     if not credentials:
@@ -1129,6 +1149,14 @@ def _sgp_server_id(credentials: LcuCredentials | None) -> str:
         return f"TENCENT_{platform}" if platform else ""
     aliases = {"NA": "NA1", "BR": "BR1", "TR": "TR1", "LAN": "LA1", "LAS": "LA2", "OCE": "OC1", "EUW1": "EUW", "JP1": "JP"}
     return aliases.get(region, region)
+
+
+def _sgp_region_path(credentials: LcuCredentials | None) -> str:
+    server_id = _sgp_server_id(credentials)
+    if server_id.startswith("TENCENT_"):
+        return server_id.split("_", 1)[1]
+    aliases = {"PBE": "PBE1", "EUW": "EUW1", "JP": "JP1"}
+    return aliases.get(server_id, server_id)
 
 
 async def _sgp_match_history(puuid: str, beg_index: int, count: int) -> dict:
@@ -1156,6 +1184,78 @@ async def _sgp_match_history(puuid: str, beg_index: int, count: int) -> dict:
     if not isinstance(payload, dict):
         raise RuntimeError("SGP 战绩返回格式无效")
     return payload
+
+
+async def _sgp_common_request(method: str, path: str, *, json_body=None):
+    """Call an SGP common service with an on-demand, memory-only League session token."""
+    credentials = league_lab_service.credentials
+    server_id = _sgp_server_id(credentials)
+    host = _SGP_COMMON_HOSTS.get(server_id)
+    if not host:
+        raise RuntimeError(f"当前区服不支持 SGP 通用数据源: {server_id or '未知区服'}")
+    token = await league_lab_service.request("GET", "/lol-league-session/v1/league-session-token")
+    if not isinstance(token, str) or not token:
+        raise RuntimeError("LCU 未返回 League Session 令牌")
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.request(
+                method,
+                f"{host}{path}",
+                headers={"Authorization": f"Bearer {token}"},
+                json=json_body,
+            )
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise RuntimeError(f"SGP 通用数据请求失败: {type(exc).__name__}") from exc
+    return payload
+
+
+def _normalize_sgp_ranked(payload) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+    queues = []
+    for row in payload.get("queues") or []:
+        if not isinstance(row, dict):
+            continue
+        normalized = dict(row)
+        normalized["division"] = row.get("division") or row.get("rank") or ""
+        queues.append(normalized)
+    result = dict(payload)
+    result["queues"] = queues
+    result["queueMap"] = {str(row.get("queueType")): row for row in queues if row.get("queueType")}
+    result["source"] = "sgp"
+    return result
+
+
+async def _sgp_ranked_stats(puuid: str) -> dict:
+    payload = await _sgp_common_request("GET", f"/leagues-ledge/v2/rankedStats/puuid/{puuid}")
+    normalized = _normalize_sgp_ranked(payload)
+    if not normalized:
+        raise RuntimeError("SGP 排位数据返回格式无效")
+    return normalized
+
+
+async def _sgp_summoner_by_puuid(puuid: str) -> dict:
+    region_path = _sgp_region_path(league_lab_service.credentials)
+    payload = await _sgp_common_request(
+        "POST",
+        f"/summoner-ledge/v1/regions/{region_path}/summoners/puuids",
+        json_body=[puuid],
+    )
+    row = payload[0] if isinstance(payload, list) and payload else None
+    if not isinstance(row, dict):
+        raise RuntimeError("SGP 召唤师数据返回格式无效")
+    return {
+        "puuid": row.get("puuid") or puuid,
+        "summonerId": row.get("id"),
+        "displayName": row.get("name") or "",
+        "gameName": "",
+        "tagLine": "",
+        "summonerLevel": row.get("level"),
+        "profileIconId": row.get("profileIconId"),
+        "source": "sgp",
+    }
 
 
 async def _champion_names() -> dict[int, str]:
@@ -1461,8 +1561,11 @@ async def recent_league_players(limit: int = 40):
 async def league_player_bundle(puuid: str, match_limit: int = 20, beg_index: int = 0):
     try:
         summoner = await league_lab_service.request("GET", f"/lol-summoner/v2/summoners/puuid/{puuid}")
-    except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as lcu_exc:
+        try:
+            summoner = await _sgp_summoner_by_puuid(puuid)
+        except RuntimeError as sgp_exc:
+            raise HTTPException(status_code=409, detail=f"{lcu_exc}; {sgp_exc}") from sgp_exc
     return await _load_player_bundle(
         summoner,
         match_limit=max(1, min(match_limit, 100)),
@@ -1492,6 +1595,13 @@ async def _load_player_bundle(summoner, match_limit: int = 20, beg_index: int = 
         _champion_names(),
     )
     match_source = "lcu"
+    ranked_source = "lcu" if ranked else "none"
+    if not ranked:
+        try:
+            ranked = await _sgp_ranked_stats(puuid)
+            ranked_source = "sgp"
+        except RuntimeError:
+            pass
     matches = _normalize_match_rows(history or {}, names, puuid)
     if len(matches) < match_limit:
         try:
@@ -1510,8 +1620,10 @@ async def _load_player_bundle(summoner, match_limit: int = 20, beg_index: int = 
             "tag_line": summoner.get("tagLine") or "",
             "summoner_level": summoner.get("summonerLevel"),
             "profile_icon_id": summoner.get("profileIconId"),
+            "source": summoner.get("source") or "lcu",
         },
         "ranked": ranked or {},
+        "ranked_source": ranked_source,
         "mastery": mastery or {},
         "matches": matches,
         "match_source": match_source,

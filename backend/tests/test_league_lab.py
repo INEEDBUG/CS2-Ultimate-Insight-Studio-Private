@@ -602,6 +602,8 @@ def test_sgp_server_routing_matches_tencent_and_global_clients():
     assert league_lab._sgp_server_id(league_lab.LcuCredentials(1, "x", "TENCENT", "HN10")) == "TENCENT_HN10"
     assert league_lab._sgp_server_id(league_lab.LcuCredentials(1, "x", "NA", "NA1")) == "NA1"
     assert league_lab._sgp_server_id(league_lab.LcuCredentials(1, "x", "EUW1", "EUW1")) == "EUW"
+    assert league_lab._sgp_region_path(league_lab.LcuCredentials(1, "x", "CN", "HN1")) == "HN1"
+    assert league_lab._sgp_region_path(league_lab.LcuCredentials(1, "x", "EUW1", "EUW1")) == "EUW1"
 
 
 def test_sgp_match_rows_normalize_wrapped_summary():
@@ -640,6 +642,39 @@ def test_sgp_match_rows_normalize_wrapped_summary():
     }]
 
 
+def test_sgp_ranked_rows_normalize_division_and_queue_map():
+    result = league_lab._normalize_sgp_ranked({
+        "queues": [{
+            "queueType": "RANKED_SOLO_5x5",
+            "tier": "GOLD",
+            "rank": "II",
+            "leaguePoints": 55,
+            "wins": 20,
+            "losses": 10,
+        }],
+    })
+
+    assert result["source"] == "sgp"
+    assert result["queues"][0]["division"] == "II"
+    assert result["queueMap"]["RANKED_SOLO_5x5"]["leaguePoints"] == 55
+
+
+def test_sgp_summoner_normalizes_ledge_payload(monkeypatch):
+    async def common(method, path, *, json_body=None):
+        assert method == "POST"
+        assert path == "/summoner-ledge/v1/regions/HN1/summoners/puuids"
+        assert json_body == ["player-1"]
+        return [{"id": 7, "puuid": "player-1", "name": "Fallback", "level": 30, "profileIconId": 29}]
+
+    league_lab.league_lab_service.credentials = league_lab.LcuCredentials(1, "x", "CN", "HN1")
+    monkeypatch.setattr(league_lab, "_sgp_common_request", common)
+    result = asyncio.run(league_lab._sgp_summoner_by_puuid("player-1"))
+
+    assert result["summonerId"] == 7
+    assert result["displayName"] == "Fallback"
+    assert result["source"] == "sgp"
+
+
 def test_player_bundle_falls_back_to_sgp_history(monkeypatch):
     async def request(method, path, *, json_body=None, params=None):
         if path.startswith("/lol-ranked/"):
@@ -657,12 +692,18 @@ def test_player_bundle_falls_back_to_sgp_history(monkeypatch):
     async def names():
         return {22: "Ashe"}
 
+    async def ranked(puuid):
+        assert puuid == "player-1"
+        return {"queues": [{"queueType": "RANKED_SOLO_5x5", "tier": "GOLD", "division": "II"}]}
+
     monkeypatch.setattr(league_lab.league_lab_service, "request", request)
     monkeypatch.setattr(league_lab, "_sgp_match_history", sgp)
+    monkeypatch.setattr(league_lab, "_sgp_ranked_stats", ranked)
     monkeypatch.setattr(league_lab, "_champion_names", names)
     result = asyncio.run(league_lab._load_player_bundle({"puuid": "player-1"}))
 
     assert result["match_source"] == "sgp"
+    assert result["ranked_source"] == "sgp"
     assert result["matches"][0]["game_id"] == 1
 
 
