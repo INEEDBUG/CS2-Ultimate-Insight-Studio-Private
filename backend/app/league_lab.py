@@ -36,6 +36,42 @@ _REGION_RE = re.compile(r"--region=([\w_-]+)", re.IGNORECASE)
 _PLATFORM_RE = re.compile(r"--rso[_-]platform[_-]id=([\w_-]+)", re.IGNORECASE)
 
 
+PositionKey = Literal["default", "top", "jungle", "middle", "bottom", "utility"]
+PickStrategy = Literal["just-show", "show-and-lock-in", "lock-in-immediately"]
+
+
+def _empty_position_pool() -> dict[str, list[int]]:
+    return {key: [] for key in ("default", "top", "jungle", "middle", "bottom", "utility")}
+
+
+class PickProfile(BaseModel):
+    enabled: bool = False
+    champions: dict[str, list[int]] = Field(default_factory=_empty_position_pool)
+    delay_seconds: float = Field(default=3.0, ge=0.0, le=15.0)
+    ignore_intent: bool = False
+    strategy: PickStrategy = "show-and-lock-in"
+    show_intent: bool = True
+    bench_select_first_available_champion: bool = True
+    bench_swap_accumulated_delay_seconds: float = Field(default=2.5, ge=0.0, le=15.0)
+    bench_handle_trade_enabled: bool = True
+
+
+class BanProfile(BaseModel):
+    enabled: bool = False
+    champions: dict[str, list[int]] = Field(default_factory=_empty_position_pool)
+    delay_seconds: float = Field(default=3.0, ge=0.0, le=15.0)
+    strategy: PickStrategy = "show-and-lock-in"
+
+
+class AutoSelectProfile(BaseModel):
+    pick: PickProfile = Field(default_factory=PickProfile)
+    ban: BanProfile = Field(default_factory=BanProfile)
+
+
+def _default_auto_select_profiles() -> dict[str, AutoSelectProfile]:
+    return {key: AutoSelectProfile() for key in ("ranked", "aram", "arena", "urf", "clash", "doom-bots", "custom", "default")}
+
+
 class LeagueLabSettings(BaseModel):
     automation_enabled: bool = False
     auto_accept_enabled: bool = False
@@ -43,14 +79,21 @@ class LeagueLabSettings(BaseModel):
     play_again_enabled: bool = False
     auto_reconnect_enabled: bool = False
     invitation_strategy: Literal["ignore", "accept", "decline"] = "ignore"
+    auto_handle_invitations_enabled: bool = False
+    reject_invitation_when_away: bool = False
+    invitation_handling_strategies: dict[str, Literal["ignore", "accept", "decline"]] = Field(default_factory=dict)
+    auto_skip_leader_enabled: bool = False
     auto_select_enabled: bool = False
     auto_pick_champion_ids: list[int] = Field(default_factory=list)
     auto_ban_champion_ids: list[int] = Field(default_factory=list)
     champion_action_delay_seconds: float = Field(default=1.0, ge=0.0, le=10.0)
     champion_lock_in: bool = True
+    auto_select_profiles: dict[str, AutoSelectProfile] = Field(default_factory=_default_auto_select_profiles)
     auto_champion_config_enabled: bool = False
     champion_loadouts: list["ChampionLoadout"] = Field(default_factory=list)
     auto_honor_enabled: bool = False
+    mini_enabled: bool = True
+    mini_auto_show: bool = True
 
 
 class ChampionLoadout(BaseModel):
@@ -174,6 +217,9 @@ class LeagueLabService:
         self._phase_action_due_at: float | None = None
         self._handled_invitations: set[str] = set()
         self._handled_champion_actions: set[str] = set()
+        self._handled_trades: set[str] = set()
+        self._bench_candidate_since: dict[int, float] = {}
+        self._leader_handoff_lobby = ""
         self._configured_champion_id = 0
         self._honored_game_id = ""
         self.champ_select: dict = {}
@@ -196,7 +242,7 @@ class LeagueLabService:
         temp.write_text(json.dumps(settings.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
         temp.replace(path)
         self.settings = settings
-        if not settings.auto_accept_enabled:
+        if not settings.auto_select_enabled:
             self._accept_due_at = None
             self._handled_champion_actions.clear()
             self._configured_champion_id = 0
@@ -275,6 +321,7 @@ class LeagueLabService:
             "last_action": self.last_action,
             "last_action_at": self.last_action_at or None,
             "champ_select": self.champ_select,
+            "mini_should_show": self.settings.mini_enabled and self.settings.mini_auto_show and self.phase in {"Lobby", "Matchmaking", "ReadyCheck", "ChampSelect"} and not bool(self.champ_select.get("is_spectating")),
             "settings": self.settings.model_dump(),
         }
 
@@ -312,36 +359,137 @@ class LeagueLabService:
                     "assigned_position": member.get("assignedPosition") or "",
                     "summoner_id": member.get("summonerId"),
                 })
-        return {"local_player_cell_id": session.get("localPlayerCellId"), "my_team": members}
+        return {
+            "local_player_cell_id": session.get("localPlayerCellId"),
+            "my_team": members,
+            "bench_enabled": bool(session.get("benchEnabled")),
+            "bench_champions": [int(item.get("championId")) for item in (session.get("benchChampions") or []) if isinstance(item, dict) and item.get("championId")],
+            "is_spectating": bool(session.get("isSpectating")),
+        }
+
+    @staticmethod
+    def _mode_group(gameflow: dict | None, session: dict | None = None) -> str:
+        game_data = (gameflow or {}).get("gameData") or {}
+        queue = game_data.get("queue") or {}
+        queue_id = int(queue.get("id") or game_data.get("queueId") or 0)
+        mode = str(queue.get("gameMode") or game_data.get("gameMode") or "").upper()
+        queue_type = str(queue.get("type") or "").upper()
+        if bool(game_data.get("isCustomGame")) or bool((session or {}).get("isCustomGame")):
+            return "custom"
+        if bool((session or {}).get("benchEnabled")) or queue_id == 450 or mode in {"ARAM", "KIWI"}:
+            return "aram"
+        if queue_id in {420, 440} or "RANKED" in queue_type:
+            return "ranked"
+        if queue_id == 700 or "CLASH" in queue_type:
+            return "clash"
+        if queue_id in {1700, 1710} or mode == "CHERRY":
+            return "arena"
+        if "URF" in mode or "URF" in queue_type:
+            return "urf"
+        if queue_id in {950, 960} or "DOOMBOT" in mode.replace("_", ""):
+            return "doom-bots"
+        return "default"
+
+    @staticmethod
+    def _position_for_session(session: dict) -> str:
+        local_cell = session.get("localPlayerCellId")
+        member = next((item for item in (session.get("myTeam") or []) if item.get("cellId") == local_cell), {})
+        value = str(member.get("assignedPosition") or "default").lower()
+        aliases = {"mid": "middle", "adc": "bottom", "support": "utility"}
+        value = aliases.get(value, value)
+        return value if value in {"top", "jungle", "middle", "bottom", "utility"} else "default"
+
+    @staticmethod
+    def _profile_candidates(pool: dict[str, list[int]], position: str) -> list[int]:
+        positioned = list(pool.get(position) or [])
+        fallback = list(pool.get("default") or [])
+        return list(dict.fromkeys(positioned + fallback))
+
+    async def _active_auto_select_profile(self, session: dict) -> tuple[str, AutoSelectProfile]:
+        try:
+            gameflow = await self.request("GET", "/lol-gameflow/v1/session")
+        except RuntimeError:
+            gameflow = {}
+        group = self._mode_group(gameflow if isinstance(gameflow, dict) else {}, session)
+        return group, self.settings.auto_select_profiles.get(group) or self.settings.auto_select_profiles.get("default") or AutoSelectProfile()
 
     async def _run_auto_select(self) -> None:
         session = await self.request("GET", "/lol-champ-select/v1/session")
         if not isinstance(session, dict):
             return
         local_cell = session.get("localPlayerCellId")
+        group, profile = await self._active_auto_select_profile(session)
+        position = self._position_for_session(session)
+        teammate_intents = {
+            int(member.get("championPickIntent"))
+            for member in (session.get("myTeam") or [])
+            if member.get("cellId") != local_cell and int(member.get("championPickIntent") or 0) > 0
+        }
         for action_group in session.get("actions") or []:
             for action in action_group or []:
                 if not isinstance(action, dict) or action.get("actorCellId") != local_cell or not action.get("isInProgress"):
                     continue
                 action_type = action.get("type")
-                candidates = self.settings.auto_pick_champion_ids if action_type == "pick" else self.settings.auto_ban_champion_ids
+                configured = profile.pick if action_type == "pick" else profile.ban
+                legacy_candidates = self.settings.auto_pick_champion_ids if action_type == "pick" else self.settings.auto_ban_champion_ids
+                candidates = self._profile_candidates(configured.champions, position) if configured.enabled else list(legacy_candidates)
                 action_key = f"{action_type}:{action.get('id')}"
                 if action_type not in {"pick", "ban"} or not candidates or action_key in self._handled_champion_actions:
                     continue
                 available_path = "/lol-champ-select/v1/pickable-champion-ids" if action_type == "pick" else "/lol-champ-select/v1/bannable-champion-ids"
                 available = await self.request("GET", available_path)
+                if action_type == "pick" and profile.pick.enabled and not profile.pick.ignore_intent:
+                    candidates = [value for value in candidates if value not in teammate_intents]
                 champion_id = next((value for value in candidates if value in (available or [])), None)
                 if champion_id is None:
                     continue
-                await asyncio.sleep(self.settings.champion_action_delay_seconds)
-                await self.request("PATCH", f"/lol-champ-select/v1/session/actions/{action.get('id')}", json_body={
-                    "championId": champion_id,
-                    "type": action_type,
-                    "completed": self.settings.champion_lock_in,
-                })
+                delay = configured.delay_seconds if configured.enabled else self.settings.champion_action_delay_seconds
+                strategy = configured.strategy if configured.enabled else ("show-and-lock-in" if self.settings.champion_lock_in else "just-show")
+                if action_type == "pick" and profile.pick.enabled and profile.pick.show_intent and strategy != "lock-in-immediately":
+                    await self.request("PATCH", f"/lol-champ-select/v1/session/actions/{action.get('id')}", json_body={"championId": champion_id, "type": action_type, "completed": False})
+                await asyncio.sleep(delay)
+                if strategy != "just-show":
+                    await self.request("PATCH", f"/lol-champ-select/v1/session/actions/{action.get('id')}", json_body={"championId": champion_id, "type": action_type, "completed": True})
                 self._handled_champion_actions.add(action_key)
-                self.last_action = f"已自动{'选择' if action_type == 'pick' else '禁用'}英雄 {champion_id}"
+                self.last_action = f"[{group}] 已自动{'选择' if action_type == 'pick' else '禁用'}英雄 {champion_id}"
                 self.last_action_at = time.time()
+
+        if profile.pick.enabled and profile.pick.bench_handle_trade_enabled:
+            await self._run_trade_handling(session, self._profile_candidates(profile.pick.champions, position))
+        if profile.pick.enabled and session.get("benchEnabled"):
+            await self._run_bench_swap(session, profile.pick, position)
+
+    async def _run_trade_handling(self, session: dict, expected: list[int]) -> None:
+        for trade in session.get("trades") or []:
+            trade_id = str(trade.get("id") or "") if isinstance(trade, dict) else ""
+            if not trade_id or trade_id in self._handled_trades or trade.get("state") not in {"AVAILABLE", "PENDING", "RECEIVED"}:
+                continue
+            requester_cell = trade.get("requesterCellId")
+            requester = next((item for item in (session.get("myTeam") or []) if item.get("cellId") == requester_cell), {})
+            requester_champion = int(requester.get("championId") or 0)
+            if requester_champion not in expected:
+                continue
+            await self.request("POST", f"/lol-champ-select/v1/session/trades/{trade_id}/accept")
+            self._handled_trades.add(trade_id)
+            self.last_action = f"已接受英雄交换：{requester_champion}"
+            self.last_action_at = time.time()
+
+    async def _run_bench_swap(self, session: dict, profile: PickProfile, position: str) -> None:
+        expected = self._profile_candidates(profile.champions, position)
+        bench = [int(item.get("championId")) for item in (session.get("benchChampions") or []) if isinstance(item, dict) and item.get("championId")]
+        candidate = next((champion_id for champion_id in expected if champion_id in bench), None)
+        if candidate is None and profile.bench_select_first_available_champion and bench:
+            candidate = bench[0]
+        if candidate is None:
+            self._bench_candidate_since.clear()
+            return
+        started = self._bench_candidate_since.setdefault(candidate, time.monotonic())
+        if time.monotonic() - started < profile.bench_swap_accumulated_delay_seconds:
+            return
+        await self.request("POST", f"/lol-champ-select/v1/session/bench/swap/{candidate}")
+        self._bench_candidate_since.clear()
+        self.last_action = f"已从备战席换取英雄 {candidate}"
+        self.last_action_at = time.time()
 
     async def _run_champion_config(self) -> None:
         champion_id = await self.request("GET", "/lol-champ-select/v1/current-champion")
@@ -398,6 +546,56 @@ class LeagueLabService:
         self.last_action = "已自动点赞队友"
         self.last_action_at = time.time()
 
+    async def _run_lobby_automation(self) -> None:
+        settings = self.settings
+        if settings.auto_skip_leader_enabled and self.phase == "Lobby":
+            try:
+                lobby = await self.request("GET", "/lol-lobby/v2/lobby")
+            except RuntimeError:
+                lobby = None
+            if isinstance(lobby, dict):
+                local_member = lobby.get("localMember") or {}
+                lobby_id = str(lobby.get("partyId") or lobby.get("gameConfig", {}).get("gameId") or "lobby")
+                if local_member.get("isLeader") and self._leader_handoff_lobby != lobby_id:
+                    others = [member for member in (lobby.get("members") or []) if member.get("summonerId") != local_member.get("summonerId") and not member.get("isSpectator")]
+                    ready = [member for member in others if member.get("ready")]
+                    candidate = (ready or others or [None])[0]
+                    if candidate and candidate.get("summonerId"):
+                        await self._record_action("已自动转交房主", "POST", f"/lol-lobby/v2/lobby/members/{candidate['summonerId']}/promote")
+                        self._leader_handoff_lobby = lobby_id
+
+        if not settings.auto_handle_invitations_enabled and settings.invitation_strategy == "ignore":
+            return
+        if settings.reject_invitation_when_away:
+            try:
+                chat_me = await self.request("GET", "/lol-chat/v1/me")
+            except RuntimeError:
+                chat_me = {}
+            if isinstance(chat_me, dict) and chat_me.get("availability") == "away":
+                return
+        invitations = await self.request("GET", "/lol-lobby/v2/received-invitations")
+        candidates = []
+        for invitation in invitations if isinstance(invitations, list) else []:
+            if not isinstance(invitation, dict) or invitation.get("state") not in {None, "Pending"} or invitation.get("canAcceptInvitation") is False:
+                continue
+            invite_id = str(invitation.get("invitationId") or "")
+            if not invite_id or invite_id in self._handled_invitations:
+                continue
+            invite_type = str((invitation.get("gameConfig") or {}).get("inviteGameType") or "<DEFAULT>")
+            strategies = settings.invitation_handling_strategies
+            action = strategies.get(invite_type) or strategies.get("<DEFAULT>") or settings.invitation_strategy
+            candidates.append((0 if action == "accept" else 1 if action == "decline" else 2, invite_id, action, invite_type))
+        if not candidates:
+            return
+        _, invite_id, action, invite_type = sorted(candidates)[0]
+        if action == "ignore":
+            return
+        await self._record_action(
+            f"已自动{'接受' if action == 'accept' else '拒绝'} {invite_type} 房间邀请",
+            "POST", f"/lol-lobby/v2/received-invitations/{invite_id}/{action}",
+        )
+        self._handled_invitations.add(invite_id)
+
     async def _run_automation(self) -> None:
         settings = self.settings
         phase = self.phase
@@ -434,6 +632,8 @@ class LeagueLabService:
                 await self._run_champion_config()
         else:
             self._handled_champion_actions.clear()
+            self._handled_trades.clear()
+            self._bench_candidate_since.clear()
             self._configured_champion_id = 0
 
         if phase in {"EndOfGame", "WaitingForStats", "PreEndOfGame"} and settings.play_again_enabled:
@@ -448,20 +648,7 @@ class LeagueLabService:
         if phase in {"PreEndOfGame", "EndOfGame"} and settings.auto_honor_enabled:
             await self._run_auto_honor()
 
-        if settings.invitation_strategy != "ignore":
-            invitations = await self.request("GET", "/lol-lobby/v2/received-invitations")
-            if isinstance(invitations, list):
-                for invitation in invitations:
-                    invite_id = str(invitation.get("invitationId") or "") if isinstance(invitation, dict) else ""
-                    if not invite_id or invite_id in self._handled_invitations:
-                        continue
-                    action = settings.invitation_strategy
-                    await self._record_action(
-                        "已自动接受房间邀请" if action == "accept" else "已自动拒绝房间邀请",
-                        "POST",
-                        f"/lol-lobby/v2/received-invitations/{invite_id}/{action}",
-                    )
-                    self._handled_invitations.add(invite_id)
+        await self._run_lobby_automation()
 
     async def _run(self) -> None:
         while True:
@@ -485,6 +672,35 @@ async def _champion_names() -> dict[int, str]:
     except RuntimeError:
         return {}
     return {int(row.get("id")): str(row.get("name") or row.get("alias") or row.get("id")) for row in (rows or []) if isinstance(row, dict) and row.get("id")}
+
+
+def _champion_catalog_path() -> Path:
+    return get_data_dir() / "league-champion-catalog.json"
+
+
+async def _champion_catalog() -> list[dict]:
+    rows = None
+    try:
+        rows = await league_lab_service.request("GET", "/lol-game-data/assets/v1/champion-summary.json")
+    except RuntimeError:
+        try:
+            rows = json.loads(_champion_catalog_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            rows = []
+    normalized = [
+        {
+            "id": int(row.get("id")),
+            "name": str(row.get("name") or row.get("alias") or row.get("id")),
+            "alias": str(row.get("alias") or ""),
+            "roles": [str(role).lower() for role in (row.get("roles") or [])],
+        }
+        for row in (rows or []) if isinstance(row, dict) and int(row.get("id") or 0) > 0
+    ]
+    if normalized and league_lab_service.credentials:
+        path = _champion_catalog_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(normalized, ensure_ascii=False), encoding="utf-8")
+    return normalized
 
 
 @router.get("/status")
@@ -529,6 +745,12 @@ async def league_match_history(limit: int = 20):
             "items": [stats.get(f"item{i}") for i in range(7) if stats.get(f"item{i}")],
         })
     return {"matches": normalized, "count": len(normalized)}
+
+
+@router.get("/champions")
+async def league_champion_catalog():
+    champions = await _champion_catalog()
+    return {"champions": champions, "count": len(champions), "source": "lcu" if league_lab_service.credentials else "cache"}
 
 
 @router.post("/actions/{action}")

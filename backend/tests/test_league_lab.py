@@ -109,6 +109,8 @@ def test_auto_select_uses_the_first_available_preference(monkeypatch):
             return {"localPlayerCellId": 2, "actions": [[{"id": 8, "actorCellId": 2, "type": "pick", "isInProgress": True}]]}
         if path == "/lol-champ-select/v1/pickable-champion-ids":
             return [103]
+        if path == "/lol-gameflow/v1/session":
+            return {}
         calls.append((method, path, json_body))
 
     monkeypatch.setattr(service, "request", request)
@@ -116,6 +118,35 @@ def test_auto_select_uses_the_first_available_preference(monkeypatch):
     asyncio.run(service._run_auto_select())
 
     assert calls == [("PATCH", "/lol-champ-select/v1/session/actions/8", {"championId": 103, "type": "pick", "completed": True})]
+
+
+def test_mode_group_matches_league_queue_families():
+    assert LeagueLabService._mode_group({"gameData": {"queue": {"id": 420, "gameMode": "CLASSIC", "type": "RANKED_SOLO_5x5"}}}) == "ranked"
+    assert LeagueLabService._mode_group({"gameData": {"queue": {"id": 450, "gameMode": "ARAM"}}}) == "aram"
+    assert LeagueLabService._mode_group({"gameData": {"queue": {"id": 1700, "gameMode": "CHERRY"}}}) == "arena"
+    assert LeagueLabService._mode_group({"gameData": {"isCustomGame": True}}) == "custom"
+
+
+def test_invitation_strategy_prefers_accept_and_respects_game_type(monkeypatch):
+    service = LeagueLabService()
+    service.settings = LeagueLabSettings(
+        automation_enabled=True,
+        auto_handle_invitations_enabled=True,
+        invitation_handling_strategies={"<DEFAULT>": "decline", "NORMAL_GAME": "accept"},
+    )
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if method == "GET":
+            return [
+                {"invitationId": "custom", "state": "Pending", "canAcceptInvitation": True, "gameConfig": {"inviteGameType": "CUSTOM_GAME"}},
+                {"invitationId": "normal", "state": "Pending", "canAcceptInvitation": True, "gameConfig": {"inviteGameType": "NORMAL_GAME"}},
+            ]
+        calls.append((method, path))
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(service._run_lobby_automation())
+    assert calls == [("POST", "/lol-lobby/v2/received-invitations/normal/accept")]
 
 
 def test_auto_honor_submits_votes_and_finishes_ballot(monkeypatch):

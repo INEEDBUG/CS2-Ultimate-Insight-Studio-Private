@@ -28,20 +28,24 @@ This document prevents the League integration from becoming a collection of unre
 - Automatic honor submission with ballot completion.
 - Current-account LCU match history with champion metadata and core performance fields.
 - Independent always-on-top League Mini window with phase/team summary and quick automation controls.
+- Queue-group and position-specific pick/ban profiles with searchable ordered champion lists.
+- Pick intent conflict handling, all three show/lock strategies, ARAM bench selection delay and champion-trade acceptance.
+- Automatic leader handoff plus per-invite-type accept/decline/ignore rules and away-state gating.
+- League Mini phase lifecycle parity: auto-show in lobby/matchmaking/ready-check/non-spectating champ select, auto-hide elsewhere, and manual close suppression until the phase changes.
 
 ### Partially implemented; upstream behavior is richer
 
-- Pick/ban: missing queue-group and position-specific profiles, intent handling, strategy variants, ARAM bench priority/swap delay and trade handling.
+- Pick/ban: core upstream behavior is implemented; remaining work is exact upstream queue-group metadata refresh, subset-card modes, special vote actions and champion artwork/role metadata parity.
 - Champion config: data model supports saved loadouts, but the editor still uses numeric IDs instead of upstream champion/rune/spell galleries and position presets.
 - Honor: basic allies-first behavior exists; upstream strategies include lobby-only, all players, opt-out and opponent-inclusive selection.
-- Invitations: basic global strategy exists; upstream supports per-queue strategy, away rejection and invitation automation.
+- Invitations: per-type strategy, priority ordering and away gating are implemented; the UI still needs the complete upstream dynamic invite-type catalog.
 - Match history: core rows exist; upstream includes player tabs, summaries, ranked/mastery/challenges, detailed cards, pagination and composable filters.
-- Mini window: independent and always-on-top, but not yet feature-equivalent to LeagueAkari's phase-specific mini/auxiliary windows.
+- Mini window: phase-driven show/hide and safe manual close are implemented; skin selection, bench controls, action countdowns and all auxiliary cards remain.
 
 ### Not implemented yet
 
 - Automatic matchmaking with minimum members, invitee waiting, delay, fixed/estimated rematch limits and penalty checks.
-- Automatic leader handoff and ARAM team-side messaging.
+- ARAM team-side messaging.
 - Automatic reply and automatic invitations.
 - SGP-backed historical analysis and cross-player lookup.
 - Ongoing-game scouting, premade detection, player tags, champion usage and jungle-path analysis.

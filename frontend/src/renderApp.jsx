@@ -1,8 +1,19 @@
-import React, { useEffect } from "react";
+import React, { Suspense, lazy, useEffect } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import { useThemeStore } from "./stores/themeStore";
+
+const LeagueMiniPanel = lazy(() => import("./pages/LeagueMiniPanel"));
+
+class MiniErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  render() {
+    if (this.state.error) return <div className="h-screen bg-[#111214] p-5 text-sm text-red-300"><div className="font-bold">Mini 面板加载失败</div><div className="mt-2 break-words text-xs text-zinc-400">{String(this.state.error?.message || this.state.error)}</div></div>;
+    return this.props.children;
+  }
+}
 
 function ThemeApplier() {
   const mode = useThemeStore((state) => state.mode);
@@ -35,9 +46,12 @@ function ThemeApplier() {
   return null;
 }
 
+const isLeagueMini = new URLSearchParams(window.location.search).get("window") === "league-mini";
 ReactDOM.createRoot(document.getElementById("root")).render(
   <BrowserRouter>
     <ThemeApplier />
-    <App />
+    {isLeagueMini
+      ? <MiniErrorBoundary><Suspense fallback={<div className="h-screen bg-[#111214]" />}><LeagueMiniPanel /></Suspense></MiniErrorBoundary>
+      : <App />}
   </BrowserRouter>,
 );

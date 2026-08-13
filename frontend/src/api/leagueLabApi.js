@@ -19,3 +19,8 @@ export async function fetchLeagueMatches(limit = 20) {
   const { data } = await API.get("/league-lab/matches", { params: { limit } });
   return data;
 }
+
+export async function fetchLeagueChampions() {
+  const { data } = await API.get("/league-lab/champions");
+  return data;
+}

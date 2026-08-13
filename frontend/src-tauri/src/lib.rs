@@ -26,6 +26,8 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[tauri::command]
 fn open_league_mini(app: AppHandle) -> Result<(), String> {
+    let mini = app.state::<LeagueMiniLifecycle>();
+    mini.manually_hidden.store(false, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window("league-mini") {
         window.show().map_err(|error| error.to_string())?;
         window.set_focus().map_err(|error| error.to_string())?;
@@ -45,6 +47,33 @@ fn open_league_mini(app: AppHandle) -> Result<(), String> {
     .build()
     .map(|_| ())
     .map_err(|error| error.to_string())
+}
+
+#[derive(Default)]
+struct LeagueMiniLifecycle {
+    manually_hidden: AtomicBool,
+    context: Mutex<String>,
+}
+
+#[tauri::command]
+fn sync_league_mini(app: AppHandle, should_show: bool, context: String) -> Result<(), String> {
+    let mini = app.state::<LeagueMiniLifecycle>();
+    let mut saved_context = mini.context.lock().map_err(|_| "mini lifecycle lock poisoned".to_string())?;
+    if *saved_context != context {
+        *saved_context = context;
+        mini.manually_hidden.store(false, Ordering::SeqCst);
+    }
+    drop(saved_context);
+    if !should_show {
+        if let Some(window) = app.get_webview_window("league-mini") {
+            window.hide().map_err(|error| error.to_string())?;
+        }
+        return Ok(());
+    }
+    if mini.manually_hidden.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    open_league_mini(app.clone())
 }
 
 struct BackendProcess {
@@ -506,6 +535,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(BackendProcess::new().expect("failed to create desktop session token"))
         .manage(AppLifecycle::default())
+        .manage(LeagueMiniLifecycle::default())
         .invoke_handler(tauri::generate_handler![
             read_legacy_ui_state,
             backend_session_token,
@@ -515,7 +545,8 @@ pub fn run() {
             get_close_action,
             hide_to_tray,
             quit_app,
-            open_league_mini
+            open_league_mini,
+            sync_league_mini
         ])
         .setup(|app| {
             let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
@@ -588,6 +619,18 @@ pub fn run() {
                 _ => {
                     let _ = handle.emit("desktop-close-choice-requested", ());
                 }
+            }
+        }
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { api, .. },
+            ..
+        } if label == "league-mini" => {
+            api.prevent_close();
+            let mini = handle.state::<LeagueMiniLifecycle>();
+            mini.manually_hidden.store(true, Ordering::SeqCst);
+            if let Some(window) = handle.get_webview_window(&label) {
+                let _ = window.hide();
             }
         }
         RunEvent::ExitRequested { code, api, .. } => {
