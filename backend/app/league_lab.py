@@ -1015,6 +1015,76 @@ class LeagueLabService:
 league_lab_service = LeagueLabService()
 
 
+# LeagueAkari's built-in SGP routing table, reduced to the match-history hosts used here.
+# Tokens are fetched from the local LCU on demand and are never written to disk or returned to the UI.
+_SGP_MATCH_HISTORY_HOSTS = {
+    "TENCENT_HN1": "https://hn1-k8s-sgp.lol.qq.com:21019",
+    "TENCENT_HN10": "https://hn10-k8s-sgp.lol.qq.com:21019",
+    "TENCENT_TJ100": "https://tj100-sgp.lol.qq.com:21019",
+    "TENCENT_TJ101": "https://tj101-sgp.lol.qq.com:21019",
+    "TENCENT_NJ100": "https://nj100-sgp.lol.qq.com:21019",
+    "TENCENT_GZ100": "https://gz100-sgp.lol.qq.com:21019",
+    "TENCENT_CQ100": "https://cq100-sgp.lol.qq.com:21019",
+    "TENCENT_BGP2": "https://bgp2-k8s-sgp.lol.qq.com:21019",
+    "TENCENT_PBE": "https://pbe-sgp.lol.qq.com:21019",
+    "TENCENT_PREPBE": "https://prepbe-sgp.lol.qq.com:21019",
+    "TW2": "https://apse1-red.pp.sgp.pvp.net",
+    "SG2": "https://apse1-red.pp.sgp.pvp.net",
+    "PH2": "https://apse1-red.pp.sgp.pvp.net",
+    "VN2": "https://apse1-red.pp.sgp.pvp.net",
+    "PBE": "https://usw2-red.pp.sgp.pvp.net",
+    "EUW": "https://euc1-red.pp.sgp.pvp.net",
+    "JP": "https://apne1-red.pp.sgp.pvp.net",
+    "RU": "https://euc1-red.pp.sgp.pvp.net",
+    "BR1": "https://usw2-red.pp.sgp.pvp.net",
+    "OC1": "https://apse1-red.pp.sgp.pvp.net",
+    "TR1": "https://euc1-red.pp.sgp.pvp.net",
+    "LA1": "https://usw2-red.pp.sgp.pvp.net",
+    "LA2": "https://usw2-red.pp.sgp.pvp.net",
+    "NA1": "https://usw2-red.pp.sgp.pvp.net",
+    "TH2": "https://apse1-red.pp.sgp.pvp.net",
+    "KR": "https://apne1-red.pp.sgp.pvp.net",
+}
+
+
+def _sgp_server_id(credentials: LcuCredentials | None) -> str:
+    if not credentials:
+        return ""
+    region = credentials.region.upper()
+    platform = credentials.platform_id.upper()
+    if region in {"CN", "TENCENT"}:
+        return f"TENCENT_{platform}" if platform else ""
+    aliases = {"NA": "NA1", "BR": "BR1", "TR": "TR1", "LAN": "LA1", "LAS": "LA2", "OCE": "OC1", "EUW1": "EUW", "JP1": "JP"}
+    return aliases.get(region, region)
+
+
+async def _sgp_match_history(puuid: str, beg_index: int, count: int) -> dict:
+    credentials = league_lab_service.credentials
+    server_id = _sgp_server_id(credentials)
+    host = _SGP_MATCH_HISTORY_HOSTS.get(server_id)
+    if not host:
+        raise RuntimeError(f"当前区服不支持 SGP 战绩源: {server_id or '未知区服'}")
+    token_payload = await league_lab_service.request("GET", "/entitlements/v1/token")
+    token = token_payload.get("accessToken") if isinstance(token_payload, dict) else None
+    if not token:
+        raise RuntimeError("LCU 未返回 SGP 授权令牌")
+    url = f"{host}/match-history-query/v1/products/lol/player/{puuid}/SUMMARY"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                params={"startIndex": beg_index, "count": count},
+            )
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise RuntimeError(f"SGP 战绩请求失败: {type(exc).__name__}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("SGP 战绩返回格式无效")
+    return payload
+
+
 async def _champion_names() -> dict[int, str]:
     try:
         rows = await league_lab_service.request("GET", "/lol-game-data/assets/v1/champion-summary.json")
@@ -1164,6 +1234,48 @@ def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "")
     return normalized
 
 
+def _normalize_sgp_match_rows(payload: dict, names: dict[int, str], puuid: str) -> list[dict]:
+    normalized = []
+    for wrapper in (payload or {}).get("games") or []:
+        game = wrapper.get("json") if isinstance(wrapper, dict) and isinstance(wrapper.get("json"), dict) else wrapper
+        if not isinstance(game, dict):
+            continue
+        participant = next(
+            (row for row in (game.get("participants") or []) if str(row.get("puuid") or "") == puuid),
+            None,
+        )
+        if not participant:
+            continue
+        champion_id = int(participant.get("championId") or 0)
+        normalized.append(
+            {
+                "game_id": game.get("gameId"),
+                "played_at": game.get("gameCreation") or game.get("gameStartTimestamp"),
+                "duration_seconds": game.get("gameDuration"),
+                "game_mode": game.get("gameMode"),
+                "game_type": game.get("gameType"),
+                "queue_id": game.get("queueId"),
+                "position": participant.get("teamPosition"),
+                "role": participant.get("individualPosition"),
+                "champion_id": champion_id,
+                "champion_name": names.get(champion_id, participant.get("championName") or str(champion_id)),
+                "spell1_id": participant.get("summoner1Id") or participant.get("spell1Id"),
+                "spell2_id": participant.get("summoner2Id") or participant.get("spell2Id"),
+                "kills": participant.get("kills", 0),
+                "deaths": participant.get("deaths", 0),
+                "assists": participant.get("assists", 0),
+                "win": bool(participant.get("win")),
+                "cs": int(participant.get("totalMinionsKilled", 0)) + int(participant.get("neutralMinionsKilled", 0)),
+                "gold": participant.get("goldEarned", 0),
+                "damage": participant.get("totalDamageDealtToChampions", 0),
+                "items": [participant.get(f"item{i}") for i in range(7) if participant.get(f"item{i}")],
+                "challenges": participant.get("challenges") or {},
+                "source": "sgp",
+            }
+        )
+    return normalized
+
+
 def _infer_premade_groups(histories: dict[str, dict], active_puuids: set[str], threshold: int = 3) -> dict[str, int]:
     game_teams: dict[str, list[set[str]]] = {}
     for payload in histories.values():
@@ -1306,6 +1418,17 @@ async def _load_player_bundle(summoner, match_limit: int = 20, beg_index: int = 
         ),
         _champion_names(),
     )
+    match_source = "lcu"
+    matches = _normalize_match_rows(history or {}, names, puuid)
+    if len(matches) < match_limit:
+        try:
+            sgp_history = await _sgp_match_history(puuid, beg_index, match_limit)
+            sgp_matches = _normalize_sgp_match_rows(sgp_history, names, puuid)
+            if sgp_matches:
+                matches = sgp_matches
+                match_source = "sgp"
+        except RuntimeError:
+            pass
     tags = _read_player_tags().get(puuid) or {}
     return {
         "summoner": {
@@ -1317,11 +1440,12 @@ async def _load_player_bundle(summoner, match_limit: int = 20, beg_index: int = 
         },
         "ranked": ranked or {},
         "mastery": mastery or {},
-        "matches": _normalize_match_rows(history or {}, names, puuid),
+        "matches": matches,
+        "match_source": match_source,
         "page": {
             "beg_index": beg_index,
             "end_index": beg_index + match_limit - 1,
-            "has_more": len(_normalize_match_rows(history or {}, names, puuid)) >= match_limit,
+            "has_more": len(matches) >= match_limit,
         },
         "tag": tags,
     }

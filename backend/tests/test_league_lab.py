@@ -517,3 +517,72 @@ def test_profile_icon_falls_back_to_png(monkeypatch):
     ]
     assert response.body == b"profile-png"
     assert response.media_type == "image/png"
+
+
+def test_sgp_server_routing_matches_tencent_and_global_clients():
+    assert league_lab._sgp_server_id(league_lab.LcuCredentials(1, "x", "CN", "HN1")) == "TENCENT_HN1"
+    assert league_lab._sgp_server_id(league_lab.LcuCredentials(1, "x", "TENCENT", "HN10")) == "TENCENT_HN10"
+    assert league_lab._sgp_server_id(league_lab.LcuCredentials(1, "x", "NA", "NA1")) == "NA1"
+    assert league_lab._sgp_server_id(league_lab.LcuCredentials(1, "x", "EUW1", "EUW1")) == "EUW"
+
+
+def test_sgp_match_rows_normalize_wrapped_summary():
+    payload = {
+        "games": [{
+            "metadata": {"match_id": "HN1_9"},
+            "json": {
+                "gameId": 9,
+                "gameCreation": 123456,
+                "gameDuration": 1800,
+                "gameMode": "CLASSIC",
+                "gameType": "MATCHED_GAME",
+                "queueId": 420,
+                "participants": [{
+                    "puuid": "player-1", "championId": 22, "championName": "Ashe",
+                    "teamPosition": "BOTTOM", "individualPosition": "BOTTOM",
+                    "summoner1Id": 4, "summoner2Id": 7, "kills": 10, "deaths": 2,
+                    "assists": 8, "win": True, "totalMinionsKilled": 180,
+                    "neutralMinionsKilled": 10, "goldEarned": 14000,
+                    "totalDamageDealtToChampions": 25000, "item0": 3006,
+                    "challenges": {"kda": 9.0},
+                }],
+            },
+        }],
+    }
+    rows = league_lab._normalize_sgp_match_rows(payload, {22: "寒冰射手"}, "player-1")
+
+    assert rows == [{
+        "game_id": 9, "played_at": 123456, "duration_seconds": 1800,
+        "game_mode": "CLASSIC", "game_type": "MATCHED_GAME", "queue_id": 420,
+        "position": "BOTTOM", "role": "BOTTOM", "champion_id": 22,
+        "champion_name": "寒冰射手", "spell1_id": 4, "spell2_id": 7,
+        "kills": 10, "deaths": 2, "assists": 8, "win": True, "cs": 190,
+        "gold": 14000, "damage": 25000, "items": [3006],
+        "challenges": {"kda": 9.0}, "source": "sgp",
+    }]
+
+
+def test_player_bundle_falls_back_to_sgp_history(monkeypatch):
+    async def request(method, path, *, json_body=None, params=None):
+        if path.startswith("/lol-ranked/"):
+            return {}
+        if path.startswith("/lol-champion-mastery/"):
+            return []
+        if path.startswith("/lol-match-history/"):
+            return {"games": {"games": []}}
+        raise AssertionError(path)
+
+    async def sgp(puuid, beg_index, count):
+        assert (puuid, beg_index, count) == ("player-1", 0, 20)
+        return {"games": [{"json": {"gameId": 1, "participants": [{"puuid": "player-1", "championId": 22}]}}]}
+
+    async def names():
+        return {22: "Ashe"}
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    monkeypatch.setattr(league_lab, "_sgp_match_history", sgp)
+    monkeypatch.setattr(league_lab, "_champion_names", names)
+    result = asyncio.run(league_lab._load_player_bundle({"puuid": "player-1"}))
+
+    assert result["match_source"] == "sgp"
+    assert result["matches"][0]["game_id"] == 1
