@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Literal
 
 import httpx
+import aiosqlite
 import websockets
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
@@ -1613,6 +1614,9 @@ async def _load_player_bundle(summoner, match_limit: int = 20, beg_index: int = 
         except RuntimeError:
             pass
     tags = _read_player_tags().get(puuid) or {}
+    if match_limit >= 100 and beg_index == 0 and matches:
+        await _store_match_collection(puuid, matches)
+    collection_count = await _match_collection_count(puuid)
     return {
         "summoner": {
             "puuid": puuid,
@@ -1627,6 +1631,7 @@ async def _load_player_bundle(summoner, match_limit: int = 20, beg_index: int = 
         "mastery": mastery or {},
         "matches": matches,
         "match_source": match_source,
+        "collection_count": collection_count,
         "page": {
             "beg_index": beg_index,
             "end_index": beg_index + match_limit - 1,
@@ -1634,6 +1639,91 @@ async def _load_player_bundle(summoner, match_limit: int = 20, beg_index: int = 
         },
         "tag": tags,
     }
+
+
+def _league_collection_db_path() -> Path:
+    return get_data_dir() / "cs2-insight.db"
+
+
+async def _ensure_league_collection_table(conn: aiosqlite.Connection) -> None:
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS league_match_collection (
+            puuid TEXT NOT NULL,
+            game_id TEXT NOT NULL,
+            played_at INTEGER,
+            payload_json TEXT NOT NULL,
+            collected_at INTEGER NOT NULL,
+            PRIMARY KEY (puuid, game_id)
+        )
+        """
+    )
+
+
+async def _store_match_collection(puuid: str, matches: list[dict]) -> int:
+    path = _league_collection_db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    async with aiosqlite.connect(path) as conn:
+        await _ensure_league_collection_table(conn)
+        now = int(time.time())
+        for row in matches:
+            game_id = str(row.get("game_id") or "")
+            if not game_id:
+                continue
+            await conn.execute(
+                """
+                INSERT INTO league_match_collection (puuid, game_id, played_at, payload_json, collected_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(puuid, game_id) DO UPDATE SET
+                    played_at=excluded.played_at,
+                    payload_json=excluded.payload_json,
+                    collected_at=excluded.collected_at
+                """,
+                (puuid, game_id, row.get("played_at"), json.dumps(row, ensure_ascii=False), now),
+            )
+        await conn.commit()
+        cursor = await conn.execute("SELECT COUNT(*) FROM league_match_collection WHERE puuid = ?", (puuid,))
+        count = int((await cursor.fetchone())[0])
+    return count
+
+
+async def _match_collection_count(puuid: str) -> int:
+    path = _league_collection_db_path()
+    if not path.exists():
+        return 0
+    async with aiosqlite.connect(path) as conn:
+        await _ensure_league_collection_table(conn)
+        cursor = await conn.execute("SELECT COUNT(*) FROM league_match_collection WHERE puuid = ?", (puuid,))
+        row = await cursor.fetchone()
+    return int(row[0] if row else 0)
+
+
+async def _read_match_collection(puuid: str, limit: int = 100) -> list[dict]:
+    path = _league_collection_db_path()
+    if not path.exists():
+        return []
+    async with aiosqlite.connect(path) as conn:
+        await _ensure_league_collection_table(conn)
+        cursor = await conn.execute(
+            "SELECT payload_json FROM league_match_collection WHERE puuid = ? ORDER BY COALESCE(played_at, 0) DESC, collected_at DESC LIMIT ?",
+            (puuid, max(1, min(limit, 500))),
+        )
+        rows = await cursor.fetchall()
+    result = []
+    for row in rows:
+        try:
+            payload = json.loads(row[0])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(payload, dict):
+            result.append(payload)
+    return result
+
+
+@router.get("/players/{puuid}/collection")
+async def league_player_collection(puuid: str, limit: int = 100):
+    matches = await _read_match_collection(puuid, limit)
+    return {"puuid": puuid, "matches": matches, "count": len(matches), "source": "sqlite"}
 
 
 class PlayerTagBody(BaseModel):

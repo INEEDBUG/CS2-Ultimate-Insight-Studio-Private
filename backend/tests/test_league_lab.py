@@ -707,6 +707,22 @@ def test_player_bundle_falls_back_to_sgp_history(monkeypatch):
     assert result["matches"][0]["game_id"] == 1
 
 
+def test_match_collection_persists_and_deduplicates(tmp_path, monkeypatch):
+    path = tmp_path / "league.db"
+    monkeypatch.setattr(league_lab, "_league_collection_db_path", lambda: path)
+    first = {"game_id": 7, "played_at": 100, "kills": 1}
+    updated = {"game_id": 7, "played_at": 100, "kills": 9}
+    second = {"game_id": 8, "played_at": 200, "kills": 2}
+
+    assert asyncio.run(league_lab._store_match_collection("player-1", [first])) == 1
+    assert asyncio.run(league_lab._store_match_collection("player-1", [updated, second])) == 2
+
+    rows = asyncio.run(league_lab._read_match_collection("player-1"))
+    assert [row["game_id"] for row in rows] == [8, 7]
+    assert rows[1]["kills"] == 9
+    assert asyncio.run(league_lab._match_collection_count("player-1")) == 2
+
+
 def test_skin_selector_only_exposes_owned_enabled_skins():
     result = league_lab._normalize_skin_selector(
         {"showSkinSelector": True, "selectedSkinId": 22001, "selectedChampionId": 22},

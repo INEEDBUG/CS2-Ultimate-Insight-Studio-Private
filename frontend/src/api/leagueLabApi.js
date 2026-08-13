@@ -40,6 +40,11 @@ export async function fetchLeaguePlayer(puuid, matchLimit = 20, begIndex = 0) {
   return data;
 }
 
+export async function fetchLeaguePlayerCollection(puuid, limit = 100) {
+  const { data } = await API.get(`/league-lab/players/${encodeURIComponent(puuid)}/collection`, { params: { limit } });
+  return data;
+}
+
 export async function searchLeaguePlayer(gameName, tagLine) {
   const { data } = await API.get("/league-lab/players/search", { params: { game_name: gameName, tag_line: tagLine } });
   return data;
