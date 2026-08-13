@@ -1107,6 +1107,55 @@ def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "")
     return normalized
 
 
+def _infer_premade_groups(histories: dict[str, dict], active_puuids: set[str], threshold: int = 3) -> dict[str, int]:
+    game_teams: dict[str, list[set[str]]] = {}
+    for payload in histories.values():
+        for game in (((payload or {}).get("games") or {}).get("games") or []):
+            game_id = str(game.get("gameId") or "")
+            if not game_id or game_id in game_teams:
+                continue
+            team_members: dict[int, set[str]] = {}
+            participants = {row.get("participantId"): row for row in (game.get("participants") or [])}
+            for identity in game.get("participantIdentities") or []:
+                player = identity.get("player") or {}
+                puuid = str(player.get("puuid") or identity.get("puuid") or "")
+                participant = participants.get(identity.get("participantId")) or {}
+                team_id = int(participant.get("teamId") or 0)
+                if puuid and team_id:
+                    team_members.setdefault(team_id, set()).add(puuid)
+            game_teams[game_id] = list(team_members.values())
+    together: dict[tuple[str, str], int] = {}
+    for teams in game_teams.values():
+        for team in teams:
+            visible = sorted(team & active_puuids)
+            for index, first in enumerate(visible):
+                for second in visible[index + 1:]:
+                    together[(first, second)] = together.get((first, second), 0) + 1
+    graph = {puuid: set() for puuid in active_puuids}
+    for (first, second), count in together.items():
+        if count >= threshold:
+            graph[first].add(second)
+            graph[second].add(first)
+    groups: dict[str, int] = {}
+    seen: set[str] = set()
+    group_id = 0
+    for puuid in sorted(active_puuids):
+        if puuid in seen or not graph[puuid]:
+            continue
+        stack, members = [puuid], []
+        while stack:
+            current = stack.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            members.append(current)
+            stack.extend(graph[current] - seen)
+        if len(members) > 1:
+            group_id += 1
+            groups.update({member: group_id for member in members})
+    return groups
+
+
 @router.get("/status")
 async def league_lab_status():
     return await league_lab_service.snapshot()
@@ -1247,33 +1296,50 @@ async def league_ongoing_game():
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     game_data = (gameflow or {}).get("gameData") or {}
     selections = game_data.get("playerChampionSelections") or []
-    players = []
-    for row in selections:
+    async def enrich(row):
         if not isinstance(row, dict):
-            continue
+            return None, None
         puuid = str(row.get("puuid") or row.get("playerPuuid") or "")
-        summoner = None
-        ranked = None
+        summoner, ranked, history = None, None, None
         if puuid:
             try:
-                summoner, ranked = await asyncio.gather(
+                summoner, ranked, history = await asyncio.gather(
                     league_lab_service.request("GET", f"/lol-summoner/v2/summoners/puuid/{puuid}"),
                     league_lab_service.request("GET", f"/lol-ranked/v1/ranked-stats/{puuid}"),
+                    league_lab_service.request(
+                        "GET", f"/lol-match-history/v1/products/lol/{puuid}/matches",
+                        params={"begIndex": 0, "endIndex": 19},
+                    ),
                 )
             except RuntimeError:
                 pass
         champion_id = int(row.get("championId") or 0)
-        players.append(
-            {
-                "puuid": puuid,
-                "team": row.get("team") or row.get("teamId"),
-                "champion_id": champion_id,
-                "champion_name": names.get(champion_id, str(champion_id)),
-                "summoner": summoner or {},
-                "ranked": ranked or {},
-                "tag": _read_player_tags().get(puuid) or {},
-            }
-        )
+        matches = _normalize_match_rows(history or {}, names, puuid)
+        champion_matches = [match for match in matches if match.get("champion_id") == champion_id]
+        return ({
+            "puuid": puuid,
+            "team": row.get("team") or row.get("teamId"),
+            "champion_id": champion_id,
+            "champion_name": names.get(champion_id, str(champion_id)),
+            "summoner": summoner or {},
+            "ranked": ranked or {},
+            "tag": _read_player_tags().get(puuid) or {},
+            "recent": {
+                "matches": len(matches),
+                "wins": sum(1 for match in matches if match.get("win")),
+            },
+            "champion_usage": {
+                "matches": len(champion_matches),
+                "wins": sum(1 for match in champion_matches if match.get("win")),
+                "average_kda": round(sum((match.get("kills", 0) + match.get("assists", 0)) / max(1, match.get("deaths", 0)) for match in champion_matches) / max(1, len(champion_matches)), 2),
+            },
+        }, history or {})
+    enriched = await asyncio.gather(*(enrich(row) for row in selections))
+    players = [result[0] for result in enriched if result[0]]
+    histories = {result[0]["puuid"]: result[1] for result in enriched if result[0] and result[0].get("puuid")}
+    premade_groups = _infer_premade_groups(histories, set(histories))
+    for player in players:
+        player["premade_group"] = premade_groups.get(player.get("puuid"))
     result = {
         "phase": league_lab_service.phase,
         "queue": game_data.get("queue") or {},

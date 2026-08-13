@@ -40,6 +40,7 @@ This document prevents the League integration from becoming a collection of unre
 - Event-driven private-chat auto reply, away-only gating, offline-status lock and one-shot ARAM side announcements.
 - Event-driven friend auto-invitation queue: waits for an opted-in friend to become online, checks lobby permissions/membership, invites once and removes the completed target.
 - Riot ID (`game name#tag`) cross-player lookup through the local LCU alias endpoint, paginated match history and durable recently encountered player indexing.
+- Live-game recent-form and current-champion usage summaries, plus LeagueAkari-style premade inference from repeated same-team match history.
 
 ### Partially implemented; upstream behavior is richer
 
@@ -53,7 +54,7 @@ This document prevents the League integration from becoming a collection of unre
 ### Not implemented yet
 
 - SGP-backed historical analysis and multi-source fallback (LCU Riot ID and PUUID lookup work now).
-- Ongoing-game premade detection, champion-usage rates and jungle-path analysis (live team/profile cards work now).
+- Ongoing-game jungle-path analysis (live team/profile cards, premade detection and champion-usage summaries work now).
 - Match-history advanced filters, collect mode and multi-source fallback.
 - Respawn timer and the ongoing-game/OP.GG/auxiliary overlay windows.
 - Champion skin selector auxiliary window.

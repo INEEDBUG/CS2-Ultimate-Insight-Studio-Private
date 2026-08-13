@@ -387,3 +387,25 @@ def test_recent_players_are_deduplicated_and_sorted(monkeypatch, tmp_path):
     assert [row["puuid"] for row in rows] == ["one", "two"]
     assert rows[0]["game_name"] == "One Renamed"
     assert rows[0]["last_game_id"] == 200
+
+
+def test_premade_groups_require_repeated_same_team_matches():
+    def match(game_id, teammates):
+        identities = [
+            {"participantId": index + 1, "player": {"puuid": puuid}}
+            for index, puuid in enumerate(teammates)
+        ]
+        participants = [
+            {"participantId": index + 1, "teamId": 100}
+            for index in range(len(teammates))
+        ]
+        return {"gameId": game_id, "participantIdentities": identities, "participants": participants}
+
+    histories = {
+        "a": {"games": {"games": [match(1, ["a", "b"]), match(2, ["a", "b"]), match(3, ["a", "b"])]}},
+        "c": {"games": {"games": [match(4, ["b", "c"])]}},
+    }
+    groups = league_lab._infer_premade_groups(histories, {"a", "b", "c"}, threshold=3)
+
+    assert groups["a"] == groups["b"]
+    assert "c" not in groups
