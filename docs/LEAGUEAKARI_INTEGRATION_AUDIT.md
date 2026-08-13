@@ -55,7 +55,7 @@ This document prevents the League integration from becoming a collection of unre
 - Champion config: data model supports saved loadouts, but the editor still uses numeric IDs instead of upstream champion/rune/spell galleries and position presets.
 - Honor: strategy parity is implemented; the UI intentionally keeps the feature opt-in and disabled by default.
 - Invitations: per-type strategy, priority ordering and away gating are implemented; the UI still needs the complete upstream dynamic invite-type catalog.
-- Match history: current and cross-player rows, Riot ID lookup, pagination, ranked/mastery summary, recently encountered players, local tags, result/mode/champion/position/minimum-kills/maximum-deaths/minimum-KDA filters, SGP fallback, one-click 100-match collection and expanded match cards exist; upstream-level challenge presentation and the full composable-filter language remain.
+- Match history: current and cross-player rows, Riot ID lookup, pagination, ranked/mastery summary, recently encountered players, local tags, result/mode/champion/position/minimum-kills/maximum-deaths/minimum-KDA filters, SGP fallback, one-click 100-match collection, aggregate KDA/participation/vision/damage challenge metrics and expanded match cards exist; the full upstream challenge catalog and composable-filter language remain.
 - Mini window: phase-driven show/hide, safe manual close, dedicated `mini.html`, ARAM bench swap/reroll, owned-skin selection and respawn countdown are implemented; action countdowns and remaining auxiliary cards remain.
 
 ### Not implemented yet
