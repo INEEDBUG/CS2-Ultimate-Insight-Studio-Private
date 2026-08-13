@@ -110,6 +110,7 @@ class LeagueLabSettings(BaseModel):
     lock_offline_status: bool = False
     auto_send_aram_team_side_enabled: bool = False
     auto_send_aram_team_side_visible_to_team: bool = False
+    auto_invite_friend_puuids: list[str] = Field(default_factory=list, max_length=20)
     mini_enabled: bool = True
     mini_auto_show: bool = True
 
@@ -391,6 +392,31 @@ class LeagueLabService:
             availability = str(data.get("availability") or "")
             if availability in {"away", "chat", "online"}:
                 await self.request("PUT", "/lol-chat/v1/me", json_body={"availability": "offline"})
+
+        friend_match = re.fullmatch(r"/lol-chat/v1/friends/([^/]+)", uri)
+        if friend_match and self.settings.automation_enabled and self.settings.auto_invite_friend_puuids:
+            puuid = str(data.get("puuid") or "")
+            if puuid in self.settings.auto_invite_friend_puuids and data.get("availability") == "chat":
+                try:
+                    lobby = await self.request("GET", "/lol-lobby/v2/lobby")
+                except RuntimeError:
+                    return
+                members = (lobby or {}).get("members") or []
+                if any(str(member.get("puuid") or "") == puuid for member in members):
+                    return
+                summoner_id = data.get("summonerId")
+                if summoner_id and (lobby or {}).get("localMember", {}).get("allowedInviteOthers", True):
+                    await self.request(
+                        "POST",
+                        "/lol-lobby/v2/lobby/invitations",
+                        json_body=[{"toSummonerId": summoner_id}],
+                    )
+                    self.settings.auto_invite_friend_puuids = [
+                        value for value in self.settings.auto_invite_friend_puuids if value != puuid
+                    ]
+                    self.update_settings(self.settings)
+                    self.last_action = f"已自动邀请好友 {data.get('gameName') or puuid}"
+                    self.last_action_at = time.time()
 
     async def request(self, method: str, path: str, *, json_body=None, params=None):
         if not await self.refresh_connection():

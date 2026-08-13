@@ -305,3 +305,36 @@ def test_aram_team_side_sends_once(monkeypatch):
             {"body": "本局位于左侧（蓝方）", "type": "chat"},
         )
     ]
+
+
+def test_auto_invite_online_friend_removes_completed_target(monkeypatch, tmp_path):
+    monkeypatch.setattr(LeagueLabService, "_settings_path", staticmethod(lambda: tmp_path / "league-lab.json"))
+    service = LeagueLabService()
+    service.settings = LeagueLabSettings(
+        automation_enabled=True,
+        auto_invite_friend_puuids=["friend-puuid"],
+    )
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if method == "GET":
+            return {"members": [], "localMember": {"allowedInviteOthers": True}}
+        calls.append((method, path, json_body))
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(
+        service._handle_lcu_event(
+            {
+                "uri": "/lol-chat/v1/friends/friend-puuid",
+                "data": {
+                    "puuid": "friend-puuid",
+                    "availability": "chat",
+                    "summonerId": 42,
+                    "gameName": "Friend",
+                },
+            }
+        )
+    )
+
+    assert calls == [("POST", "/lol-lobby/v2/lobby/invitations", [{"toSummonerId": 42}])]
+    assert service.settings.auto_invite_friend_puuids == []

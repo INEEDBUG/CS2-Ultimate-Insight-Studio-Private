@@ -38,6 +38,7 @@ This document prevents the League integration from becoming a collection of unre
 - Player center foundation: current/cross-player summoner profile, ranked queues, top mastery, recent matches and durable local player tags.
 - Ongoing-game foundation: current Gameflow teams, champion assignments, ranked/profile enrichment, local tags and click-through to player details.
 - Event-driven private-chat auto reply, away-only gating, offline-status lock and one-shot ARAM side announcements.
+- Event-driven friend auto-invitation queue: waits for an opted-in friend to become online, checks lobby permissions/membership, invites once and removes the completed target.
 
 ### Partially implemented; upstream behavior is richer
 
@@ -50,7 +51,6 @@ This document prevents the League integration from becoming a collection of unre
 
 ### Not implemented yet
 
-- Automatic invitations for a queued friend list (automatic reply and ARAM team-side messaging work now).
 - SGP-backed historical analysis and name/tag cross-player lookup (LCU PUUID lookup works now).
 - Ongoing-game premade detection, champion-usage rates and jungle-path analysis (live team/profile cards work now).
 - Recently encountered player indexing (reusable saved-player/tag storage works now).
