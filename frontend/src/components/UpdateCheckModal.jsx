@@ -1,7 +1,7 @@
 import { useT } from "../i18n/useT.js";
 import { normalizeUpdateMode } from "../utils/desktopUpdater";
 
-/** Cloudflare / Tauri updater 检查更新弹窗 */
+/** GitHub Release / Tauri updater 检查更新弹窗 */
 export default function UpdateCheckModal({ open, info, onClose, onCancel, onConfirm, title }) {
   const t = useT();
   if (!open || !info) return null;

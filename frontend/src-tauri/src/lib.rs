@@ -479,9 +479,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        // The private fork has no signed update channel. Keep the dependency
-        // available for a future public release, but do not initialize the
-        // plugin without a valid updater configuration.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(BackendProcess::new().expect("failed to create desktop session token"))
         .manage(AppLifecycle::default())

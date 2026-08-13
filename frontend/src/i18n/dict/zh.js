@@ -1831,7 +1831,7 @@ export default {
   "dialog.updateLatestVersion": "最新版本",
   "dialog.updateCurrentVersion": "当前",
   "dialog.updateViaMirror": "经镜像加速：",
-  "dialog.updateViaCloudflare": "更新通道：Cloudflare R2",
+  "dialog.updateViaCloudflare": "更新通道：GitHub Release · Tauri 签名校验",
   "dialog.updateUpToDate": "已安装为最新版本。",
   "dialog.updateNoNotes": "无发布说明",
   "dialog.updateDownloadingStart": "发现新版本，正在准备下载…",
