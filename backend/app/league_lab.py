@@ -241,6 +241,7 @@ class LeagueLabService:
         self._phase_action_due_at: float | None = None
         self._handled_invitations: set[str] = set()
         self._handled_champion_actions: set[str] = set()
+        self._champion_action_due_at: dict[str, float] = {}
         self._handled_trades: set[str] = set()
         self._bench_candidate_since: dict[int, float] = {}
         self._leader_handoff_lobby = ""
@@ -274,6 +275,7 @@ class LeagueLabService:
         if not settings.auto_select_enabled:
             self._accept_due_at = None
             self._handled_champion_actions.clear()
+            self._champion_action_due_at.clear()
             self._configured_champion_id = 0
             self.champ_select = {}
         return settings
@@ -319,6 +321,7 @@ class LeagueLabService:
             self._phase_action_done = ""
             self._phase_action_due_at = None
             self._accept_due_at = None
+            self._champion_action_due_at.clear()
             self._matchmaking_due_at = None
             self._matchmaking_status = "idle"
             if credentials:
@@ -437,9 +440,19 @@ class LeagueLabService:
             if response.status_code == 204 or not response.content:
                 return None
             return response.json()
-        except (httpx.HTTPError, ValueError) as exc:
+        except httpx.HTTPStatusError as exc:
+            self.last_error = f"LCU 请求失败: {type(exc).__name__}"
+            # Optional routes can legitimately be absent on some client builds.
+            # A 404 does not invalidate the in-memory LCU credentials.
+            if exc.response.status_code in {401, 403}:
+                self.credentials = None
+            raise RuntimeError(self.last_error) from exc
+        except httpx.RequestError as exc:
             self.last_error = f"LCU 请求失败: {type(exc).__name__}"
             self.credentials = None
+            raise RuntimeError(self.last_error) from exc
+        except ValueError as exc:
+            self.last_error = f"LCU 请求失败: {type(exc).__name__}"
             raise RuntimeError(self.last_error) from exc
 
     async def request_bytes(self, path: str) -> tuple[bytes, str]:
@@ -466,6 +479,31 @@ class LeagueLabService:
 
     def status(self) -> dict:
         credentials = self.credentials
+        now_mono = time.monotonic()
+        countdowns: list[tuple[str, str, float]] = []
+        if self._accept_due_at is not None and self._accept_due_at != float("inf"):
+            countdowns.append(("ready-check", "自动接受对局", self._accept_due_at))
+        if self._champion_action_due_at:
+            countdowns.append(("champion-action", "自动选择 / 禁用英雄", min(self._champion_action_due_at.values())))
+        phase_action_enabled = (
+            (self.phase == "Reconnect" and self.settings.auto_reconnect_enabled)
+            or (self.phase in {"EndOfGame", "WaitingForStats", "PreEndOfGame"} and self.settings.play_again_enabled)
+        )
+        if self._phase_action_due_at is not None and not self._phase_action_done and phase_action_enabled:
+            label = "自动重连" if self.phase == "Reconnect" else "自动返回房间"
+            countdowns.append(("phase-action", label, self._phase_action_due_at))
+        if self._matchmaking_due_at is not None:
+            countdowns.append(("matchmaking", "自动开始匹配", self._matchmaking_due_at))
+        next_countdown = min(countdowns, key=lambda item: item[2]) if countdowns else None
+        action_countdown = None
+        if next_countdown:
+            kind, label, due_at = next_countdown
+            action_countdown = {
+                "kind": kind,
+                "label": label,
+                "due_at": time.time() + max(0.0, due_at - now_mono),
+                "remaining_seconds": round(max(0.0, due_at - now_mono), 2),
+            }
         return {
             "connected": credentials is not None,
             "phase": self.phase,
@@ -481,6 +519,7 @@ class LeagueLabService:
             "last_event_at": self._last_event_at or None,
             "matchmaking_status": self._matchmaking_status,
             "matchmaking_due_at": (time.time() + max(0.0, self._matchmaking_due_at - time.monotonic())) if self._matchmaking_due_at else None,
+            "action_countdown": action_countdown,
             "respawn_timer": self.respawn_timer,
             "mini_should_show": self.settings.mini_enabled and self.settings.mini_auto_show and self.phase in {"Lobby", "Matchmaking", "ReadyCheck", "ChampSelect"} and not bool(self.champ_select.get("is_spectating")),
             "settings": self.settings.model_dump(),
@@ -578,6 +617,7 @@ class LeagueLabService:
             "allow_subset_champion_picks": bool(session.get("allowSubsetChampionPicks")),
             "timer_phase": str(timer.get("phase") or ""),
             "timer_adjusted_time_left_ms": int(timer.get("adjustedTimeLeftInPhase") or timer.get("timeLeftInPhase") or 0),
+            "timer_deadline_at": time.time() + max(0, int(timer.get("adjustedTimeLeftInPhase") or timer.get("timeLeftInPhase") or 0)) / 1000,
             "is_spectating": bool(session.get("isSpectating")),
         }
 
@@ -659,11 +699,17 @@ class LeagueLabService:
                     continue
                 delay = configured.delay_seconds if configured.enabled else self.settings.champion_action_delay_seconds
                 strategy = configured.strategy if configured.enabled else ("show-and-lock-in" if self.settings.champion_lock_in else "just-show")
-                if action_type == "pick" and profile.pick.enabled and profile.pick.show_intent and strategy != "lock-in-immediately":
-                    await self.request("PATCH", f"/lol-champ-select/v1/session/actions/{action.get('id')}", json_body={"championId": champion_id, "type": action_type, "completed": False})
-                await asyncio.sleep(delay)
+                due_at = self._champion_action_due_at.get(action_key)
+                if due_at is None:
+                    if action_type == "pick" and profile.pick.enabled and profile.pick.show_intent and strategy != "lock-in-immediately":
+                        await self.request("PATCH", f"/lol-champ-select/v1/session/actions/{action.get('id')}", json_body={"championId": champion_id, "type": action_type, "completed": False})
+                    due_at = time.monotonic() + delay
+                    self._champion_action_due_at[action_key] = due_at
+                if time.monotonic() < due_at:
+                    continue
                 if strategy != "just-show":
                     await self.request("PATCH", f"/lol-champ-select/v1/session/actions/{action.get('id')}", json_body={"championId": champion_id, "type": action_type, "completed": True})
+                self._champion_action_due_at.pop(action_key, None)
                 self._handled_champion_actions.add(action_key)
                 self.last_action = f"[{group}] 已自动{'选择' if action_type == 'pick' else '禁用'}英雄 {champion_id}"
                 self.last_action_at = time.time()
@@ -981,6 +1027,7 @@ class LeagueLabService:
                 await self._run_champion_config()
         else:
             self._handled_champion_actions.clear()
+            self._champion_action_due_at.clear()
             self._handled_trades.clear()
             self._bench_candidate_since.clear()
             self._configured_champion_id = 0

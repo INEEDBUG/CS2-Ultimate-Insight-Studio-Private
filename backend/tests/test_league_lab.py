@@ -1,5 +1,8 @@
 import asyncio
 import subprocess
+import time
+
+import httpx
 
 from app import league_lab
 from app.league_lab import LeagueLabService, LeagueLabSettings, parse_league_client_command_line
@@ -116,6 +119,54 @@ def test_ready_check_runs_auto_accept_once(monkeypatch):
     assert calls == [("已自动接受对局", "POST", "/lol-matchmaking/v1/ready-check/accept")]
 
 
+def test_ready_check_exposes_mini_action_countdown():
+    service = LeagueLabService()
+    service.settings = LeagueLabSettings(
+        automation_enabled=True,
+        auto_accept_enabled=True,
+        auto_accept_delay_seconds=3,
+    )
+    service.phase = "ReadyCheck"
+
+    asyncio.run(service._run_automation())
+    countdown = service.status()["action_countdown"]
+
+    assert countdown["kind"] == "ready-check"
+    assert countdown["label"] == "自动接受对局"
+    assert 0 < countdown["remaining_seconds"] <= 3
+
+
+def test_optional_lcu_404_preserves_discovered_credentials(monkeypatch):
+    service = LeagueLabService()
+    service.credentials = league_lab.LcuCredentials(port=54321, token="memory-only")
+    service._last_discovery_at = time.monotonic()
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def request(self, method, url, **kwargs):
+            return httpx.Response(404, request=httpx.Request(method, url))
+
+    monkeypatch.setattr(league_lab.httpx, "AsyncClient", FakeClient)
+
+    try:
+        asyncio.run(service.request("GET", "/optional-route"))
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("404 must still surface to the optional-route caller")
+
+    assert service.credentials is not None
+    assert service.credentials.token == "memory-only"
+
+
 def test_play_again_waits_for_phase_buffer(monkeypatch):
     service = LeagueLabService()
     service.settings = LeagueLabSettings(automation_enabled=True, play_again_enabled=True)
@@ -181,6 +232,33 @@ def test_normalized_champ_select_exposes_mini_bench_state():
     assert normalized["bench_champions"] == [12, 34]
     assert normalized["rerolls_remaining"] == 1
     assert normalized["timer_phase"] == "FINALIZATION"
+    assert normalized["timer_deadline_at"] > 0
+
+
+def test_auto_select_delay_is_non_blocking_and_visible(monkeypatch):
+    service = LeagueLabService()
+    service.settings = LeagueLabSettings(
+        automation_enabled=True,
+        auto_select_enabled=True,
+        auto_pick_champion_ids=[103],
+        champion_action_delay_seconds=3,
+    )
+
+    async def request(method, path, *, json_body=None, params=None):
+        if path == "/lol-champ-select/v1/session":
+            return {"localPlayerCellId": 2, "actions": [[{"id": 8, "actorCellId": 2, "type": "pick", "isInProgress": True}]]}
+        if path == "/lol-champ-select/v1/pickable-champion-ids":
+            return [103]
+        if path == "/lol-gameflow/v1/session":
+            return {}
+        raise AssertionError("the delayed lock-in must not run yet")
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(service._run_auto_select())
+
+    countdown = service.status()["action_countdown"]
+    assert countdown["kind"] == "champion-action"
+    assert 0 < countdown["remaining_seconds"] <= 3
 
 
 def test_invitation_strategy_prefers_accept_and_respects_game_type(monkeypatch):
