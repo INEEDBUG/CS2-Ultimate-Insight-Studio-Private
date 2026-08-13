@@ -240,3 +240,68 @@ def test_auto_honor_opt_out_finishes_without_voting(monkeypatch):
     asyncio.run(service._run_auto_honor())
 
     assert calls == [("POST", "/lol-honor/v1/ballot", None)]
+
+
+def test_auto_reply_uses_event_conversation_and_ignores_history(monkeypatch):
+    service = LeagueLabService()
+    service.settings = LeagueLabSettings(
+        automation_enabled=True,
+        auto_reply_enabled=True,
+        auto_reply_text="稍后回复",
+    )
+    service.current_summoner = {"summoner_id": 7}
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, json_body))
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(
+        service._handle_lcu_event(
+            {
+                "uri": "/lol-chat/v1/conversations/friend/messages/message-1",
+                "eventType": "Create",
+                "data": {"type": "chat", "fromSummonerId": 8, "isHistorical": False},
+            }
+        )
+    )
+
+    assert calls == [
+        (
+            "POST",
+            "/lol-chat/v1/conversations/friend/messages",
+            {"body": "稍后回复", "type": "chat"},
+        )
+    ]
+
+
+def test_aram_team_side_sends_once(monkeypatch):
+    service = LeagueLabService()
+    service.settings = LeagueLabSettings(
+        automation_enabled=True,
+        auto_send_aram_team_side_enabled=True,
+        auto_send_aram_team_side_visible_to_team=True,
+    )
+    service.phase = "ChampSelect"
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if path == "/lol-champ-select/v1/session":
+            return {"benchEnabled": True, "localPlayerCellId": 3, "myTeam": [{"cellId": 3, "team": 1}]}
+        if path == "/lol-gameflow/v1/session":
+            return {"map": {"gameMode": "ARAM"}}
+        if path == "/lol-chat/v1/conversations":
+            return [{"id": "champ", "type": "championSelect"}]
+        calls.append((method, path, json_body))
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(service._run_aram_team_side())
+    asyncio.run(service._run_aram_team_side())
+
+    assert calls == [
+        (
+            "POST",
+            "/lol-chat/v1/conversations/champ/messages",
+            {"body": "本局位于左侧（蓝方）", "type": "chat"},
+        )
+    ]

@@ -104,6 +104,12 @@ class LeagueLabSettings(BaseModel):
     auto_matchmaking_wait_for_invitees: bool = True
     auto_matchmaking_rematch_strategy: Literal["never", "fixed-duration", "estimated-duration"] = "never"
     auto_matchmaking_rematch_fixed_duration: float = Field(default=120.0, ge=10.0, le=3600.0)
+    auto_reply_enabled: bool = False
+    auto_reply_only_away: bool = False
+    auto_reply_text: str = Field(default="", max_length=500)
+    lock_offline_status: bool = False
+    auto_send_aram_team_side_enabled: bool = False
+    auto_send_aram_team_side_visible_to_team: bool = False
     mini_enabled: bool = True
     mini_auto_show: bool = True
 
@@ -241,6 +247,7 @@ class LeagueLabService:
         self._matchmaking_due_at: float | None = None
         self._matchmaking_status = "idle"
         self._last_event_at = 0.0
+        self._aram_side_sent_context = ""
         self.champ_select: dict = {}
         self._last_discovery_at = 0.0
 
@@ -338,6 +345,7 @@ class LeagueLabService:
                         continue
                     if isinstance(event, list) and len(event) >= 3 and event[0] == 8:
                         self._last_event_at = time.time()
+                        await self._handle_lcu_event(event[2] if isinstance(event[2], dict) else {})
                         self._event_wakeup.set()
         except asyncio.CancelledError:
             raise
@@ -345,6 +353,44 @@ class LeagueLabService:
             logger.info("League LCU event stream unavailable; polling fallback remains active: %s", type(exc).__name__)
         finally:
             self._event_connected = False
+
+    async def _handle_lcu_event(self, event: dict) -> None:
+        uri = str(event.get("uri") or "")
+        data = event.get("data") or {}
+        message_match = re.fullmatch(r"/lol-chat/v1/conversations/([^/]+)/messages/([^/]+)", uri)
+        if (
+            message_match
+            and self.settings.automation_enabled
+            and self.settings.auto_reply_enabled
+            and self.settings.auto_reply_text
+        ):
+            own_id = self.current_summoner.get("summoner_id")
+            if (
+                event.get("eventType") in {"Create", "Update"}
+                and data.get("type") == "chat"
+                and data.get("fromSummonerId") != own_id
+                and not data.get("isHistorical")
+            ):
+                if self.settings.auto_reply_only_away:
+                    try:
+                        chat_me = await self.request("GET", "/lol-chat/v1/me")
+                    except RuntimeError:
+                        return
+                    if not isinstance(chat_me, dict) or chat_me.get("availability") != "away":
+                        return
+                conversation_id = message_match.group(1)
+                await self.request(
+                    "POST",
+                    f"/lol-chat/v1/conversations/{conversation_id}/messages",
+                    json_body={"body": self.settings.auto_reply_text, "type": "chat"},
+                )
+                self.last_action = "已自动回复一条私聊"
+                self.last_action_at = time.time()
+
+        if uri == "/lol-chat/v1/me" and self.settings.automation_enabled and self.settings.lock_offline_status:
+            availability = str(data.get("availability") or "")
+            if availability in {"away", "chat", "online"}:
+                await self.request("PUT", "/lol-chat/v1/me", json_body={"availability": "offline"})
 
     async def request(self, method: str, path: str, *, json_body=None, params=None):
         if not await self.refresh_connection():
@@ -408,6 +454,7 @@ class LeagueLabService:
                     "tag_line": summoner.get("tagLine") or "",
                     "summoner_level": summoner.get("summonerLevel"),
                     "profile_icon_id": summoner.get("profileIconId"),
+                    "summoner_id": summoner.get("summonerId"),
                 }
             self.last_error = ""
             if self.phase == "ChampSelect":
@@ -709,6 +756,55 @@ class LeagueLabService:
             self._matchmaking_due_at = None
             self._matchmaking_status = "searching"
 
+    async def _run_aram_team_side(self) -> None:
+        if not self.settings.auto_send_aram_team_side_enabled or self.phase != "ChampSelect":
+            if self.phase != "ChampSelect":
+                self._aram_side_sent_context = ""
+            return
+        try:
+            session = await self.request("GET", "/lol-champ-select/v1/session")
+            gameflow = await self.request("GET", "/lol-gameflow/v1/session")
+            conversations = await self.request("GET", "/lol-chat/v1/conversations")
+        except RuntimeError:
+            return
+        if not isinstance(session, dict) or not session.get("benchEnabled"):
+            return
+        game_mode = str(((gameflow or {}).get("map") or {}).get("gameMode") or "").upper()
+        if game_mode not in {"ARAM", "KIWI"}:
+            return
+        local_cell = session.get("localPlayerCellId")
+        member = next((row for row in (session.get("myTeam") or []) if row.get("cellId") == local_cell), {})
+        team = int(member.get("team") or 0)
+        if team not in {1, 2}:
+            return
+        conversation_rows = conversations if isinstance(conversations, list) else []
+        conversation = next(
+            (
+                row
+                for row in conversation_rows
+                if isinstance(row, dict) and str(row.get("type") or "").lower() in {"championselect", "champion-select"}
+            ),
+            None,
+        )
+        if not conversation or not conversation.get("id"):
+            return
+        context = f"{conversation['id']}:{team}"
+        if context == self._aram_side_sent_context:
+            return
+        labels = {1: "本局位于左侧（蓝方）", 2: "本局位于右侧（红方）"}
+        body = labels[team]
+        await self.request(
+            "POST",
+            f"/lol-chat/v1/conversations/{conversation['id']}/messages",
+            json_body={
+                "body": body if self.settings.auto_send_aram_team_side_visible_to_team else f"[Insight] {body}",
+                "type": "chat" if self.settings.auto_send_aram_team_side_visible_to_team else "celebration",
+            },
+        )
+        self._aram_side_sent_context = context
+        self.last_action = f"已发送大乱斗阵营：{labels[team]}"
+        self.last_action_at = time.time()
+
     async def _run_lobby_automation(self) -> None:
         settings = self.settings
         if settings.auto_skip_leader_enabled and self.phase == "Lobby":
@@ -812,6 +908,7 @@ class LeagueLabService:
             await self._run_auto_honor()
 
         await self._run_auto_matchmaking()
+        await self._run_aram_team_side()
         await self._run_lobby_automation()
 
     async def _run(self) -> None:

@@ -37,6 +37,7 @@ This document prevents the League integration from becoming a collection of unre
 - All upstream honor strategies: prefer lobby members, lobby-only, allies, allies plus opponents, and automatic opt-out.
 - Player center foundation: current/cross-player summoner profile, ranked queues, top mastery, recent matches and durable local player tags.
 - Ongoing-game foundation: current Gameflow teams, champion assignments, ranked/profile enrichment, local tags and click-through to player details.
+- Event-driven private-chat auto reply, away-only gating, offline-status lock and one-shot ARAM side announcements.
 
 ### Partially implemented; upstream behavior is richer
 
@@ -49,8 +50,7 @@ This document prevents the League integration from becoming a collection of unre
 
 ### Not implemented yet
 
-- ARAM team-side messaging.
-- Automatic reply and automatic invitations.
+- Automatic invitations for a queued friend list (automatic reply and ARAM team-side messaging work now).
 - SGP-backed historical analysis and name/tag cross-player lookup (LCU PUUID lookup works now).
 - Ongoing-game premade detection, champion-usage rates and jungle-path analysis (live team/profile cards work now).
 - Recently encountered player indexing (reusable saved-player/tag storage works now).
