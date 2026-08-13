@@ -45,6 +45,7 @@ This document prevents the League integration from becoming a collection of unre
 - Opt-in local respawn countdown in League Mini through the in-game Live Client Data endpoint; disabled by default.
 - Thirty-second enriched live-game cache so frequent UI refreshes do not repeatedly request every player's history.
 - League Mini ARAM bench card with current champion, bench choices, reroll count, manual swap and reroll actions.
+- Independent resizable real-time match window, sharing the cached team/premade/champion-usage analysis with the main lab.
 
 ### Partially implemented; upstream behavior is richer
 
@@ -60,7 +61,7 @@ This document prevents the League integration from becoming a collection of unre
 - SGP-backed historical analysis and multi-source fallback (LCU Riot ID and PUUID lookup work now).
 - Ongoing-game jungle-path analysis (live team/profile cards, premade detection and champion-usage summaries work now).
 - Match-history advanced filters, collect mode and multi-source fallback.
-- Ongoing-game/OP.GG/auxiliary overlay windows (the Mini respawn timer now works through local Live Client Data).
+- OP.GG and remaining specialized auxiliary overlay windows (an independent native real-time match window and Mini respawn timer now work).
 - Champion skin selector auxiliary window.
 - Reward/mission/event claiming plus mutating loot and friend tools (the read-only overview works now; writes require separate safety review).
 - In-game preset messaging and chat availability/status tools.

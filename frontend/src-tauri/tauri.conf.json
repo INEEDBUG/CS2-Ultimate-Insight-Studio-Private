@@ -34,6 +34,18 @@
         "resizable": true,
         "decorations": true,
         "alwaysOnTop": true
+      },
+      {
+        "label": "league-ongoing",
+        "title": "Insight · League 实时对局",
+        "url": "ongoing.html",
+        "width": 1360,
+        "height": 840,
+        "minWidth": 980,
+        "minHeight": 640,
+        "visible": false,
+        "resizable": true,
+        "decorations": true
       }
     ],
     "security": {
