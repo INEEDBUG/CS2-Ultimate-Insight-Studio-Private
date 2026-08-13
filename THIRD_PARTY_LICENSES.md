@@ -51,3 +51,4 @@ CS2 Insight Agent 在编译与运行时依赖以下开源组件。常规编译�
 ## Adapted source
 
 - The match share-code decoder in `backend/app/valve_demo_resolver.py` is a Python adaptation of `akiver/csgo-sharecode` (MIT). Source: https://github.com/akiver/csgo-sharecode. The required notice is retained in `third_party/licenses/csgo-sharecode-LICENSE.txt`.
+- The integrated League automation lab adapts the local LCU discovery and game-flow concepts from `LeagueAkari` (MIT) into this project's Python/Tauri architecture. Source: https://github.com/LeagueAkari/LeagueAkari. The required notice is retained in `third_party/licenses/LeagueAkari-LICENSE.txt`; LeagueAkari's Electron/Vue application is not bundled.

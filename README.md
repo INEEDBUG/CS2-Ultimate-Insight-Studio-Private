@@ -31,6 +31,7 @@
 - **官匹 Demo 工作流参考**：[akiver/cs-demo-manager](https://github.com/akiver/cs-demo-manager)。本项目没有采用它的 PostgreSQL 数据层，也没有把整个项目代码直接合并进来。
 - **Steam Game Coordinator 辅助程序**：[akiver/boiler-writter](https://github.com/akiver/boiler-writter) 1.7.0（GPL-3.0）。它在用户首次明确同意后按需下载，并以未修改的独立进程运行。
 - **Share Code 解码代码**：[akiver/csgo-sharecode](https://github.com/akiver/csgo-sharecode)（MIT）的 Python 适配，许可证原文保存在 `third_party/licenses/csgo-sharecode-LICENSE.txt`。
+- **英雄联盟自动化参考**：[LeagueAkari/LeagueAkari](https://github.com/LeagueAkari/LeagueAkari)（MIT）。本项目将其本地 LCU 连接与游戏流程自动化思路重新适配到现有 Python/Tauri 架构，不捆绑原 Electron/Vue 应用；许可证原文保存在 `third_party/licenses/LeagueAkari-LICENSE.txt`。
 - 完整第三方依赖与许可证边界见 [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md)。
 
 本仓库不展示任何上游作者的收款码，也不代表上游作者募集赞助。新的橙色准星/数据脉冲图标为本项目原创资产，不使用 Valve 官方 CS2 标志。
@@ -82,7 +83,7 @@
 ### Demo 库维护
 
 - **本地库记录展示** — 列表、缩略图展示 Demo 的比赛来源、记分板、关注玩家、展示名、备注等关键信息。
-- **近期战绩面板** — 默认采用“左侧近期比赛、右侧所选比赛详情”的战绩工具布局；直接复用已解析 Demo，展示回合胜负条、双方 K/D/A、ADR、KAST、Estimated HLTV Rating 2.0 / Rating Pro 3.0，以及胜方英雄和负方战犯。原网格与列表视图仍可随时切换。
+- **近期战绩面板** — 默认采用“左侧近期比赛、右侧所选比赛详情”的战绩工具布局；直接复用已解析 Demo，展示回合胜负条、双方 K/D/A、ADR、KAST、Estimated HLTV Rating 2.0 / Rating Pro 3.0，以及双方各自的队内英雄和队内战犯。玩家头像来自 Steam 公共资料，点击名字可打开对应 Steam 主页；原网格与列表视图仍可随时切换。
 - **真实比赛时间与来源标记** — 官匹分享码下载时读取 Steam Game Coordinator 返回的 `matchtime`，单独保存为真实比赛时间；排序在 SQLite 查询阶段覆盖全部分页。缺少服务器时间的旧 Demo 明确显示“比赛时间未知”，仅把入库时间作为辅助信息，不再冒充比赛日期；已缓存分享码的旧官匹可在战绩面板中补全。
 - **目录自动监听** — 支持 5E / 完美 / 官匹 demo / faceit 等 Demo 下载目录的监听，一键自动入库。
 - **本机 Steam 最近战绩** — 不再要求个人 Steam Web API Key、游戏认证码或浏览器 Cookie。软件直接连接当前已登录的本机 Steam Game Coordinator，自动显示最近 8 场官匹的真实比赛时间、地图、比分、K/D/A、爆头和 MVP；点击某场后才按需下载 Demo。Steam 最近战绩摘要不包含伤害、ADR、KAST 或 Rating，这些指标明确显示为 `—`，下载并解析 Demo 后才在本地计算，不会编造数值。
@@ -94,7 +95,7 @@
 - **历史分析记录** — 已完成的分析会保存在本地 SQLite 数据库；分析页可直接打开最近记录并复用缓存，不会因为重启软件丢失，也不会为了查看历史重复慢解析。
 - **解析时仍可浏览历史** — 后台解析期间保留历史分析面板，并显示整批任务持续运行时间；即使解析页因批次状态切换而重新载入，计时也不会回到 0。当前任务完成前历史卡片保持只读，避免切换记录覆盖正在处理的 Demo。
 - **解析后先看计分板** — Demo 基础分析完成后默认打开全场计分板，集中显示比分、K/D/A、ADR、KAST、爆头率、首杀、AWP 与道具伤害，并给每位玩家生成 S–D 评级、优势和优化方向。
-- **Estimated HLTV Rating 2.0 / Rating Pro 3.0** — Est. R2 采用公开社区逆向估算式，并用 csstats.gg 十人记分板样本做 ±0.01 回归校验，修复旧模型把高输出局过度压向 1.00 的问题；RP3 再加入逐回合经济、多杀、补枪/闪光助攻和 Round Swing。界面可展开六项分数、置信度、纯保枪和经济修正，并标出胜方英雄与负方战犯；评分明确不是 HLTV 官方值，算法边界见 [方法说明](./docs/rating-pro-methodology.md)。
+- **Estimated HLTV Rating 2.0 / Rating Pro 3.0** — Est. R2 采用公开社区逆向估算式，并用 csstats.gg 十人记分板样本做 ±0.01 回归校验，修复旧模型把高输出局过度压向 1.00 的问题；RP3 再加入逐回合经济、多杀、补枪/闪光助攻和 Round Swing。界面可展开六项分数、置信度、纯保枪和经济修正，并为双方分别标出队内英雄与队内战犯；评分明确不是 HLTV 官方值，算法边界见 [方法说明](./docs/rating-pro-methodology.md)。
 - **逐回合玩家评价** — 回合页和 2D 回放结束状态都会展示该回合全部玩家评价，综合击杀、死亡、首杀、爆头和下包/拆包事件。
 - **交互式 2D 回放** — 可按回合查看双方站位、移动轨迹、击杀以及烟雾/燃烧范围；点击左右阵容 ID 或地图标记即可选中玩家，选中反馈会在阵容、地图和回合评价之间同步。
 - **单队战术视角** — 可切换全局、仅 A 队或仅 B 队，过滤另一队的位置、轨迹、弹道和投掷物。该功能用于战术复盘，不声称模拟游戏内真实视线遮挡。
@@ -119,9 +120,11 @@
 - **本机 CS2 CFG 预填** — 以只读方式扫描本地 Steam 账号的 CS2 配置，预填当前灵敏度、`m_yaw`、分辨率和画面比例；DPI 与显卡拉伸模式仍由用户确认。
 - **磁轴参数优化** — 根据异常重复边沿、保持抖动、A/D 重叠和方向切换延迟，分别给出触发行程、RT 按下及 RT 抬起的建议起点，并要求每次仅调整 `0.05–0.10 mm` 后复测。
 - **官匹输入安全提醒** — 普通 Rapid Trigger 可用于缩短按键复位；在 CS2 官匹中应关闭 Snap Tap、Rapid Tap、Snappy Tappy、SOCD/LKP 等自动反向输入功能。
+- **英雄联盟自动化实验室** — 与 CS2 功能共用同一个桌面客户端和托盘，自动检测本机 LeagueClientUx 并通过 LCU 提供自动接受（含延迟）、结算后返回房间、掉线重连、房间邀请策略及手动动作。LCU 令牌只保存在运行内存，不写入磁盘、不上传；总开关关闭时不会执行写入操作。
 
 ### 自动录制
 
+- **已录制视频库** — 在软件内浏览并播放 OBS 成片、查看文件路径并在资源管理器中定位；可读取和修改当前 OBS Profile 的录制目录，新路径只影响后续录制，不会擅自移动旧视频。
 - **批量录制队列** — 多场比赛、多个片段排队，程序依次启动 CS2 回放并驱动 OBS 成片；录制前可预览整批计划，队列里也可微调每段的节奏。
 - **录制前观战设置** — 一键配置观战 HUD（仅死亡通知、隐藏 ID/聊天/Demo 条）、视野与持枪角度、闪光亮度、语音、分辨率与画幅、片段之间的 OBS 转场等；本场也可临时打开实验性 POV 第一人称 HUD。
 - **多样化成片风格**：
