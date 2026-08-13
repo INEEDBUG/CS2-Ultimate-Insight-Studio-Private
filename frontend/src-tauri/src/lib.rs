@@ -53,15 +53,19 @@ fn open_league_ongoing(app: AppHandle) -> Result<(), String> {
         window.set_focus().map_err(|error| error.to_string())?;
         return Ok(());
     }
-    WebviewWindowBuilder::new(&app, "league-ongoing", WebviewUrl::App("ongoing.html".into()))
-        .title("Insight · League 实时对局")
-        .inner_size(1360.0, 840.0)
-        .min_inner_size(980.0, 640.0)
-        .resizable(true)
-        .decorations(true)
-        .build()
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    WebviewWindowBuilder::new(
+        &app,
+        "league-ongoing",
+        WebviewUrl::App("ongoing.html".into()),
+    )
+    .title("Insight · League 实时对局")
+    .inner_size(1360.0, 840.0)
+    .min_inner_size(980.0, 640.0)
+    .resizable(true)
+    .decorations(true)
+    .build()
+    .map(|_| ())
+    .map_err(|error| error.to_string())
 }
 
 #[derive(Default)]
