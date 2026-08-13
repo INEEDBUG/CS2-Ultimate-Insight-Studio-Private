@@ -39,6 +39,7 @@ export default {
   "nav.officialDemos": "官匹 Demo 下载",
   "nav.analysis": "解析分析",
   "nav.recordQueue": "录制队列",
+  "nav.recordedVideos": "已录制视频",
   "nav.montage": "合辑工作台",
   "nav.sectionTools": "工具",
   "nav.recordParams": "录制参数配置",

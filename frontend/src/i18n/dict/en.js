@@ -38,6 +38,7 @@ export default {
   "nav.officialDemos": "Official Demo Download",
   "nav.analysis": "Analysis",
   "nav.recordQueue": "Record Queue",
+  "nav.recordedVideos": "Recorded Videos",
   "nav.montage": "Montage Studio",
   "nav.sectionTools": "Tools",
   "nav.recordParams": "Record Params",

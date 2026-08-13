@@ -64,6 +64,7 @@ const GuidePage = lazy(() => import("./pages/GuidePage"));
 const DemoLibraryPage = lazy(() => import("./pages/DemoLibraryPage"));
 const DemoAnalysisPreviewPage = lazy(() => import("./pages/DemoAnalysisPreviewPage"));
 const RecordingQueuePage = lazy(() => import("./pages/RecordingQueuePage"));
+const RecordedVideosPage = lazy(() => import("./pages/RecordedVideosPage"));
 const MontageWorkbenchPage = lazy(() => import("./pages/MontageWorkbenchPage"));
 const LiteCutEditorPage = lazy(() => import("./pages/liteCut/LiteCutEditorPage"));
 const LiteCutExportPage = lazy(() => import("./pages/liteCut/LiteCutExportPage"));
@@ -3393,6 +3394,7 @@ export default function App() {
                 <Route path="/analysis" element={<DemoAnalysisPreviewPage />} />
                 <Route path="/demo-analysis-preview" element={<Navigate to="/analysis" replace />} />
                 <Route path="/queue" element={<RecordingQueuePage />} />
+                <Route path="/recorded-videos" element={<RecordedVideosPage />} />
                 <Route path="/montage" element={<MontageWorkbenchPage />} />
                 <Route path="/lite-cut" element={<LiteCutEditorPage />} />
                 <Route path="/lite-cut/editor" element={<Navigate to="/lite-cut" replace />} />

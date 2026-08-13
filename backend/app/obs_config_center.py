@@ -383,6 +383,35 @@ def _recording_output_path_from_simple(simple: dict[str, str]) -> str:
     return (simple.get("FilePath") or simple.get("FilePath2") or "").strip()
 
 
+def set_recording_output_path(obs_cfg, output_path: str) -> dict[str, Any]:
+    """Change the active OBS profile's directory for future recordings."""
+
+    target = Path(str(output_path or "").strip()).expanduser()
+    if not target.is_absolute() or not target.is_dir():
+        raise ValueError("请选择已存在的本地录制目录")
+    ws: Optional[obsws] = None
+    try:
+        ws = _ws_connect(obs_cfg, timeout=10.0)
+        if _obs_is_recording(ws):
+            raise ValueError("OBS 正在录制，请停止录制后再修改存放目录")
+        output_mode = _get_profile_parameter(ws, "Output", "Mode") or "Simple"
+        advanced = output_mode.strip().lower() == "advanced"
+        category = "AdvOut" if advanced else "SimpleOutput"
+        parameter = "RecFilePath" if advanced else "FilePath"
+        ws.call(obs_requests.SetProfileParameter(
+            parameterCategory=category,
+            parameterName=parameter,
+            parameterValue=str(target),
+        ))
+        saved = _get_profile_parameter(ws, category, parameter)
+        if os.path.normcase(os.path.normpath(saved)) != os.path.normcase(os.path.normpath(str(target))):
+            raise ValueError("OBS 未确认新的录制目录，请重启 OBS 后重试")
+        return {"ok": True, "path": saved, "output_mode": "Advanced" if advanced else "Simple", "restart_obs_required": False}
+    finally:
+        if ws is not None:
+            _ws_disconnect(ws)
+
+
 def _get_profile_parameter(ws: obsws, category: str, name: str) -> str:
     response = ws.call(
         obs_requests.GetProfileParameter(

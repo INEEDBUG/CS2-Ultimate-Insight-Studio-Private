@@ -4328,6 +4328,38 @@ async def list_recorded_clips(
     return {"items": rows, "limit": limit, "offset": offset}
 
 
+@app.get("/api/recorded-clips/storage")
+async def get_recorded_clips_storage():
+    """Return the configured future recording directory and a recent fallback."""
+
+    rows = await montage_db.list_recorded_clips(limit=1, offset=0)
+    recent_output = str((rows[0] if rows else {}).get("output_path") or "").strip()
+    recent_path = str(Path(recent_output).parent) if recent_output else ""
+    try:
+        status = await asyncio.wait_for(
+            asyncio.to_thread(obs_config_center.get_status_payload, load_config().obs),
+            timeout=3.0,
+        )
+    except Exception:
+        status = {}
+    configured_path = str((status.get("recording") or {}).get("output_path") or "").strip()
+    return {"configured_path": configured_path, "recent_path": recent_path, "obs_connected": bool(status.get("obs_connected"))}
+
+
+class RecordedClipsStoragePatch(BaseModel):
+    path: str = Field(..., min_length=1, max_length=2048)
+
+
+@app.patch("/api/recorded-clips/storage")
+async def patch_recorded_clips_storage(body: RecordedClipsStoragePatch):
+    try:
+        return await asyncio.to_thread(obs_config_center.set_recording_output_path, load_config().obs, body.path)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"无法连接 OBS 修改录制目录：{exc}") from exc
+
+
 class RecordedClipDurationPatch(BaseModel):
     duration_sec: float = Field(gt=0.05, le=86400)
 

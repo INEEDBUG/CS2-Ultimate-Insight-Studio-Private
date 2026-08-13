@@ -16,6 +16,7 @@ import {
   Package,
   Settings,
   Sun,
+  Video,
 } from "lucide-react";
 import { useThemeStore } from "../stores/themeStore";
 import { useReplayStore } from "../stores/replayStore";
@@ -164,6 +165,7 @@ export default function SidebarNav({ queueLength = 0, disabled = false }) {
         <NavItem to="/match-history" icon={Download}>{t("nav.officialDemos")}</NavItem>
         <NavItem to="/analysis" icon={BarChart3}>{t("nav.analysis")}</NavItem>
         <NavItem to="/queue" icon={Package} disabled={disabled} badge={queueLength}>{t("nav.recordQueue")}</NavItem>
+        <NavItem to="/recorded-videos" icon={Video} disabled={disabled}>{t("nav.recordedVideos")}</NavItem>
         <NavItem to="/montage" icon={Clapperboard} disabled={disabled}>{t("nav.montage")}</NavItem>
         <NavItem to="/lite-cut" icon={Clapperboard} disabled={disabled}>LiteCut</NavItem>
 

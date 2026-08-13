@@ -28,6 +28,9 @@ describe("SidebarNav", () => {
     expect(screen.getByRole("link", { name: "nav.officialDemos" }).getAttribute("href")).toBe(
       "/match-history",
     );
+    expect(screen.getByRole("link", { name: "nav.recordedVideos" }).getAttribute("href")).toBe(
+      "/recorded-videos",
+    );
   });
 
   test("keeps the appearance popover above the main workspace layer", () => {
