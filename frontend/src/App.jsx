@@ -2919,7 +2919,7 @@ export default function App() {
     updateControllerRef.current?.cancel();
   }, [updateInfo?.update_mode]);
 
-  /** Cloudflare R2 + Tauri updater（不走 GitHub /api/app/update-info） */
+  /** GitHub Release + Tauri 签名更新通道（不走后端 /api/app/update-info） */
   const fetchUpdateInfo = useCallback(
     async (opts = { manual: false, awaitDismiss: false }) => {
       const manual = Boolean(opts.manual);

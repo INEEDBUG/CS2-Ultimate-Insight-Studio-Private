@@ -47,5 +47,16 @@
         "displayLanguageSelector": false
       }
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNBMjcwNkFBNUIwNEJGNDgKUldSSXZ3UmJxZ1luT25TSzY2Y2M3WGhDWlpVQWVScWdKbWhqOFlGL0p5QktEVEFScERlRVRmYWIK",
+      "endpoints": [
+        "https://raw.githubusercontent.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/updater/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

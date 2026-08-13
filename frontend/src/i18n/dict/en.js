@@ -1830,7 +1830,7 @@ export default {
   "dialog.updateLatestVersion": "Latest version",
   "dialog.updateCurrentVersion": "Current",
   "dialog.updateViaMirror": "Via mirror: ",
-  "dialog.updateViaCloudflare": "Update channel: Cloudflare R2",
+  "dialog.updateViaCloudflare": "Update channel: GitHub Release · Tauri signature verification",
   "dialog.updateUpToDate": "You are on the latest version.",
   "dialog.updateNoNotes": "No release notes",
   "dialog.updateDownloadingStart": "Update found. Preparing download…",

@@ -122,7 +122,10 @@ jobs:
 
       - name: Build Tauri desktop installer
         shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw "TAURI_SIGNING_PRIVATE_KEY is not configured" }
           $wheel = Get-ChildItem "dist/wheels/demoparser2-*-cp312-*.whl" | Select-Object -First 1
           if (-not $wheel) { throw "CPython 3.12 lean demoparser wheel not found" }
           $env:CS2_INSIGHT_DEMOPARSER_WHEEL = $wheel.FullName
@@ -135,6 +138,8 @@ jobs:
           } finally {
             Pop-Location
           }
+          $updaterSignature = Get-ChildItem "frontend/src-tauri/target/release/bundle/nsis" -Filter "*.exe.sig" -File | Select-Object -First 1
+          if (-not $updaterSignature) { throw "Signed Tauri updater artifact was not created" }
 
       - name: Verify bundled Python runtime
         shell: pwsh
@@ -184,6 +189,14 @@ jobs:
           }
           [IO.File]::WriteAllLines((Join-Path (Get-Location) "SHA256SUMS"), $sums, [Text.UTF8Encoding]::new($false))
 
+      - name: Generate signed updater manifest
+        if: github.event_name == 'push'
+        working-directory: frontend
+        env:
+          RELEASE_NOTES: "本版本已经发布，可在客户端内点击立即更新。完整更新说明请查看 GitHub Release。"
+          UPDATE_MODE: normal
+        run: node scripts/generate-github-updater-manifest.mjs
+
       - name: Create GitHub Release
         if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
@@ -192,6 +205,32 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish updater channel
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $manifestPath = "frontend/src-tauri/target/release/bundle/nsis/latest.json"
+          if (-not (Test-Path -LiteralPath $manifestPath)) { throw "latest.json was not generated" }
+          $branch = "updater"
+          $ref = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/$branch" 2>$null | ConvertFrom-Json
+          if (-not $ref) {
+            gh api --method POST "repos/$env:GITHUB_REPOSITORY/git/refs" -f ref="refs/heads/$branch" -f sha="$env:GITHUB_SHA" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Failed to create updater branch" }
+          }
+          $existing = gh api "repos/$env:GITHUB_REPOSITORY/contents/latest.json?ref=$branch" 2>$null | ConvertFrom-Json
+          $content = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path $manifestPath)))
+          $args = @(
+            "api", "--method", "PUT", "repos/$env:GITHUB_REPOSITORY/contents/latest.json",
+            "-f", "message=Publish updater manifest $env:BUILD_VERSION",
+            "-f", "branch=$branch",
+            "-f", "content=$content"
+          )
+          if ($existing.sha) { $args += @("-f", "sha=$($existing.sha)") }
+          & gh @args | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Failed to publish updater manifest" }
 
       - name: Upload private release candidate
         if: github.event_name == 'workflow_dispatch'
