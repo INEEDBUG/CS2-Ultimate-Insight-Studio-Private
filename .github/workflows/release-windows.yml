@@ -138,6 +138,8 @@ jobs:
           } finally {
             Pop-Location
           }
+          $updaterSignature = Get-ChildItem "frontend/src-tauri/target/release/bundle/nsis" -Filter "*.exe.sig" -File | Select-Object -First 1
+          if (-not $updaterSignature) { throw "Signed Tauri updater artifact was not created" }
 
       - name: Verify bundled Python runtime
         shell: pwsh
