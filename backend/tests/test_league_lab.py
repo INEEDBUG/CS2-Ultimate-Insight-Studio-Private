@@ -167,6 +167,22 @@ def test_mode_group_matches_league_queue_families():
     assert LeagueLabService._mode_group({"gameData": {"isCustomGame": True}}) == "custom"
 
 
+def test_normalized_champ_select_exposes_mini_bench_state():
+    normalized = LeagueLabService._normalize_champ_select({
+        "localPlayerCellId": 2,
+        "myTeam": [{"cellId": 2, "championId": 22}],
+        "benchEnabled": True,
+        "benchChampions": [{"championId": 12}, {"championId": 34}],
+        "rerollsRemaining": 1,
+        "allowRerolling": True,
+        "timer": {"phase": "FINALIZATION", "adjustedTimeLeftInPhase": 9000},
+    })
+    assert normalized["current_champion_id"] == 22
+    assert normalized["bench_champions"] == [12, 34]
+    assert normalized["rerolls_remaining"] == 1
+    assert normalized["timer_phase"] == "FINALIZATION"
+
+
 def test_invitation_strategy_prefers_accept_and_respects_game_type(monkeypatch):
     service = LeagueLabService()
     service.settings = LeagueLabSettings(

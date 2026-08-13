@@ -44,6 +44,7 @@ This document prevents the League integration from becoming a collection of unre
 - Read-only client toolkit overview for missions, reward grants, loot inventory and friends; no claim, craft, redeem or delete action is exposed.
 - Opt-in local respawn countdown in League Mini through the in-game Live Client Data endpoint; disabled by default.
 - Thirty-second enriched live-game cache so frequent UI refreshes do not repeatedly request every player's history.
+- League Mini ARAM bench card with current champion, bench choices, reroll count, manual swap and reroll actions.
 
 ### Partially implemented; upstream behavior is richer
 
@@ -52,7 +53,7 @@ This document prevents the League integration from becoming a collection of unre
 - Honor: strategy parity is implemented; the UI intentionally keeps the feature opt-in and disabled by default.
 - Invitations: per-type strategy, priority ordering and away gating are implemented; the UI still needs the complete upstream dynamic invite-type catalog.
 - Match history: current and cross-player rows, Riot ID lookup, pagination, ranked/mastery summary, recently encountered players, local tags, result/mode/champion filters and expanded match cards exist; upstream-level challenges and the full composable-filter language remain.
-- Mini window: phase-driven show/hide, safe manual close and a dedicated `mini.html` entry are implemented; skin selection, bench controls, action countdowns and all auxiliary cards remain.
+- Mini window: phase-driven show/hide, safe manual close, dedicated `mini.html`, ARAM bench swap/reroll and respawn countdown are implemented; skin selection, action countdowns and remaining auxiliary cards remain.
 
 ### Not implemented yet
 

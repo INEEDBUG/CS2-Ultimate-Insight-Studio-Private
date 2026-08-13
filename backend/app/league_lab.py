@@ -540,11 +540,20 @@ class LeagueLabService:
                     "assigned_position": member.get("assignedPosition") or "",
                     "summoner_id": member.get("summonerId"),
                 })
+        local_cell = session.get("localPlayerCellId")
+        local_member = next((item for item in (session.get("myTeam") or []) if item.get("cellId") == local_cell), {})
+        timer = session.get("timer") or {}
         return {
             "local_player_cell_id": session.get("localPlayerCellId"),
+            "current_champion_id": local_member.get("championId") or local_member.get("championPickIntent"),
             "my_team": members,
             "bench_enabled": bool(session.get("benchEnabled")),
             "bench_champions": [int(item.get("championId")) for item in (session.get("benchChampions") or []) if isinstance(item, dict) and item.get("championId")],
+            "rerolls_remaining": int(session.get("rerollsRemaining") or 0),
+            "allow_rerolling": bool(session.get("allowRerolling")),
+            "allow_subset_champion_picks": bool(session.get("allowSubsetChampionPicks")),
+            "timer_phase": str(timer.get("phase") or ""),
+            "timer_adjusted_time_left_ms": int(timer.get("adjustedTimeLeftInPhase") or timer.get("timeLeftInPhase") or 0),
             "is_spectating": bool(session.get("isSpectating")),
         }
 
@@ -1500,6 +1509,36 @@ async def run_league_lab_action(action: Literal["accept", "play-again", "reconne
     try:
         method = "DELETE" if action == "stop-matchmaking" else "POST"
         await league_lab_service._record_action(label, method, path)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return league_lab_service.status()
+
+
+@router.post("/champ-select/bench/swap/{champion_id}")
+async def league_bench_swap(champion_id: int):
+    if champion_id <= 0:
+        raise HTTPException(status_code=422, detail="无效英雄 ID")
+    try:
+        await league_lab_service._record_action(
+            f"已从备战席换取英雄 {champion_id}",
+            "POST",
+            f"/lol-champ-select/v1/session/bench/swap/{champion_id}",
+        )
+        await league_lab_service._refresh_state()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return league_lab_service.status()
+
+
+@router.post("/champ-select/reroll")
+async def league_champ_select_reroll():
+    try:
+        await league_lab_service._record_action(
+            "已使用一次重随",
+            "POST",
+            "/lol-champ-select/v1/session/my-selection/reroll",
+        )
+        await league_lab_service._refresh_state()
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return league_lab_service.status()
