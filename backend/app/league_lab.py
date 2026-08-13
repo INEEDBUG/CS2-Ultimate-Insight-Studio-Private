@@ -13,7 +13,9 @@ import ctypes.wintypes as wintypes
 import json
 import logging
 import os
+import random
 import re
+import ssl
 import subprocess
 import time
 from dataclasses import dataclass
@@ -21,6 +23,7 @@ from pathlib import Path
 from typing import Literal
 
 import httpx
+import websockets
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -92,6 +95,15 @@ class LeagueLabSettings(BaseModel):
     auto_champion_config_enabled: bool = False
     champion_loadouts: list["ChampionLoadout"] = Field(default_factory=list)
     auto_honor_enabled: bool = False
+    auto_honor_strategy: Literal[
+        "prefer-lobby-member", "only-lobby-member", "all-member", "opt-out", "all-member-including-opponent"
+    ] = "prefer-lobby-member"
+    auto_matchmaking_enabled: bool = False
+    auto_matchmaking_delay_seconds: float = Field(default=5.0, ge=0.0, le=60.0)
+    auto_matchmaking_minimum_members: int = Field(default=1, ge=1, le=5)
+    auto_matchmaking_wait_for_invitees: bool = True
+    auto_matchmaking_rematch_strategy: Literal["never", "fixed-duration", "estimated-duration"] = "never"
+    auto_matchmaking_rematch_fixed_duration: float = Field(default=120.0, ge=10.0, le=3600.0)
     mini_enabled: bool = True
     mini_auto_show: bool = True
 
@@ -211,6 +223,9 @@ class LeagueLabService:
         self.last_action = ""
         self.last_action_at = 0.0
         self._task: asyncio.Task | None = None
+        self._event_task: asyncio.Task | None = None
+        self._event_wakeup = asyncio.Event()
+        self._event_connected = False
         self._accept_due_at: float | None = None
         self._acted_phase = ""
         self._phase_action_done = ""
@@ -222,6 +237,9 @@ class LeagueLabService:
         self._leader_handoff_lobby = ""
         self._configured_champion_id = 0
         self._honored_game_id = ""
+        self._matchmaking_due_at: float | None = None
+        self._matchmaking_status = "idle"
+        self._last_event_at = 0.0
         self.champ_select: dict = {}
         self._last_discovery_at = 0.0
 
@@ -262,6 +280,13 @@ class LeagueLabService:
         except asyncio.CancelledError:
             pass
         self._task = None
+        if self._event_task:
+            self._event_task.cancel()
+            try:
+                await self._event_task
+            except asyncio.CancelledError:
+                pass
+            self._event_task = None
 
     async def refresh_connection(self, *, force: bool = False) -> bool:
         now = time.monotonic()
@@ -272,6 +297,9 @@ class LeagueLabService:
         self._last_discovery_at = now
         credentials = await discover_lcu_credentials()
         if credentials != self.credentials:
+            if self._event_task:
+                self._event_task.cancel()
+                self._event_task = None
             self.credentials = credentials
             self.phase = ""
             self.summoner_name = ""
@@ -279,7 +307,42 @@ class LeagueLabService:
             self._phase_action_done = ""
             self._phase_action_due_at = None
             self._accept_due_at = None
+            self._matchmaking_due_at = None
+            self._matchmaking_status = "idle"
+            if credentials:
+                self._event_task = asyncio.create_task(self._run_event_stream(credentials), name="league-lcu-events")
         return credentials is not None
+
+    async def _run_event_stream(self, credentials: LcuCredentials) -> None:
+        """Subscribe to LCU JsonApi events; the polling loop remains a recovery fallback."""
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        try:
+            async with websockets.connect(
+                f"wss://127.0.0.1:{credentials.port}",
+                additional_headers={"Authorization": credentials.auth_header},
+                ssl=context,
+                open_timeout=3,
+                close_timeout=1,
+                ping_interval=20,
+            ) as socket:
+                self._event_connected = True
+                await socket.send(json.dumps([5, "OnJsonApiEvent"]))
+                async for raw in socket:
+                    try:
+                        event = json.loads(raw)
+                    except (TypeError, ValueError):
+                        continue
+                    if isinstance(event, list) and len(event) >= 3 and event[0] == 8:
+                        self._last_event_at = time.time()
+                        self._event_wakeup.set()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.info("League LCU event stream unavailable; polling fallback remains active: %s", type(exc).__name__)
+        finally:
+            self._event_connected = False
 
     async def request(self, method: str, path: str, *, json_body=None, params=None):
         if not await self.refresh_connection():
@@ -321,6 +384,10 @@ class LeagueLabService:
             "last_action": self.last_action,
             "last_action_at": self.last_action_at or None,
             "champ_select": self.champ_select,
+            "event_stream_connected": self._event_connected,
+            "last_event_at": self._last_event_at or None,
+            "matchmaking_status": self._matchmaking_status,
+            "matchmaking_due_at": (time.time() + max(0.0, self._matchmaking_due_at - time.monotonic())) if self._matchmaking_due_at else None,
             "mini_should_show": self.settings.mini_enabled and self.settings.mini_auto_show and self.phase in {"Lobby", "Matchmaking", "ReadyCheck", "ChampSelect"} and not bool(self.champ_select.get("is_spectating")),
             "settings": self.settings.model_dump(),
         }
@@ -531,8 +598,33 @@ class LeagueLabService:
         if not game_id or game_id == self._honored_game_id:
             return
         votes = int((ballot.get("votePool") or {}).get("votes") or 0)
-        eligible = list(ballot.get("eligibleAllies") or []) + list(ballot.get("eligibleOpponents") or [])
-        candidates = [item for item in eligible if isinstance(item, dict) and not item.get("botPlayer") and item.get("puuid")][:votes]
+        strategy = self.settings.auto_honor_strategy
+        if strategy == "opt-out":
+            await self.request("POST", "/lol-honor/v1/ballot")
+            self._honored_game_id = game_id
+            self.last_action = "已按设置跳过点赞"
+            self.last_action_at = time.time()
+            return
+        allies = [item for item in (ballot.get("eligibleAllies") or []) if isinstance(item, dict) and not item.get("botPlayer") and item.get("puuid")]
+        opponents = [item for item in (ballot.get("eligibleOpponents") or []) if isinstance(item, dict) and not item.get("botPlayer") and item.get("puuid")]
+        lobby_puuids: set[str] = set()
+        try:
+            eog = await self.request("GET", "/lol-lobby/v2/eog-status")
+            for key in ("eogPlayers", "leftPlayers", "readyPlayers"):
+                lobby_puuids.update(str(value) for value in ((eog or {}).get(key) or []))
+        except RuntimeError:
+            pass
+        lobby_allies = [item for item in allies if str(item.get("puuid")) in lobby_puuids]
+        other_allies = [item for item in allies if str(item.get("puuid")) not in lobby_puuids]
+        if strategy == "only-lobby-member":
+            eligible = lobby_allies
+        elif strategy == "all-member":
+            eligible = allies
+        elif strategy == "all-member-including-opponent":
+            eligible = allies + opponents
+        else:
+            eligible = lobby_allies + other_allies + opponents
+        candidates = random.sample(eligible, min(votes, len(eligible))) if eligible else []
         if not candidates:
             self._honored_game_id = game_id
             return
@@ -545,6 +637,67 @@ class LeagueLabService:
         self._honored_game_id = game_id
         self.last_action = "已自动点赞队友"
         self.last_action_at = time.time()
+
+    async def _run_auto_matchmaking(self) -> None:
+        settings = self.settings
+        if not settings.auto_matchmaking_enabled or self.phase not in {"Lobby", "Matchmaking"}:
+            self._matchmaking_due_at = None
+            self._matchmaking_status = "idle"
+            return
+        try:
+            lobby = await self.request("GET", "/lol-lobby/v2/lobby")
+        except RuntimeError:
+            self._matchmaking_status = "lobby-unavailable"
+            return
+        if not isinstance(lobby, dict) or (lobby.get("gameConfig") or {}).get("isCustom"):
+            self._matchmaking_status = "unsupported-lobby"
+            self._matchmaking_due_at = None
+            return
+        local = lobby.get("localMember") or {}
+        members = lobby.get("members") or []
+        if not local.get("isLeader"):
+            self._matchmaking_status = "not-leader"
+            self._matchmaking_due_at = None
+            return
+        if len(members) < settings.auto_matchmaking_minimum_members:
+            self._matchmaking_status = "insufficient-members"
+            self._matchmaking_due_at = None
+            return
+        if settings.auto_matchmaking_wait_for_invitees and any(item.get("state") == "Pending" for item in (lobby.get("invitations") or [])):
+            self._matchmaking_status = "waiting-for-invitees"
+            self._matchmaking_due_at = None
+            return
+        try:
+            search = await self.request("GET", "/lol-matchmaking/v1/search")
+        except RuntimeError:
+            search = None
+        if isinstance(search, dict) and (search.get("isCurrentlyInQueue") or search.get("searchState") == "Searching"):
+            self._matchmaking_status = "searching"
+            penalty = float(((search.get("lowPriorityData") or {}).get("penaltyTime")) or 0)
+            elapsed = max(0.0, float(search.get("timeInQueue") or 0) - penalty)
+            limit = settings.auto_matchmaking_rematch_fixed_duration
+            if settings.auto_matchmaking_rematch_strategy == "estimated-duration":
+                limit = float(search.get("estimatedQueueTime") or 0)
+            if settings.auto_matchmaking_rematch_strategy != "never" and limit > 0 and elapsed >= limit:
+                await self._record_action("已按重排策略取消匹配", "DELETE", "/lol-lobby/v2/lobby/matchmaking/search")
+                self._matchmaking_status = "rematch-cancelled"
+            return
+        errors = ((search or {}).get("errors") or []) if isinstance(search, dict) else []
+        if any(float(item.get("penaltyTimeRemaining") or 0) > 0 for item in errors if isinstance(item, dict)):
+            self._matchmaking_status = "waiting-for-penalty"
+            self._matchmaking_due_at = None
+            return
+        if not lobby.get("canStartActivity", True):
+            self._matchmaking_status = "cannot-start"
+            self._matchmaking_due_at = None
+            return
+        if self._matchmaking_due_at is None:
+            self._matchmaking_due_at = time.monotonic() + settings.auto_matchmaking_delay_seconds
+            self._matchmaking_status = "countdown"
+        if time.monotonic() >= self._matchmaking_due_at:
+            await self._record_action("已自动开始匹配", "POST", "/lol-lobby/v2/lobby/matchmaking/search")
+            self._matchmaking_due_at = None
+            self._matchmaking_status = "searching"
 
     async def _run_lobby_automation(self) -> None:
         settings = self.settings
@@ -648,6 +801,7 @@ class LeagueLabService:
         if phase in {"PreEndOfGame", "EndOfGame"} and settings.auto_honor_enabled:
             await self._run_auto_honor()
 
+        await self._run_auto_matchmaking()
         await self._run_lobby_automation()
 
     async def _run(self) -> None:
@@ -660,7 +814,12 @@ class LeagueLabService:
                 raise
             except Exception:
                 logger.exception("League lab background loop failed")
-            await asyncio.sleep(1.0 if self.credentials else 5.0)
+            timeout = 5.0 if self.credentials else 5.0
+            try:
+                await asyncio.wait_for(self._event_wakeup.wait(), timeout=timeout)
+                self._event_wakeup.clear()
+            except asyncio.TimeoutError:
+                pass
 
 
 league_lab_service = LeagueLabService()
@@ -754,15 +913,18 @@ async def league_champion_catalog():
 
 
 @router.post("/actions/{action}")
-async def run_league_lab_action(action: Literal["accept", "play-again", "reconnect"]):
+async def run_league_lab_action(action: Literal["accept", "play-again", "reconnect", "start-matchmaking", "stop-matchmaking"]):
     endpoints = {
         "accept": ("接受对局", "/lol-matchmaking/v1/ready-check/accept"),
         "play-again": ("返回房间", "/lol-lobby/v2/play-again"),
         "reconnect": ("重新连接", "/lol-gameflow/v1/reconnect"),
+        "start-matchmaking": ("开始匹配", "/lol-lobby/v2/lobby/matchmaking/search"),
+        "stop-matchmaking": ("停止匹配", "/lol-lobby/v2/lobby/matchmaking/search"),
     }
     label, path = endpoints[action]
     try:
-        await league_lab_service._record_action(label, "POST", path)
+        method = "DELETE" if action == "stop-matchmaking" else "POST"
+        await league_lab_service._record_action(label, method, path)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return league_lab_service.status()

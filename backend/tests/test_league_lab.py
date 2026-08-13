@@ -166,3 +166,77 @@ def test_auto_honor_submits_votes_and_finishes_ballot(monkeypatch):
         ("POST", "/lol-honor/v1/honor", {"honorType": "COOL", "recipientPuuid": "ally"}),
         ("POST", "/lol-honor/v1/ballot", None),
     ]
+
+
+def test_auto_matchmaking_waits_for_invitees(monkeypatch):
+    service = LeagueLabService()
+    service.settings = LeagueLabSettings(
+        automation_enabled=True,
+        auto_matchmaking_enabled=True,
+        auto_matchmaking_delay_seconds=0,
+        auto_matchmaking_wait_for_invitees=True,
+    )
+    service.phase = "Lobby"
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if path == "/lol-lobby/v2/lobby":
+            return {
+                "localMember": {"isLeader": True},
+                "members": [{}],
+                "invitations": [{"state": "Pending"}],
+                "canStartActivity": True,
+            }
+        calls.append((method, path))
+        return None
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(service._run_auto_matchmaking())
+
+    assert service._matchmaking_status == "waiting-for-invitees"
+    assert calls == []
+
+
+def test_auto_matchmaking_starts_when_lobby_is_ready(monkeypatch):
+    service = LeagueLabService()
+    service.settings = LeagueLabSettings(
+        automation_enabled=True,
+        auto_matchmaking_enabled=True,
+        auto_matchmaking_delay_seconds=0,
+    )
+    service.phase = "Lobby"
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if path == "/lol-lobby/v2/lobby":
+            return {
+                "localMember": {"isLeader": True},
+                "members": [{}],
+                "invitations": [],
+                "canStartActivity": True,
+            }
+        if path == "/lol-matchmaking/v1/search":
+            return None
+        calls.append((method, path))
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(service._run_auto_matchmaking())
+
+    assert calls == [("POST", "/lol-lobby/v2/lobby/matchmaking/search")]
+    assert service._matchmaking_status == "searching"
+
+
+def test_auto_honor_opt_out_finishes_without_voting(monkeypatch):
+    service = LeagueLabService()
+    service.settings = LeagueLabSettings(auto_honor_strategy="opt-out")
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if method == "GET":
+            return {"gameId": 88, "votePool": {"votes": 1}, "eligibleAllies": [{"puuid": "ally"}]}
+        calls.append((method, path, json_body))
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(service._run_auto_honor())
+
+    assert calls == [("POST", "/lol-honor/v1/ballot", None)]

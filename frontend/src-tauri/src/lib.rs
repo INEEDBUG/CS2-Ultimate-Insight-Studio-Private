@@ -33,8 +33,7 @@ fn open_league_mini(app: AppHandle) -> Result<(), String> {
         window.set_focus().map_err(|error| error.to_string())?;
         return Ok(());
     }
-    WebviewWindowBuilder::new(&app, "league-mini", WebviewUrl::App("index.html".into()))
-        .initialization_script("window.__INSIGHT_WINDOW_LABEL__ = 'league-mini';")
+    WebviewWindowBuilder::new(&app, "league-mini", WebviewUrl::App("mini.html".into()))
         .title("Insight · League Mini")
         .inner_size(340.0, 480.0)
         .min_inner_size(300.0, 380.0)

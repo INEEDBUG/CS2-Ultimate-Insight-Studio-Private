@@ -28,6 +28,10 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
+      input: {
+        main: resolve(__dirname, "index.html"),
+        mini: resolve(__dirname, "mini.html"),
+      },
       output: {
         manualChunks(id) {
           const normalized = id.replace(/\\/g, "/");
