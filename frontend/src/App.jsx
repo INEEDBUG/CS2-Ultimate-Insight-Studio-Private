@@ -45,7 +45,10 @@ import {
   recordingQueueWasAborted,
   unexpectedCs2ExitRecoveryMessageKey,
 } from "./utils/recordingAbort";
-import { shouldCheckAppUpdates } from "./utils/shouldCheckAppUpdates";
+import {
+  AUTO_UPDATE_POLL_INTERVAL_MS,
+  shouldCheckAppUpdates,
+} from "./utils/shouldCheckAppUpdates";
 import { createDesktopUpdateCheck } from "./utils/desktopUpdater";
 import { getVersion as getDesktopAppVersion } from "@tauri-apps/api/app";
 import { Loader2 } from "lucide-react";
@@ -3103,6 +3106,15 @@ export default function App() {
       cancelled = true;
     };
   }, [backendReady, fetchUpdateInfo]);
+
+  useEffect(() => {
+    if (!startupInitDone) return undefined;
+    const timer = window.setInterval(() => {
+      if (updateModalOpen) return;
+      void fetchUpdateInfo({ manual: false, awaitDismiss: false });
+    }, AUTO_UPDATE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [startupInitDone, updateModalOpen, fetchUpdateInfo]);
 
   const hasDemos = uploadedDemos && uploadedDemos.length > 0;
   const currentFilename = currentUpload?.filename ?? "";

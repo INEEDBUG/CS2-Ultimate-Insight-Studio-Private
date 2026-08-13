@@ -168,7 +168,7 @@
 工具链使用 `pnpm`/`pnpm-lock.yaml`，Rust 桌面壳使用 `cargo`/`Cargo.lock`；
 OBS 与 FFmpeg 仍由各自的运行时集成管理。
 
-从 `v2.5.9` 起，客户端会在启动时通过签名更新通道检查新版本。发现更新后会展示版本号和更新说明；点击“立即更新”即可下载、校验、覆盖安装并自动重启。更新包使用独立的 Tauri 签名验证，Release 页面仍只保留一个面向普通用户的 Windows EXE。首次从旧版本升级到 `v2.5.9` 仍需从[本项目 Releases 页面](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases)手动安装一次。
+从 `v2.5.9` 起，客户端通过签名更新通道检查新版本；从 `v2.5.11` 起，`main` 分支每次更新都会由 GitHub Actions 自动递增补丁版本、构建并发布 Release，无需手工打标签。客户端启动时会检查一次，运行或驻留后台期间每 15 分钟继续检查；发现新版本后会展示版本号和更新说明。点击“立即更新”即可下载、校验、覆盖安装并自动重启。更新包使用独立的 Tauri 签名验证，Release 页面仍只保留一个面向普通用户的 Windows EXE。首次从旧版本升级到 `v2.5.9` 或更高版本仍需从[本项目 Releases 页面](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases)手动安装一次。
 
 > **建议安装路径不含中文字符。** 例如 `D:\CS2-Insight-Agent\` ✅，`D:\游戏工具\CS2-Insight-Agent\` ❌
 
