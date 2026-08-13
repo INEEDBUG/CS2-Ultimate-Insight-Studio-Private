@@ -409,3 +409,22 @@ def test_premade_groups_require_repeated_same_team_matches():
 
     assert groups["a"] == groups["b"]
     assert "c" not in groups
+
+
+def test_toolkit_overview_is_read_only(monkeypatch):
+    async def request(method, path, *, json_body=None, params=None):
+        assert method == "GET"
+        payloads = {
+            "/lol-missions/v1/missions": [{"id": "mission"}],
+            "/lol-missions/v1/series": [{"id": "series"}],
+            "/lol-rewards/v1/grants": [{"id": "reward", "viewed": False}],
+            "/lol-loot/v1/player-loot-map": {"loot": {"lootId": "loot"}},
+            "/lol-chat/v1/friends": [{"puuid": "friend"}],
+        }
+        return payloads[path]
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    result = asyncio.run(league_lab.league_toolkit_overview())
+
+    assert result["read_only"] is True
+    assert result["counts"] == {"missions": 1, "unclaimed_rewards": 1, "loot": 1, "friends": 1}

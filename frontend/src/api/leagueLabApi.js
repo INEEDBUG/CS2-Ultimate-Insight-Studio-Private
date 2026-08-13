@@ -59,3 +59,8 @@ export async function fetchLeagueOngoingGame() {
   const { data } = await API.get("/league-lab/ongoing-game");
   return data;
 }
+
+export async function fetchLeagueToolkitOverview() {
+  const { data } = await API.get("/league-lab/toolkit/overview");
+  return data;
+}

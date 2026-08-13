@@ -41,6 +41,7 @@ This document prevents the League integration from becoming a collection of unre
 - Event-driven friend auto-invitation queue: waits for an opted-in friend to become online, checks lobby permissions/membership, invites once and removes the completed target.
 - Riot ID (`game name#tag`) cross-player lookup through the local LCU alias endpoint, paginated match history and durable recently encountered player indexing.
 - Live-game recent-form and current-champion usage summaries, plus LeagueAkari-style premade inference from repeated same-team match history.
+- Read-only client toolkit overview for missions, reward grants, loot inventory and friends; no claim, craft, redeem or delete action is exposed.
 
 ### Partially implemented; upstream behavior is richer
 
@@ -58,7 +59,7 @@ This document prevents the League integration from becoming a collection of unre
 - Match-history advanced filters, collect mode and multi-source fallback.
 - Respawn timer and the ongoing-game/OP.GG/auxiliary overlay windows.
 - Champion skin selector auxiliary window.
-- Reward/mission/event claiming, loot tools and friend tools.
+- Reward/mission/event claiming plus mutating loot and friend tools (the read-only overview works now; writes require separate safety review).
 - In-game preset messaging and chat availability/status tools.
 - Client window sizing, game-client process controls and streamer mode.
 

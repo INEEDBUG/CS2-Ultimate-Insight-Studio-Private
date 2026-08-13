@@ -1404,6 +1404,41 @@ async def league_loadout_catalog():
     return {"styles": normalized_styles, "spells": normalized_spells}
 
 
+@router.get("/toolkit/overview")
+async def league_toolkit_overview():
+    async def optional(path: str):
+        try:
+            return await league_lab_service.request("GET", path)
+        except RuntimeError:
+            return None
+
+    missions, mission_series, rewards, loot, friends = await asyncio.gather(
+        optional("/lol-missions/v1/missions"),
+        optional("/lol-missions/v1/series"),
+        optional("/lol-rewards/v1/grants"),
+        optional("/lol-loot/v1/player-loot-map"),
+        optional("/lol-chat/v1/friends"),
+    )
+    mission_rows = missions if isinstance(missions, list) else []
+    reward_rows = rewards if isinstance(rewards, list) else []
+    loot_rows = list(loot.values()) if isinstance(loot, dict) else loot if isinstance(loot, list) else []
+    friend_rows = friends if isinstance(friends, list) else []
+    return {
+        "missions": mission_rows,
+        "mission_series": mission_series if isinstance(mission_series, list) else [],
+        "unclaimed_rewards": [row for row in reward_rows if not row.get("viewed") or not row.get("selected")],
+        "loot": loot_rows,
+        "friends": friend_rows,
+        "counts": {
+            "missions": len(mission_rows),
+            "unclaimed_rewards": len([row for row in reward_rows if not row.get("viewed") or not row.get("selected")]),
+            "loot": len(loot_rows),
+            "friends": len(friend_rows),
+        },
+        "read_only": True,
+    }
+
+
 @router.post("/actions/{action}")
 async def run_league_lab_action(action: Literal["accept", "play-again", "reconnect", "start-matchmaking", "stop-matchmaking"]):
     endpoints = {
