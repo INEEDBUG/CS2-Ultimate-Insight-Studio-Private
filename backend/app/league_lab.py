@@ -113,6 +113,7 @@ class LeagueLabService:
         self._accept_due_at: float | None = None
         self._acted_phase = ""
         self._phase_action_done = ""
+        self._phase_action_due_at: float | None = None
         self._handled_invitations: set[str] = set()
         self._last_discovery_at = 0.0
 
@@ -165,6 +166,7 @@ class LeagueLabService:
             self.summoner_name = ""
             self._acted_phase = ""
             self._phase_action_done = ""
+            self._phase_action_due_at = None
             self._accept_due_at = None
         return credentials is not None
 
@@ -236,6 +238,14 @@ class LeagueLabService:
             self._acted_phase = phase
             self._phase_action_done = ""
             self._accept_due_at = None
+            delay_by_phase = {
+                "WaitingForStats": 10.0,
+                "PreEndOfGame": 3.25,
+                "EndOfGame": 1.575,
+                "Reconnect": 10.0,
+            }
+            delay = delay_by_phase.get(phase)
+            self._phase_action_due_at = time.monotonic() + delay if delay is not None else None
 
         if phase == "ReadyCheck" and settings.auto_accept_enabled:
             if self._accept_due_at is None:
@@ -247,11 +257,11 @@ class LeagueLabService:
             self._accept_due_at = None
 
         if phase in {"EndOfGame", "WaitingForStats", "PreEndOfGame"} and settings.play_again_enabled:
-            if self._phase_action_done != "play-again":
+            if self._phase_action_done != "play-again" and time.monotonic() >= (self._phase_action_due_at or 0):
                 await self._record_action("已自动返回房间", "POST", "/lol-lobby/v2/play-again")
                 self._phase_action_done = "play-again"
         elif phase == "Reconnect" and settings.auto_reconnect_enabled:
-            if self._phase_action_done != "reconnect":
+            if self._phase_action_done != "reconnect" and time.monotonic() >= (self._phase_action_due_at or 0):
                 await self._record_action("已自动重新连接", "POST", "/lol-gameflow/v1/reconnect")
                 self._phase_action_done = "reconnect"
 

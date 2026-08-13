@@ -53,3 +53,21 @@ def test_ready_check_runs_auto_accept_once(monkeypatch):
     asyncio.run(service._run_automation())
 
     assert calls == [("已自动接受对局", "POST", "/lol-matchmaking/v1/ready-check/accept")]
+
+
+def test_play_again_waits_for_phase_buffer(monkeypatch):
+    service = LeagueLabService()
+    service.settings = LeagueLabSettings(automation_enabled=True, play_again_enabled=True)
+    service.phase = "EndOfGame"
+    calls = []
+
+    async def record(label, method, path):
+        calls.append((label, method, path))
+
+    monkeypatch.setattr(service, "_record_action", record)
+    asyncio.run(service._run_automation())
+    assert calls == []
+
+    service._phase_action_due_at = 0
+    asyncio.run(service._run_automation())
+    assert calls == [("已自动返回房间", "POST", "/lol-lobby/v2/play-again")]
