@@ -24,7 +24,7 @@ from typing import Literal
 
 import httpx
 import websockets
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from .env_utils import get_data_dir
@@ -440,6 +440,22 @@ class LeagueLabService:
         except (httpx.HTTPError, ValueError) as exc:
             self.last_error = f"LCU 请求失败: {type(exc).__name__}"
             self.credentials = None
+            raise RuntimeError(self.last_error) from exc
+
+    async def request_bytes(self, path: str) -> tuple[bytes, str]:
+        if not await self.refresh_connection():
+            raise RuntimeError("未检测到正在运行的英雄联盟客户端")
+        assert self.credentials is not None
+        try:
+            async with httpx.AsyncClient(verify=False, timeout=3.0) as client:
+                response = await client.get(
+                    f"{self.credentials.base_url}{path}",
+                    headers={"Authorization": self.credentials.auth_header},
+                )
+            response.raise_for_status()
+            return response.content, response.headers.get("content-type", "image/png")
+        except httpx.HTTPError as exc:
+            self.last_error = f"LCU 资源请求失败: {type(exc).__name__}"
             raise RuntimeError(self.last_error) from exc
 
     async def snapshot(self) -> dict:
@@ -1413,6 +1429,35 @@ async def league_ongoing_game():
 async def league_champion_catalog():
     champions = await _champion_catalog()
     return {"champions": champions, "count": len(champions), "source": "lcu" if league_lab_service.credentials else "cache"}
+
+
+@router.get("/assets/champions/{champion_id}.png")
+async def league_champion_icon(champion_id: int):
+    if champion_id <= 0:
+        raise HTTPException(status_code=404, detail="英雄头像不存在")
+    try:
+        content, media_type = await league_lab_service.request_bytes(
+            f"/lol-game-data/assets/v1/champion-icons/{champion_id}.png"
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(content=content, media_type=media_type, headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.get("/assets/profile-icons/{profile_icon_id}.jpg")
+async def league_profile_icon(profile_icon_id: int):
+    if profile_icon_id < 0:
+        raise HTTPException(status_code=404, detail="召唤师头像不存在")
+    last_error = None
+    for suffix in ("jpg", "png"):
+        try:
+            content, media_type = await league_lab_service.request_bytes(
+                f"/lol-game-data/assets/v1/profile-icons/{profile_icon_id}.{suffix}"
+            )
+            return Response(content=content, media_type=media_type, headers={"Cache-Control": "private, max-age=86400"})
+        except RuntimeError as exc:
+            last_error = exc
+    raise HTTPException(status_code=404, detail=str(last_error or "召唤师头像不存在"))
 
 
 @router.get("/loadout-catalog")

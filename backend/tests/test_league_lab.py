@@ -484,3 +484,36 @@ def test_toolkit_overview_is_read_only(monkeypatch):
 
     assert result["read_only"] is True
     assert result["counts"] == {"missions": 1, "unclaimed_rewards": 1, "loot": 1, "friends": 1}
+
+
+def test_champion_icon_is_proxied_without_exposing_lcu_credentials(monkeypatch):
+    async def request_bytes(path):
+        assert path == "/lol-game-data/assets/v1/champion-icons/22.png"
+        return b"png-bytes", "image/png"
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request_bytes", request_bytes)
+    response = asyncio.run(league_lab.league_champion_icon(22))
+
+    assert response.body == b"png-bytes"
+    assert response.media_type == "image/png"
+    assert response.headers["cache-control"] == "private, max-age=86400"
+
+
+def test_profile_icon_falls_back_to_png(monkeypatch):
+    calls = []
+
+    async def request_bytes(path):
+        calls.append(path)
+        if path.endswith(".jpg"):
+            raise RuntimeError("missing jpg")
+        return b"profile-png", "image/png"
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request_bytes", request_bytes)
+    response = asyncio.run(league_lab.league_profile_icon(29))
+
+    assert calls == [
+        "/lol-game-data/assets/v1/profile-icons/29.jpg",
+        "/lol-game-data/assets/v1/profile-icons/29.png",
+    ]
+    assert response.body == b"profile-png"
+    assert response.media_type == "image/png"

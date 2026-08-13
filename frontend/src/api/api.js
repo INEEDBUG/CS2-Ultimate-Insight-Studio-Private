@@ -81,6 +81,18 @@ export function getSteamPlayerAvatarUrl(steamId64) {
   return withDesktopSessionToken(url);
 }
 
+export function getLeagueChampionIconUrl(championId) {
+  const id = encodeURIComponent(String(championId || ""));
+  const url = API_BASE_URL ? `${API_BASE_URL}/api/league-lab/assets/champions/${id}.png` : `/api/league-lab/assets/champions/${id}.png`;
+  return withDesktopSessionToken(url);
+}
+
+export function getLeagueProfileIconUrl(profileIconId) {
+  const id = encodeURIComponent(String(profileIconId ?? ""));
+  const url = API_BASE_URL ? `${API_BASE_URL}/api/league-lab/assets/profile-icons/${id}.jpg` : `/api/league-lab/assets/profile-icons/${id}.jpg`;
+  return withDesktopSessionToken(url);
+}
+
 console.log(`[API Init] Protocol: ${window.location.protocol}, IsDesktop: ${IS_DESKTOP_APP}, BaseURL: ${API_BASE_URL}`);
 
 const API = axios.create({
