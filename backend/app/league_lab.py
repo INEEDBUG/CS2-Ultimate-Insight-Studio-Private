@@ -1418,7 +1418,7 @@ async def league_player_bundle(puuid: str, match_limit: int = 20, beg_index: int
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return await _load_player_bundle(
         summoner,
-        match_limit=max(1, min(match_limit, 40)),
+        match_limit=max(1, min(match_limit, 100)),
         beg_index=max(0, beg_index),
     )
 
