@@ -1,0 +1,72 @@
+# LeagueAkari integration audit
+
+Baseline reviewed: `LeagueAkari` dev branch at `6e40999728f6408bddbb067fb89a81e086ae7d58`, plus the locally installed League Akari 1.5.1 shell. The upstream remains MIT licensed and is credited in `THIRD_PARTY_LICENSES.md`.
+
+This document prevents the League integration from becoming a collection of unrelated toggles. It maps the upstream product into this project's Python/FastAPI + React/Tauri architecture and records what is actually implemented.
+
+## Architecture reviewed
+
+- Native client discovery: process enumeration and `NtQueryInformationProcess(ProcessCommandLineInformation)`; WMI is only an optional elevated fallback.
+- LCU transport and state: authenticated local HTTPS, event subscriptions, state initialization, reconnect handling and Riot/Tencent client variants.
+- SGP transport: regional service discovery, summoner, ranked statistics, match-history query and game-summary sources.
+- Automation: `auto-gameflow`, `auto-select`, `auto-champ-config` and `auto-misc`.
+- Player product: multi-player tabs, summary, ranked data, mastery, challenges, match cards, pagination, recent encounters, saved tags and advanced composable filters.
+- Live-game product: ongoing-game player cards, premade detection, champion usage, jungle-path analysis, queue filters and auxiliary windows.
+- Toolkit: lobby controls, client controls, in-game messages, chat presence/status, rewards, loot and friend tools.
+- Desktop shell: tray, window manager, main/mini/auxiliary windows, shortcuts, updater, storage migrations and streamer mode.
+
+## Current integration status
+
+### Implemented and locally verified
+
+- Native non-elevated LeagueClientUx discovery using the same Windows API strategy as LeagueAkari.
+- Riot and WeGame/Tencent command-line parsing, local-memory-only LCU credentials and authenticated HTTPS calls.
+- Current summoner, region/platform and gameflow phase status.
+- Automatic ready check, play again, reconnect and basic invitation accept/decline policy.
+- Automatic pick/ban priority, availability checks, delay and optional lock-in.
+- Per-champion rune page and summoner-spell application.
+- Automatic honor submission with ballot completion.
+- Current-account LCU match history with champion metadata and core performance fields.
+- Independent always-on-top League Mini window with phase/team summary and quick automation controls.
+
+### Partially implemented; upstream behavior is richer
+
+- Pick/ban: missing queue-group and position-specific profiles, intent handling, strategy variants, ARAM bench priority/swap delay and trade handling.
+- Champion config: data model supports saved loadouts, but the editor still uses numeric IDs instead of upstream champion/rune/spell galleries and position presets.
+- Honor: basic allies-first behavior exists; upstream strategies include lobby-only, all players, opt-out and opponent-inclusive selection.
+- Invitations: basic global strategy exists; upstream supports per-queue strategy, away rejection and invitation automation.
+- Match history: core rows exist; upstream includes player tabs, summaries, ranked/mastery/challenges, detailed cards, pagination and composable filters.
+- Mini window: independent and always-on-top, but not yet feature-equivalent to LeagueAkari's phase-specific mini/auxiliary windows.
+
+### Not implemented yet
+
+- Automatic matchmaking with minimum members, invitee waiting, delay, fixed/estimated rematch limits and penalty checks.
+- Automatic leader handoff and ARAM team-side messaging.
+- Automatic reply and automatic invitations.
+- SGP-backed historical analysis and cross-player lookup.
+- Ongoing-game scouting, premade detection, player tags, champion usage and jungle-path analysis.
+- Recently encountered players and reusable saved-player/tag storage.
+- Match-history advanced filters, collect mode and multi-source fallback.
+- Respawn timer and the ongoing-game/OP.GG/auxiliary overlay windows.
+- Champion skin selector auxiliary window.
+- Reward/mission/event claiming, loot tools and friend tools.
+- In-game preset messaging and chat availability/status tools.
+- Client window sizing, game-client process controls and streamer mode.
+
+## Porting decisions
+
+1. Port the mature state machines and endpoint behavior, not the Electron/Vue shell wholesale. React/Tauri remains the single desktop shell.
+2. Replace one-second polling with LCU WebSocket event subscriptions before adding more automation; polling remains only as recovery/fallback.
+3. Add SGP only after its regional authentication lifecycle, expiry and failure fallback are implemented. Do not expose tokens or persist them in plaintext.
+4. Treat account-impacting or spam-prone toolkit features as opt-in and disabled by default. Destructive loot/reward operations require a separate safety review.
+5. Preserve LeagueAkari attribution and MIT notice for adapted code. Do not copy artwork or third-party assets without verifying their individual licenses.
+
+## Implementation order
+
+1. Connection/state foundation: native discovery hardening, LCU event stream, reconnect state, Tencent/Riot fixtures.
+2. Automation parity: matchmaking, leader/invitation rules, position-aware selection, intent/bench/trade behavior, visual rune/spell editor and honor strategies.
+3. Player center: SGP + LCU source routing, full match cards, pagination, filters, ranked/mastery/challenges, recent players and tags.
+4. Live assistant: ongoing-game analysis, premade/team insights and phase-specific Mini window.
+5. Optional toolkit: only individually reviewed, clearly labeled and opt-in modules.
+
+The formal release remains blocked until the locally installed release candidate is exercised against ReadyCheck, ChampSelect and EndOfGame on the user's Tencent account.
