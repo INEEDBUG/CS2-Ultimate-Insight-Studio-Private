@@ -46,7 +46,8 @@ function ThemeApplier() {
   return null;
 }
 
-const isLeagueMini = new URLSearchParams(window.location.search).get("window") === "league-mini";
+const isLeagueMini = window.__INSIGHT_WINDOW_LABEL__ === "league-mini"
+  || new URLSearchParams(window.location.search).get("window") === "league-mini";
 ReactDOM.createRoot(document.getElementById("root")).render(
   <BrowserRouter>
     <ThemeApplier />

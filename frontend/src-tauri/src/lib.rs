@@ -33,20 +33,17 @@ fn open_league_mini(app: AppHandle) -> Result<(), String> {
         window.set_focus().map_err(|error| error.to_string())?;
         return Ok(());
     }
-    WebviewWindowBuilder::new(
-        &app,
-        "league-mini",
-        WebviewUrl::App("index.html?window=league-mini".into()),
-    )
-    .title("Insight · League Mini")
-    .inner_size(340.0, 480.0)
-    .min_inner_size(300.0, 380.0)
-    .resizable(true)
-    .decorations(true)
-    .always_on_top(true)
-    .build()
-    .map(|_| ())
-    .map_err(|error| error.to_string())
+    WebviewWindowBuilder::new(&app, "league-mini", WebviewUrl::App("index.html".into()))
+        .initialization_script("window.__INSIGHT_WINDOW_LABEL__ = 'league-mini';")
+        .title("Insight · League Mini")
+        .inner_size(340.0, 480.0)
+        .min_inner_size(300.0, 380.0)
+        .resizable(true)
+        .decorations(true)
+        .always_on_top(true)
+        .build()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 #[derive(Default)]
