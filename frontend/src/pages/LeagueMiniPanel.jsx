@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { Pin, RefreshCw, Shield, Swords } from "lucide-react";
+import { Minus, Pin, PinOff, RefreshCw, Shield, Swords, X } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { fetchLeagueLabStatus, rerollLeagueChampion, runLeagueLabAction, saveLeagueLabSettings, selectLeagueChampionSkin, swapLeagueBenchChampion } from "../api/leagueLabApi";
 import { getLeagueChampionIconUrl } from "../api/api";
 import { maskLeagueName } from "../utils/leagueStreamerMode";
@@ -22,6 +23,7 @@ function MiniSwitch({ label, checked, onChange }) {
 
 export default function LeagueMiniPanel() {
   const [status, setStatus] = useState(null);
+  const [pinned, setPinned] = useState(true);
   const [now, setNow] = useState(Date.now());
   const load = useCallback(async () => { try { setStatus(await fetchLeagueLabStatus()); } catch { setStatus(null); } }, []);
   useEffect(() => { load(); const id = setInterval(load, 1500); return () => clearInterval(id); }, [load]);
@@ -41,8 +43,15 @@ export default function LeagueMiniPanel() {
   const phaseSeconds = phaseDeadline ? Math.max(0, phaseDeadline * 1000 - now) / 1000 : null;
   const streamerMode = Boolean(status?.settings?.streamer_mode_enabled);
   const visibleSummonerName = streamerMode ? maskLeagueName(status?.summoner_name, 0, status?.settings?.streamer_mode_use_aliases, status?.current_summoner?.puuid) : status?.summoner_name;
+  const setWindowPinned = async () => {
+    const next = !pinned;
+    await getCurrentWindow().setAlwaysOnTop(next);
+    setPinned(next);
+  };
+  const minimizeWindow = () => getCurrentWindow().minimize();
+  const closeWindow = () => getCurrentWindow().close();
   return <div className="h-screen overflow-y-auto bg-[#111214] p-3 text-white">
-    <div className="mb-3 flex items-center justify-between border-b border-white/10 pb-2 text-[11px] text-zinc-400"><span>Insight · League Mini</span><span className="flex items-center gap-2"><Pin className="h-3 w-3 text-emerald-400" /><RefreshCw onClick={load} className="h-3.5 w-3.5 cursor-pointer" /></span></div>
+    <div data-tauri-drag-region className="mb-3 flex items-center justify-between border-b border-white/10 pb-2 text-[11px] text-zinc-400"><span data-tauri-drag-region>Insight · League Mini</span><span className="flex items-center gap-1"><button type="button" aria-label={pinned ? "取消置顶" : "窗口置顶"} onClick={setWindowPinned} className={`rounded p-1.5 hover:bg-white/10 ${pinned ? "text-emerald-400" : "text-zinc-500"}`}>{pinned ? <Pin className="h-3.5 w-3.5" /> : <PinOff className="h-3.5 w-3.5" />}</button><button type="button" aria-label="刷新 Mini" onClick={load} className="rounded p-1.5 hover:bg-white/10"><RefreshCw className="h-3.5 w-3.5" /></button><button type="button" aria-label="最小化 Mini" onClick={minimizeWindow} className="rounded p-1.5 hover:bg-white/10"><Minus className="h-3.5 w-3.5" /></button><button type="button" aria-label="关闭 Mini" onClick={closeWindow} className="rounded p-1.5 hover:bg-rose-500 hover:text-white"><X className="h-3.5 w-3.5" /></button></span></div>
     <div className="mb-3 rounded-xl border border-white/10 bg-white/[.025] p-3 text-center">
       <div className="mx-auto mb-2 grid h-12 w-12 place-items-center rounded-2xl bg-emerald-400/10 text-emerald-300">{status?.phase === "ChampSelect" ? <Swords /> : <Shield />}</div>
       <div className="text-sm font-bold">{status?.connected ? (PHASE_LABELS[status.phase] || status.phase || "已连接英雄联盟") : "等待英雄联盟客户端"}</div>

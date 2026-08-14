@@ -1,0 +1,52 @@
+import { render, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import LeagueMiniAutoManager from "./LeagueMiniAutoManager";
+import { fetchLeagueLabStatus } from "../api/leagueLabApi";
+import { invoke } from "@tauri-apps/api/core";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("../api/leagueLabApi", () => ({ fetchLeagueLabStatus: vi.fn() }));
+
+describe("LeagueMiniAutoManager", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.__TAURI_INTERNALS__ = {};
+    invoke.mockResolvedValue(undefined);
+  });
+
+  it("shows Mini without user interaction during supported League phases", async () => {
+    fetchLeagueLabStatus.mockResolvedValue({
+      connected: true,
+      phase: "Lobby",
+      mini_should_show: true,
+      cooldown_timer_should_show: false,
+      opgg_should_show: false,
+      settings: { mini_enabled: true, mini_auto_show: true },
+    });
+    const view = render(<LeagueMiniAutoManager />);
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("sync_league_mini", {
+      shouldShow: true,
+      context: "connected:Lobby:playing",
+    }));
+    view.unmount();
+  });
+
+  it("hides Mini after disconnecting or leaving an eligible phase", async () => {
+    fetchLeagueLabStatus.mockResolvedValue({
+      connected: false,
+      phase: "None",
+      mini_should_show: false,
+      cooldown_timer_should_show: false,
+      opgg_should_show: false,
+      settings: { mini_enabled: true, mini_auto_show: true },
+    });
+    const view = render(<LeagueMiniAutoManager />);
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("sync_league_mini", {
+      shouldShow: false,
+      context: "offline:None:playing",
+    }));
+    view.unmount();
+  });
+});

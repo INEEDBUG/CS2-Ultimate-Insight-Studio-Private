@@ -421,6 +421,41 @@ async def discover_lcu_clients() -> list[LcuCredentials]:
             parsed = parse_league_client_command_line(_read_windows_process_command_line(pid), pid=pid)
             if parsed:
                 clients.append(parsed)
+        if clients:
+            return clients
+
+        # Some Tencent/WeGame or elevated LeagueClientUx processes deny the
+        # native ProcessCommandLineInformation query. CIM is slower, but makes
+        # a reliable read-only fallback and the returned token never leaves
+        # this process or reaches logs/configuration.
+        cim_script = (
+            "Get-CimInstance Win32_Process -Filter \"Name='LeagueClientUx.exe'\" "
+            "| Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"
+        )
+        cim = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", cim_script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5.0,
+            check=False,
+            creationflags=creation_flags,
+        )
+        try:
+            rows = json.loads(cim.stdout.decode("utf-8", errors="ignore") or "[]")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            rows = []
+        if isinstance(rows, dict):
+            rows = [rows]
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            try:
+                pid = int(row.get("ProcessId") or 0)
+            except (TypeError, ValueError):
+                continue
+            parsed = parse_league_client_command_line(str(row.get("CommandLine") or ""), pid=pid)
+            if parsed:
+                clients.append(parsed)
         return clients
 
     try:

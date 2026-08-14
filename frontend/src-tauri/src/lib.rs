@@ -23,14 +23,24 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use std::os::windows::process::CommandExt;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+type LeagueWindowOpener = fn(AppHandle) -> Result<(), String>;
 
 #[tauri::command]
 fn open_league_mini(app: AppHandle) -> Result<(), String> {
+    show_league_mini(app, true)
+}
+
+fn show_league_mini(app: AppHandle, request_focus: bool) -> Result<(), String> {
     let mini = app.state::<LeagueMiniLifecycle>();
-    mini.manually_hidden.store(false, Ordering::SeqCst);
+    if request_focus {
+        mini.manually_hidden.store(false, Ordering::SeqCst);
+    }
     if let Some(window) = app.get_webview_window("league-mini") {
         window.show().map_err(|error| error.to_string())?;
-        window.set_focus().map_err(|error| error.to_string())?;
+        window.unminimize().map_err(|error| error.to_string())?;
+        if request_focus {
+            window.set_focus().map_err(|error| error.to_string())?;
+        }
         return Ok(());
     }
     let content_protected = app
@@ -42,8 +52,9 @@ fn open_league_mini(app: AppHandle) -> Result<(), String> {
         .inner_size(340.0, 480.0)
         .min_inner_size(300.0, 380.0)
         .resizable(true)
-        .decorations(true)
+        .decorations(false)
         .always_on_top(true)
+        .focused(request_focus)
         .content_protected(content_protected)
         .build()
         .map(|_| ())
@@ -147,7 +158,7 @@ fn toggle_league_aux_window(
     kind: String,
     visible: Option<bool>,
 ) -> Result<(), String> {
-    let (label, open): (&str, fn(AppHandle) -> Result<(), String>) = match kind.as_str() {
+    let (label, open): (&str, LeagueWindowOpener) = match kind.as_str() {
         "ongoing" => ("league-ongoing", open_league_ongoing),
         "opgg" => ("league-opgg", open_league_opgg),
         "cooldown" => ("league-cd-timer", open_league_cd_timer),
@@ -249,7 +260,7 @@ fn sync_league_mini(app: AppHandle, should_show: bool, context: String) -> Resul
     if mini.manually_hidden.load(Ordering::SeqCst) {
         return Ok(());
     }
-    open_league_mini(app.clone())
+    show_league_mini(app, false)
 }
 
 #[tauri::command]

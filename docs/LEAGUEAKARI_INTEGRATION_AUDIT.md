@@ -19,7 +19,7 @@ This document prevents the League integration from becoming a collection of unre
 
 ### Implemented and locally verified
 
-- Native non-elevated LeagueClientUx discovery using the same Windows API strategy as LeagueAkari.
+- Native non-elevated LeagueClientUx discovery using the same Windows API strategy as LeagueAkari, with a read-only CIM fallback for Tencent/WeGame or elevated clients that deny the native query.
 - Riot and WeGame/Tencent command-line parsing, local-memory-only LCU credentials and authenticated HTTPS calls.
 - Current summoner, region/platform and gameflow phase status.
 - Automatic ready check, play again, reconnect and basic invitation accept/decline policy.
@@ -73,7 +73,7 @@ This document prevents the League integration from becoming a collection of unre
 - Champion-analysis parity: the player center aggregates every loaded sample by champion, exposes win/loss, KDA line, the MIT-licensed upstream Akari Score model, damage/CS per minute, vision, team damage/taken/gold shares and a position-distribution chart, with a low-sample warning and direct switching among the twelve most-played champions.
 - Player-summary parity: the same upstream scoring model is also applied to the complete loaded sample alongside aggregate KDA, win/loss and streak, active-session results, kill participation, CS per minute, team damage/taken/gold shares and blue/red-side counts.
 - Ongoing-game settings parity: per-player query concurrency and premade co-play threshold are configurable; live cards can independently show streak and recent-form tags derived from win rate, KDA, CS, vision and solo kills. Team headers expose the sampled average win rate.
-- Auxiliary-window settings parity: Mini and OP.GG opacity, Mini skin-selector visibility and explicit position reset actions are persisted and exposed in the host settings. Position reset recenters the existing native Tauri window without recreating it.
+- Auxiliary-window settings parity: Mini and OP.GG opacity, Mini skin-selector visibility and explicit position reset actions are persisted and exposed in the host settings. Position reset recenters the existing native Tauri window without recreating it. Mini now renders an immediate dark bootstrap/error surface, exposes pin/minimize/close controls, and automatic phase display no longer steals foreground focus.
 
 ### Implemented with deliberate React/Tauri presentation differences
 

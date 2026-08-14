@@ -156,6 +156,32 @@ def test_discovery_returns_every_running_league_client_without_tokens_leaking(mo
     assert [(client.pid, client.port) for client in clients] == [(1234, 1234), (5678, 5678)]
 
 
+def test_discovery_falls_back_to_cim_when_native_command_line_is_denied(monkeypatch):
+    calls = 0
+
+    def fake_run(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return subprocess.CompletedProcess(args[0], 0, stdout=b"4321\r\n")
+        payload = json.dumps({
+            "ProcessId": 4321,
+            "CommandLine": "LeagueClientUx.exe --app-port=54321 --remoting-auth-token=cim_memory_only",
+        }).encode()
+        return subprocess.CompletedProcess(args[0], 0, stdout=payload)
+
+    monkeypatch.setattr(league_lab.os, "name", "nt")
+    monkeypatch.setattr(league_lab.subprocess, "run", fake_run)
+    monkeypatch.setattr(league_lab, "_read_windows_process_command_line", lambda _pid: "")
+
+    clients = asyncio.run(league_lab.discover_lcu_clients())
+
+    assert calls == 2
+    assert [(client.pid, client.port, client.token) for client in clients] == [
+        (4321, 54321, "cim_memory_only")
+    ]
+
+
 def test_client_list_identifies_accounts_without_exposing_credentials(monkeypatch):
     clients = [
         league_lab.LcuCredentials(1111, "secret-one", "CN", "HN1", pid=101),
