@@ -15,15 +15,27 @@ use std::{
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, LogicalSize, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder,
+    WindowEvent,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 type LeagueWindowOpener = fn(AppHandle) -> Result<(), String>;
+
+fn league_window_defaults(kind: &str) -> Option<(&'static str, f64, f64)> {
+    match kind {
+        "mini" => Some(("league-mini", 340.0, 480.0)),
+        "ongoing" => Some(("league-ongoing", 1360.0, 840.0)),
+        "opgg" => Some(("league-opgg", 620.0, 760.0)),
+        "cooldown" => Some(("league-cd-timer", 132.0, 252.0)),
+        _ => None,
+    }
+}
 
 #[tauri::command]
 fn open_league_mini(app: AppHandle) -> Result<(), String> {
@@ -180,18 +192,18 @@ fn toggle_league_aux_window(
 
 #[tauri::command]
 fn reset_league_window_position(app: AppHandle, kind: String) -> Result<(), String> {
-    let label = match kind.as_str() {
-        "mini" => "league-mini",
-        "ongoing" => "league-ongoing",
-        "opgg" => "league-opgg",
-        "cooldown" => "league-cd-timer",
-        _ => return Err("unsupported League auxiliary window".to_string()),
-    };
+    let (label, width, height) = league_window_defaults(&kind)
+        .ok_or_else(|| "unsupported League auxiliary window".to_string())?;
     let window = app
         .get_webview_window(label)
         .ok_or_else(|| "League auxiliary window is not open".to_string())?;
+    window
+        .set_size(LogicalSize::new(width, height))
+        .map_err(|error| error.to_string())?;
     window.center().map_err(|error| error.to_string())?;
     window.show().map_err(|error| error.to_string())?;
+    app.save_window_state(StateFlags::POSITION | StateFlags::SIZE)
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -783,6 +795,12 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(StateFlags::POSITION | StateFlags::SIZE)
+                .with_filter(|label| label.starts_with("league-"))
+                .build(),
+        )
         .manage(BackendProcess::new().expect("failed to create desktop session token"))
         .manage(AppLifecycle::default())
         .manage(LeagueMiniLifecycle::default())
@@ -933,7 +951,9 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{close_action_name, new_session_token, parse_close_action};
+    use super::{
+        close_action_name, league_window_defaults, new_session_token, parse_close_action,
+    };
 
     #[test]
     fn session_token_is_256_bit_hex() {
@@ -951,5 +971,26 @@ mod tests {
             );
         }
         assert!(parse_close_action("unsupported").is_err());
+    }
+
+    #[test]
+    fn league_auxiliary_window_defaults_are_stable() {
+        assert_eq!(
+            league_window_defaults("mini"),
+            Some(("league-mini", 340.0, 480.0))
+        );
+        assert_eq!(
+            league_window_defaults("ongoing"),
+            Some(("league-ongoing", 1360.0, 840.0))
+        );
+        assert_eq!(
+            league_window_defaults("opgg"),
+            Some(("league-opgg", 620.0, 760.0))
+        );
+        assert_eq!(
+            league_window_defaults("cooldown"),
+            Some(("league-cd-timer", 132.0, 252.0))
+        );
+        assert_eq!(league_window_defaults("unknown"), None);
     }
 }

@@ -77,7 +77,7 @@ This document prevents the League integration from becoming a collection of unre
 - Player-search pane parity: searches create account-scoped recent visits with local filtering, pinning and deletion; the same pane lists current LCU friends and their presence state, and exposes a deliberate one-click spectate action only when live LCU state says the friend is spectatable. Spectator keys never leave the backend.
 - Player-card tag parity: upstream-style self, local-tag, encountered, privacy, win-rate, streak, great-performance, mixed Flash-position, solo-kill, team-share, CS, vision, damage/gold, kill/damage and optional Akari Score labels are independently configurable. Every computed label carries its sample and formula explanation as a hover tooltip.
 - League Mini ChampSelect operations: the user's pick/ban/vote action timeline is visible, automatic selection can be paused only for the current ChampSelect, and explicit dodge is available behind the default-off account-write gate, a typed confirmation and a fresh live-phase check.
-- Auxiliary-window settings parity: Mini and OP.GG opacity, Mini skin-selector visibility and explicit position reset actions are persisted and exposed in the host settings. Position reset recenters the existing native Tauri window without recreating it. Mini now renders an immediate dark bootstrap/error surface, exposes pin/minimize/close controls, and automatic phase display no longer steals foreground focus.
+- Auxiliary-window settings parity: Mini and OP.GG opacity, Mini skin-selector visibility and explicit position reset actions are persisted and exposed in the host settings. The Tauri shell now persists position and size for Mini, ongoing-game, OP.GG and cooldown windows without persisting visibility; reset restores the documented default size, recenters the existing native window and immediately replaces its saved geometry. Mini now renders an immediate dark bootstrap/error surface, exposes pin/minimize/close controls, and automatic phase display no longer steals foreground focus.
 
 ### Implemented with deliberate React/Tauri presentation differences
 
@@ -111,13 +111,13 @@ This table is stricter than the shard matrix below: a backend capability is not 
 | Ongoing game | main and independent ongoing views | Lobby/ChampSelect/InProgress rosters, queue filter, six sort modes, separate detail-sample cap, recent/mastery/hidden champion usage, configurable premade threshold, match borders, independently configurable upstream-style labels with calculation tooltips, team recent win-rate and configurable all-player jungle analysis, plus optional automatic routing at game start | Equivalent foundation; live Tencent Lobby/ChampSelect window acceptance still pending |
 | Automation | League automation sections | gameflow, selection/ban, champion config and miscellaneous behavior | Equivalent; real Tencent state-machine acceptance pending |
 | Toolkit | League toolkit sections | lobby/client/profile/rewards/friends/in-game-send and preview actions | Equivalent except deliberately excluded unfinished loot crafting |
-| Mini and auxiliary windows | Mini, ongoing, OP.GG and cooldown windows | phase lifecycle, pinning, close suppression, ARAM actions, own action timeline, temporary auto-select pause, confirmed dodge, opacity/skin visibility settings, native position reset and auxiliary tools | Equivalent; real-window lifecycle acceptance pending |
+| Mini and auxiliary windows | Mini, ongoing, OP.GG and cooldown windows | phase lifecycle, pinning, close suppression, ARAM actions, own action timeline, temporary auto-select pause, confirmed dodge, opacity/skin visibility settings, native position/size persistence and reset, and auxiliary tools | Equivalent; real-window lifecycle and geometry-restore acceptance pending |
 | Settings and shell | integrated settings plus Tauri shell | theme/privacy/capture/shortcuts/tray/updater, persisted League settings and safe JSON export/import | Host equivalent |
 
 ### Explicit remaining gaps
 
 - Real Tencent/WeGame acceptance is still required for ReadyCheck, ChampSelect, EndOfGame, Lobby roster analysis, friend spectating and every auxiliary-window lifecycle. Mocked LCU tests are not counted as that acceptance.
-- Friend and recent-visit quick actions are functionally present, but their compact auxiliary-window presentation and window-size/position persistence still need real-window review.
+- Native window-size/position persistence is implemented and awaits installed-candidate restart validation across the four upstream-equivalent auxiliary windows (Mini, ongoing game, OP.GG and cooldown timer).
 - Loot crafting/redeeming remains deliberately excluded because the reviewed upstream handler is incomplete.
 
 ## Shard-to-host traceability matrix
