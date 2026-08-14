@@ -1767,6 +1767,13 @@ def test_opgg_account_writes_are_off_by_default():
     assert settings.opgg_auto_apply_items is False
 
 
+def test_match_history_and_ongoing_navigation_defaults_are_safe():
+    settings = LeagueLabSettings()
+    assert settings.match_history_refresh_after_game is True
+    assert settings.match_history_load_count == 20
+    assert settings.ongoing_auto_route_when_game_starts is False
+
+
 def test_opgg_proxy_uses_fixed_origin_and_cache(monkeypatch):
     calls = []
 

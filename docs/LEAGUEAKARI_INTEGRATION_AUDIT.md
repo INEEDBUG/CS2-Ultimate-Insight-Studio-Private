@@ -90,7 +90,7 @@ This table is stricter than the shard matrix below: a backend capability is not 
 | --- | --- | --- | --- |
 | Startup and client connection | League lab connection/startup cards | multi-client discovery, exact-PID binding and Riot/WeGame/TCLS launch cards | Equivalent |
 | Player tabs and summoner search | integrated player center | current/cross-region Riot ID lookup, recent tabs, ranked, mastery, challenges, tags, pagination and collection | Equivalent with host layout |
-| Match-history overview | detailed match cards | collapsed result/performance row, ten-player roster, replay action and expandable tabs | Equivalent foundation |
+| Match-history overview | current-account history and player-center detailed cards | configurable load count, post-game refresh, collapsed result/performance row, ten-player roster, replay action and expandable tabs | Equivalent foundation |
 | Match summary | `双方总览` | both teams, clickable players, K/D/A, KP, damage share, CS/gold and loadouts | Equivalent foundation |
 | Raw match details | `详细属性` | searchable horizontal ten-player scalar-stat matrix with sticky headers, game/source/version/map metadata, common Chinese labels and click-open ten-player comparison charts | Equivalent foundation; upstream chart styling and grouped stat taxonomy still differ |
 | Runes | `符文` | all participants, official spell/perk artwork, catalog names/descriptions and augment IDs | Equivalent foundation; post-game computed description fidelity still needs real SGP fixtures |
@@ -98,7 +98,7 @@ This table is stricter than the shard matrix below: a backend capability is not 
 | Builds | `出装过程` | per-player navigator, skill/evolution order and timestamped purchase/sell/undo operations | Equivalent foundation; richer SGP spacer/anvil grouping remains |
 | Timeline | `时间线` | team-gold lines, economic-difference line and selectable per-player gold/level/XP/CS/damage series | Equivalent foundation; upstream hover labels and richer SGP stat groups remain |
 | Encountered games | integrated encounter history | account-isolated shared games, pagination and local single-row removal | Equivalent with host layout |
-| Ongoing game | main and independent ongoing views | ten-player cards, recent form, premade and jungle analysis | Equivalent foundation; visual parity still needs real-window review |
+| Ongoing game | main and independent ongoing views | ten-player cards, recent form, premade and jungle analysis plus optional automatic routing at game start | Equivalent foundation; visual parity still needs real-window review |
 | Automation | League automation sections | gameflow, selection/ban, champion config and miscellaneous behavior | Equivalent; real Tencent state-machine acceptance pending |
 | Toolkit | League toolkit sections | lobby/client/profile/rewards/friends/in-game-send and preview actions | Equivalent except deliberately excluded unfinished loot crafting |
 | Mini and auxiliary windows | Mini, ongoing, OP.GG and cooldown windows | phase lifecycle, pinning, close suppression, ARAM actions and auxiliary tools | Equivalent; real-window lifecycle acceptance pending |

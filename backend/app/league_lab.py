@@ -136,6 +136,9 @@ class LeagueLabSettings(BaseModel):
     auto_invite_friend_puuids: list[str] = Field(default_factory=list, max_length=20)
     mini_enabled: bool = True
     mini_auto_show: bool = True
+    match_history_refresh_after_game: bool = True
+    match_history_load_count: int = Field(default=20, ge=1, le=100)
+    ongoing_auto_route_when_game_starts: bool = False
     respawn_timer_enabled: bool = False
     cooldown_timer_enabled: bool = False
     cooldown_timer_type: Literal["countdown", "countup"] = "countdown"
