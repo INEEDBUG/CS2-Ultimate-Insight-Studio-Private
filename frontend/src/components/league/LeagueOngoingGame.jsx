@@ -46,7 +46,7 @@ function TeamSection({ team, players, data, privacy, onOpenPlayer }) {
             {data?.historical_preview
               ? <span className="mt-1 block text-[11px] text-cs2-text-muted">本局 {match.kills || 0}/{match.deaths || 0}/{match.assists || 0} · KDA {match.kda || 0} · 伤害 {match.damage || 0}</span>
               : <span className="mt-1 block text-[11px] text-cs2-text-muted">{usageLine} · Akari {recent.akari_score || 0}</span>}
-            {(player.performance_tags || []).length ? <span className="mt-2 flex flex-wrap gap-1">{player.performance_tags.map((tag) => <em key={tag.id} className={`rounded px-1.5 py-0.5 text-[9px] font-semibold not-italic ${TAG_TONES[tag.tone] || TAG_TONES.info}`}>{tag.label}</em>)}</span> : null}
+            {(player.performance_tags || []).length ? <span className="mt-2 flex flex-wrap gap-1">{player.performance_tags.map((tag) => <em key={tag.id} title={tag.title || tag.label} className={`rounded px-1.5 py-0.5 text-[9px] font-semibold not-italic ${TAG_TONES[tag.tone] || TAG_TONES.info}`}>{tag.label}</em>)}</span> : null}
             {jungle.games_analyzed > 0 ? <span className="mt-1 block text-[11px] leading-4 text-amber-200">打野画像：{jungle.draft}</span> : null}
             {!privacy.enabled ? <span className="mt-1 block text-xs text-emerald-300">{player.tag?.label || "未添加本地标签"}</span> : null}
           </span>

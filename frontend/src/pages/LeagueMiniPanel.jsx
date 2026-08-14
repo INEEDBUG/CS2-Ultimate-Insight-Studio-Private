@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Minus, Pin, PinOff, RefreshCw, Shield, Swords, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { fetchLeagueLabStatus, rerollLeagueChampion, runLeagueLabAction, saveLeagueLabSettings, selectLeagueChampionSkin, swapLeagueBenchChampion } from "../api/leagueLabApi";
+import { dodgeLeagueChampSelect, fetchLeagueLabStatus, rerollLeagueChampion, runLeagueLabAction, saveLeagueLabSettings, selectLeagueChampionSkin, setLeagueAutoSelectTemporarilyDisabled, swapLeagueBenchChampion } from "../api/leagueLabApi";
 import { getLeagueChampionIconUrl } from "../api/api";
 import { maskLeagueName } from "../utils/leagueStreamerMode";
 
@@ -23,6 +23,7 @@ function MiniSwitch({ label, checked, onChange }) {
 
 export default function LeagueMiniPanel() {
   const [status, setStatus] = useState(null);
+  const [message, setMessage] = useState("");
   const [pinned, setPinned] = useState(true);
   const [now, setNow] = useState(Date.now());
   const load = useCallback(async () => { try { setStatus(await fetchLeagueLabStatus()); } catch { setStatus(null); } }, []);
@@ -50,6 +51,13 @@ export default function LeagueMiniPanel() {
   };
   const minimizeWindow = () => getCurrentWindow().minimize();
   const closeWindow = () => getCurrentWindow().close();
+  const dodge = async () => {
+    if (!status?.settings?.toolkit_account_actions_enabled) { setMessage("请先在主窗口开启“允许账号写入操作”。"); return; }
+    const confirmation = window.prompt("秒退会产生排队惩罚。若仍要继续，请输入：我确认秒退");
+    if (confirmation !== "我确认秒退") { setMessage("已取消秒退。"); return; }
+    try { setStatus(await dodgeLeagueChampSelect(confirmation)); setMessage("已发送一次秒退请求。"); }
+    catch (error) { setMessage(error?.response?.data?.detail || "秒退失败"); }
+  };
   return <div className="h-screen overflow-y-auto bg-[#111214] p-3 text-white">
     <div data-tauri-drag-region className="mb-3 flex items-center justify-between border-b border-white/10 pb-2 text-[11px] text-zinc-400"><span data-tauri-drag-region>Insight · League Mini</span><span className="flex items-center gap-1"><button type="button" aria-label={pinned ? "取消置顶" : "窗口置顶"} onClick={setWindowPinned} className={`rounded p-1.5 hover:bg-white/10 ${pinned ? "text-emerald-400" : "text-zinc-500"}`}>{pinned ? <Pin className="h-3.5 w-3.5" /> : <PinOff className="h-3.5 w-3.5" />}</button><button type="button" aria-label="刷新 Mini" onClick={load} className="rounded p-1.5 hover:bg-white/10"><RefreshCw className="h-3.5 w-3.5" /></button><button type="button" aria-label="最小化 Mini" onClick={minimizeWindow} className="rounded p-1.5 hover:bg-white/10"><Minus className="h-3.5 w-3.5" /></button><button type="button" aria-label="关闭 Mini" onClick={closeWindow} className="rounded p-1.5 hover:bg-rose-500 hover:text-white"><X className="h-3.5 w-3.5" /></button></span></div>
     <div className="mb-3 rounded-xl border border-white/10 bg-white/[.025] p-3 text-center">
@@ -63,14 +71,17 @@ export default function LeagueMiniPanel() {
     </div>}
     {team.length > 0 && <div className="mb-3 grid grid-cols-5 gap-1 rounded-xl border border-white/10 p-2">{team.map((member) => member.champion_id ? <img key={member.cell_id} src={getLeagueChampionIconUrl(member.champion_id)} alt={String(member.champion_id)} title={String(member.champion_id)} className="aspect-square w-full rounded-lg bg-white/5 object-cover"/> : <div key={member.cell_id} className="grid aspect-square place-items-center rounded-lg bg-white/5 text-xs font-bold text-emerald-300">?</div>)}</div>}
     {status?.champ_select?.bench_enabled && <div className="mb-3 rounded-xl border border-white/10 bg-white/[.025] p-2"><div className="mb-2 flex items-center justify-between text-[10px] text-zinc-500"><span>备战席 · 点击换取</span><button disabled={!status?.champ_select?.rerolls_remaining} onClick={async()=>setStatus(await rerollLeagueChampion())} className="rounded border border-white/10 px-2 py-1 text-zinc-300 disabled:opacity-30">重随 {status?.champ_select?.rerolls_remaining||0}</button></div><div className="grid grid-cols-5 gap-1">{bench.slice(0,10).map((id)=><button key={id} onClick={async()=>setStatus(await swapLeagueBenchChampion(id))} className="aspect-square overflow-hidden rounded-md bg-white/5 active:scale-[.94]" title={`换取英雄 ${id}`}><img src={getLeagueChampionIconUrl(id)} alt={String(id)} className="h-full w-full object-cover"/></button>)}</div></div>}
+    {status?.phase === "ChampSelect" && (status?.champ_select?.my_actions || []).length > 0 && <div className="mb-3 rounded-xl border border-white/10 bg-white/[.025] p-2"><div className="mb-2 text-[10px] text-zinc-500">我的英雄选择流程</div><div className="space-y-1">{status.champ_select.my_actions.map((action)=><div key={action.id || `${action.type}-${action.champion_id}`} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-[10px] ${action.in_progress ? "bg-sky-500/10 text-sky-200" : action.completed ? "bg-emerald-500/10 text-emerald-200" : "bg-white/[.025] text-zinc-400"}`}>{action.champion_id ? <img src={getLeagueChampionIconUrl(action.champion_id)} alt="" className="h-5 w-5 rounded"/> : <span className="h-2 w-2 rounded-full bg-current"/>}<span className="flex-1">{action.type === "pick" ? "选择英雄" : action.type === "ban" ? "禁用英雄" : action.type === "vote" ? "投票" : action.type}</span><span>{action.in_progress ? "进行中" : action.completed ? "已完成" : "等待"}</span></div>)}</div></div>}
     {skinSelector.available&&<div className="mb-3 rounded-xl border border-white/10 bg-white/[.025] p-2"><div className="mb-2 text-[10px] text-zinc-500">已拥有皮肤</div><select value={skinSelector.selected_skin_id||""} disabled={skinSelector.disabled} onChange={async(e)=>setStatus(await selectLeagueChampionSkin(Number(e.target.value)))} className="w-full rounded-lg border border-white/10 bg-zinc-900 px-2 py-2 text-xs text-zinc-200 disabled:opacity-40"><option value="" disabled>选择皮肤</option>{(skinSelector.skins||[]).map((skin)=><option key={skin.id} value={skin.id}>{skin.name}{skin.is_chroma?" · 炫彩":""}</option>)}</select></div>}
     {respawn.dead && <div className="mb-3 rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-center"><div className="text-[10px] uppercase tracking-[.18em] text-rose-300">复活倒计时</div><div className="mt-1 text-3xl font-black tabular-nums text-white">{Number(respawn.time_left || 0).toFixed(1)}s</div></div>}
     <div className="rounded-xl border border-white/10 bg-white/[.025] px-3 py-2">
       <MiniSwitch label="自动接受" checked={Boolean(status?.settings?.auto_accept_enabled)} onChange={(value) => update({ auto_accept_enabled: value })} />
       <MiniSwitch label="自动选择英雄" checked={Boolean(status?.settings?.auto_select_enabled)} onChange={(value) => update({ auto_select_enabled: value })} />
+      {status?.phase === "ChampSelect" && <MiniSwitch label="临时暂停自动选择 / 禁用" checked={Boolean(status?.auto_select_temporarily_disabled)} onChange={async(value) => { try { setStatus(await setLeagueAutoSelectTemporarilyDisabled(value)); } catch (error) { setMessage(error?.response?.data?.detail || "切换失败"); } }} />}
       <MiniSwitch label="自动符文与技能" checked={Boolean(status?.settings?.auto_champion_config_enabled)} onChange={(value) => update({ auto_champion_config_enabled: value })} />
       <MiniSwitch label="复活计时器" checked={Boolean(status?.settings?.respawn_timer_enabled)} onChange={(value) => update({ respawn_timer_enabled: value })} />
     </div>
-    <div className="mt-3 grid grid-cols-2 gap-2"><button onClick={() => runLeagueLabAction("accept")} className="rounded-lg bg-emerald-500/15 px-2 py-2 text-xs font-semibold text-emerald-300 active:scale-[.97]">立即接受</button><button onClick={() => update({ automation_enabled: !status?.settings?.automation_enabled })} className="rounded-lg border border-white/10 px-2 py-2 text-xs font-semibold text-zinc-300 active:scale-[.97]">{status?.settings?.automation_enabled ? "暂停自动化" : "启用自动化"}</button></div>
+    <div className="mt-3 grid grid-cols-2 gap-2"><button onClick={() => runLeagueLabAction("accept")} className="rounded-lg bg-emerald-500/15 px-2 py-2 text-xs font-semibold text-emerald-300 active:scale-[.97]">立即接受</button>{status?.phase === "ChampSelect" ? <button onClick={dodge} className="rounded-lg bg-rose-500/15 px-2 py-2 text-xs font-semibold text-rose-300 active:scale-[.97]">立即秒退</button> : <button onClick={() => update({ automation_enabled: !status?.settings?.automation_enabled })} className="rounded-lg border border-white/10 px-2 py-2 text-xs font-semibold text-zinc-300 active:scale-[.97]">{status?.settings?.automation_enabled ? "暂停自动化" : "启用自动化"}</button>}</div>
+    {message ? <div className="mt-2 rounded-lg border border-white/10 bg-white/[.025] px-2 py-1.5 text-[10px] text-zinc-400">{message}</div> : null}
   </div>;
 }

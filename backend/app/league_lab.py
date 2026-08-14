@@ -159,6 +159,26 @@ class LeagueLabSettings(BaseModel):
     ongoing_show_local_tag: bool = True
     ongoing_show_streak_tags: bool = True
     ongoing_show_performance_tags: bool = True
+    ongoing_player_card_tag_settings: dict[str, bool] = Field(default_factory=lambda: {
+        "self": True,
+        "tagged": True,
+        "met": True,
+        "privacy": True,
+        "high-win-rate": True,
+        "winning-streak": True,
+        "losing-streak": True,
+        "great-performance": True,
+        "suspicious-flash-position": True,
+        "solo-kills": True,
+        "average-team-damage": False,
+        "average-team-damage-taken": False,
+        "average-team-gold": False,
+        "average-cs-per-minute": False,
+        "average-damage-gold-efficiency": False,
+        "average-vision-score": False,
+        "average-kill-damage-efficiency": True,
+        "akari-score": False,
+    })
     respawn_timer_enabled: bool = False
     cooldown_timer_enabled: bool = False
     cooldown_timer_type: Literal["countdown", "countup"] = "countdown"
@@ -325,6 +345,14 @@ class FriendDeleteRequest(BaseModel):
 
 class SearchHistoryPinBody(BaseModel):
     pinned: bool
+
+
+class ChampSelectDodgeRequest(BaseModel):
+    confirmation: Literal["我确认秒退"]
+
+
+class AutoSelectTemporaryDisableBody(BaseModel):
+    disabled: bool
 
 
 class QueueLobbyCreate(BaseModel):
@@ -799,6 +827,7 @@ class LeagueLabService:
         self._champion_action_due_at: dict[str, float] = {}
         self._handled_trades: set[str] = set()
         self._bench_candidate_since: dict[int, float] = {}
+        self.auto_select_temporarily_disabled = False
         self._leader_handoff_lobby = ""
         self._configured_champion_id = 0
         self._honored_game_id = ""
@@ -1131,6 +1160,7 @@ class LeagueLabService:
             "last_action": self.last_action,
             "last_action_at": self.last_action_at or None,
             "champ_select": self.champ_select,
+            "auto_select_temporarily_disabled": self.auto_select_temporarily_disabled,
             "event_stream_connected": self._event_connected,
             "last_event_at": self._last_event_at or None,
             "matchmaking_status": self._matchmaking_status,
@@ -1177,6 +1207,7 @@ class LeagueLabService:
                     self.champ_select["skin_selector"] = {"available": False, "skins": []}
             else:
                 self.champ_select = {}
+                self.auto_select_temporarily_disabled = False
         except RuntimeError:
             return
 
@@ -1229,6 +1260,17 @@ class LeagueLabService:
         local_cell = session.get("localPlayerCellId")
         local_member = next((item for item in (session.get("myTeam") or []) if item.get("cellId") == local_cell), {})
         timer = session.get("timer") or {}
+        my_actions = []
+        for group in session.get("actions") or []:
+            action = next((item for item in (group or []) if isinstance(item, dict) and item.get("actorCellId") == local_cell), None)
+            if action:
+                my_actions.append({
+                    "id": action.get("id"),
+                    "type": action.get("type"),
+                    "champion_id": int(action.get("championId") or 0),
+                    "completed": bool(action.get("completed")),
+                    "in_progress": bool(action.get("isInProgress")),
+                })
         return {
             "local_player_cell_id": session.get("localPlayerCellId"),
             "current_champion_id": local_member.get("championId") or local_member.get("championPickIntent"),
@@ -1242,6 +1284,7 @@ class LeagueLabService:
             "timer_adjusted_time_left_ms": int(timer.get("adjustedTimeLeftInPhase") or timer.get("timeLeftInPhase") or 0),
             "timer_deadline_at": time.time() + max(0, int(timer.get("adjustedTimeLeftInPhase") or timer.get("timeLeftInPhase") or 0)) / 1000,
             "is_spectating": bool(session.get("isSpectating")),
+            "my_actions": my_actions,
         }
 
     @staticmethod
@@ -1291,6 +1334,8 @@ class LeagueLabService:
         return group, self.settings.auto_select_profiles.get(group) or self.settings.auto_select_profiles.get("default") or AutoSelectProfile()
 
     async def _run_auto_select(self) -> None:
+        if self.auto_select_temporarily_disabled:
+            return
         session = await self.request("GET", "/lol-champ-select/v1/session")
         if not isinstance(session, dict):
             return
@@ -2729,11 +2774,26 @@ def _infer_premade_groups(histories: dict[str, dict], active_puuids: set[str], t
     return groups
 
 
-def _ongoing_performance_tags(matches: list[dict], *, show_streaks: bool = True, show_performance: bool = True) -> list[dict]:
+def _ongoing_performance_tags(
+    matches: list[dict],
+    *,
+    show_streaks: bool = True,
+    show_performance: bool = True,
+    tag_settings: dict[str, bool] | None = None,
+) -> list[dict]:
     """Build read-only player-card tags from the already loaded match sample."""
     tags: list[dict] = []
     if not matches:
         return tags
+    enabled = tag_settings or {}
+
+    def is_enabled(tag_id: str, default: bool = True) -> bool:
+        return bool(enabled.get(tag_id, default))
+
+    def add(tag_id: str, label: str, tone: str, title: str) -> None:
+        if is_enabled(tag_id):
+            tags.append({"id": tag_id, "label": label, "tone": tone, "title": title})
+
     if show_streaks:
         first_result = bool(matches[0].get("win"))
         streak = 0
@@ -2741,21 +2801,18 @@ def _ongoing_performance_tags(matches: list[dict], *, show_streaks: bool = True,
             if bool(match.get("win")) != first_result:
                 break
             streak += 1
-        if streak >= 2:
-            tags.append({
-                "id": "winning-streak" if first_result else "losing-streak",
-                "label": f"{streak} 连{'胜' if first_result else '败'}",
-                "tone": "positive" if first_result else "negative",
-            })
+        if streak >= 3:
+            tag_id = "winning-streak" if first_result else "losing-streak"
+            add(tag_id, f"{streak} 连{'胜' if first_result else '败'}", "positive" if first_result else "negative", f"最近 {streak} 场结果连续为{'胜利' if first_result else '失败'}。")
     if not show_performance:
         return tags
 
     sample = len(matches)
     win_rate = sum(1 for match in matches if match.get("win")) / sample
     if sample >= 5 and win_rate >= 0.6:
-        tags.append({"id": "high-win-rate", "label": f"近况强势 {win_rate:.0%}", "tone": "positive"})
+        add("high-win-rate", f"近况强势 {win_rate:.0%}", "positive", f"最近 {sample} 场赢下 {sum(1 for match in matches if match.get('win'))} 场。")
     elif sample >= 5 and win_rate <= 0.4:
-        tags.append({"id": "low-win-rate", "label": f"近况低迷 {win_rate:.0%}", "tone": "negative"})
+        add("high-win-rate", f"近况低迷 {win_rate:.0%}", "negative", f"最近 {sample} 场胜率偏低；标签只描述样本，不代表账号水平。")
 
     def average(key: str) -> float:
         return sum(float(match.get(key) or 0) for match in matches) / sample
@@ -2766,23 +2823,72 @@ def _ongoing_performance_tags(matches: list[dict], *, show_streaks: bool = True,
         for match in matches
     ) / sample
     if avg_kda >= 4:
-        tags.append({"id": "great-kda", "label": f"高 KDA {avg_kda:.1f}", "tone": "positive"})
+        add("great-kda", f"高 KDA {avg_kda:.1f}", "positive", f"最近 {sample} 场平均 (击杀+助攻)/死亡为 {avg_kda:.2f}。")
     elif avg_kda <= 1.5:
-        tags.append({"id": "low-kda", "label": f"KDA {avg_kda:.1f}", "tone": "negative"})
+        add("low-kda", f"KDA {avg_kda:.1f}", "negative", f"最近 {sample} 场平均 (击杀+助攻)/死亡为 {avg_kda:.2f}。")
 
     cs_minutes = [
         float(match.get("cs") or 0) / max(1.0, float(match.get("duration_seconds") or 0) / 60)
         for match in matches
         if float(match.get("duration_seconds") or 0) > 0
     ]
-    if cs_minutes and sum(cs_minutes) / len(cs_minutes) >= 7.5:
-        tags.append({"id": "high-cs", "label": f"补刀 {sum(cs_minutes) / len(cs_minutes):.1f}/分", "tone": "info"})
-    if average("vision_score") >= 35:
-        tags.append({"id": "high-vision", "label": f"视野 {average('vision_score'):.0f}", "tone": "info"})
+    avg_cs = sum(cs_minutes) / len(cs_minutes) if cs_minutes else 0
+    if avg_cs >= 7.5 and is_enabled("average-cs-per-minute", False):
+        add("average-cs-per-minute", f"补刀 {avg_cs:.1f}/分", "info", f"按 {len(cs_minutes)} 场有效时长样本计算，平均每分钟补刀 {avg_cs:.2f}。")
+    avg_vision = average("vision_score")
+    if avg_vision >= 35 and is_enabled("average-vision-score", False):
+        add("average-vision-score", f"视野 {avg_vision:.0f}", "info", f"最近 {sample} 场平均视野得分 {avg_vision:.2f}。")
     solo_kills = [float((match.get("challenges") or {}).get("soloKills") or 0) for match in matches]
     if sum(solo_kills) / sample >= 1:
-        tags.append({"id": "solo-kills", "label": f"场均单杀 {sum(solo_kills) / sample:.1f}", "tone": "warning"})
-    return tags[:5]
+        avg_solo_kills = sum(solo_kills) / sample
+        add("solo-kills", f"场均单杀 {avg_solo_kills:.1f}", "warning", f"最近 {sample} 场的单杀字段平均为 {avg_solo_kills:.2f}。")
+
+    team_rows = []
+    for match in matches:
+        team = [row for row in (match.get("participants") or []) if str(row.get("team_id")) == str(match.get("team_id"))]
+        if not team:
+            continue
+        def share(key: str) -> float:
+            total = sum(float(row.get(key) or 0) for row in team)
+            return float(match.get(key) or 0) / total if total > 0 else 0
+        damage_share, taken_share, gold_share = share("damage"), share("damage_taken"), share("gold")
+        team_kills = sum(float(row.get("kills") or 0) for row in team)
+        kill_share = float(match.get("kills") or 0) / team_kills if team_kills > 0 else 0
+        team_rows.append({
+            "damage": damage_share,
+            "taken": taken_share,
+            "gold": gold_share,
+            "damage_gold": float(match.get("damage") or 0) / max(1.0, float(match.get("gold") or 0)),
+            "kill_damage": kill_share / damage_share if damage_share > 0 else 1,
+        })
+    if team_rows:
+        mean = lambda key: sum(row[key] for row in team_rows) / len(team_rows)
+        metric_tags = (
+            ("average-team-damage", f"团队输出 {mean('damage'):.0%}", "warning", f"{len(team_rows)} 场中平均承担团队英雄伤害的 {mean('damage'):.2%}。"),
+            ("average-team-damage-taken", f"团队承伤 {mean('taken'):.0%}", "positive", f"{len(team_rows)} 场中平均承担团队承伤的 {mean('taken'):.2%}。"),
+            ("average-team-gold", f"团队经济 {mean('gold'):.0%}", "warning", f"{len(team_rows)} 场中平均获得团队经济的 {mean('gold'):.2%}。"),
+            ("average-damage-gold-efficiency", f"伤害/经济 {mean('damage_gold'):.2f}", "warning", f"每 1 点金币对应 {mean('damage_gold'):.3f} 点英雄伤害。"),
+        )
+        for tag_id, label, tone, title in metric_tags:
+            if is_enabled(tag_id, False):
+                add(tag_id, label, tone, title)
+        kde = mean("kill_damage")
+        if is_enabled("average-kill-damage-efficiency") and (kde > 1.35 or kde < .65):
+            add("average-kill-damage-efficiency", "收割效率高" if kde > 1.35 else "收割效率低", "positive" if kde > 1.35 else "negative", f"击杀占比 ÷ 伤害占比为 {kde:.2f}；高值偏收割，低值偏消耗。")
+
+    flash_d = sum(1 for match in matches if int(match.get("spell1_id") or 0) == 4)
+    flash_f = sum(1 for match in matches if int(match.get("spell2_id") or 0) == 4)
+    if flash_d and flash_f:
+        add("suspicious-flash-position", "闪现键位不固定", "warning", f"样本中闪现位于 D 键 {flash_d} 场、F 键 {flash_f} 场。")
+
+    akari_score = _ongoing_akari_score(matches)
+    if sample >= 8 and akari_score >= 8:
+        add("great-performance", "超凡发挥", "positive", f"{sample} 场 Akari Score 为 {akari_score:.2f}，达到超凡阈值 8.00。")
+    elif sample >= 5 and akari_score >= 6.5:
+        add("great-performance", "亮眼发挥", "positive", f"{sample} 场 Akari Score 为 {akari_score:.2f}，达到亮眼阈值 6.50。")
+    if is_enabled("akari-score", False):
+        add("akari-score", f"Akari {akari_score:.2f}", "info", f"基于 KDA、胜率、输出、承伤、治疗、补刀、经济、参团和视野的聚合评分，样本 {sample} 场。")
+    return tags[:12]
 
 
 def _ongoing_akari_score(matches: list[dict]) -> float:
@@ -4024,6 +4130,7 @@ async def league_ongoing_game():
                 settings.ongoing_show_local_tag,
                 settings.ongoing_show_streak_tags,
                 settings.ongoing_show_performance_tags,
+                settings.ongoing_player_card_tag_settings,
             ],
             [
                 [row.get("puuid") or row.get("playerPuuid"), row.get("championId"), row.get("team") or row.get("teamId"), row.get("selectedPosition")]
@@ -4082,6 +4189,27 @@ async def league_ongoing_game():
             / max(1.0, float(match.get("deaths") or 0))
             for match in matches
         ) / max(1, len(matches)), 2)
+        local_tag = _find_player_tag(_read_player_tags(), puuid) if settings.ongoing_show_local_tag else {}
+        card_tags = _ongoing_performance_tags(
+            detail_matches,
+            show_streaks=settings.ongoing_show_streak_tags,
+            show_performance=settings.ongoing_show_performance_tags,
+            tag_settings=settings.ongoing_player_card_tag_settings,
+        )
+        own_puuid = str(league_lab_service.current_summoner.get("puuid") or "")
+        extra_tags = []
+        tag_flags = settings.ongoing_player_card_tag_settings
+        if puuid and puuid == own_puuid and tag_flags.get("self", True):
+            extra_tags.append({"id": "self", "label": "自己", "tone": "info", "title": "当前登录的召唤师。"})
+        if local_tag and tag_flags.get("tagged", True):
+            extra_tags.append({"id": "tagged", "label": local_tag.get("label") or "已标记", "tone": "warning", "title": local_tag.get("note") or "这是保存在本机的玩家标签。"})
+        if puuid != own_puuid and own_puuid and tag_flags.get("met", True) and any(
+            any(str(participant.get("puuid") or "") == own_puuid for participant in (match.get("participants") or []))
+            for match in detail_matches
+        ):
+            extra_tags.append({"id": "met", "label": "遇到过", "tone": "info", "title": "当前账号的近期对局样本中出现过这名玩家。"})
+        if str((summoner or {}).get("privacy") or "").upper() == "PRIVATE" and tag_flags.get("privacy", True):
+            extra_tags.append({"id": "privacy", "label": "战绩私密", "tone": "negative", "title": "客户端将该玩家的战绩隐私状态标记为 PRIVATE。"})
         return ({
             "puuid": puuid,
             "team": row.get("team") or row.get("teamId"),
@@ -4090,7 +4218,7 @@ async def league_ongoing_game():
             "position": selected_position,
             "summoner": summoner or {},
             "ranked": ranked or {},
-            "tag": _find_player_tag(_read_player_tags(), puuid) if settings.ongoing_show_local_tag else {},
+            "tag": local_tag,
             "recent": {
                 "matches": len(matches),
                 "wins": sum(1 for match in matches if match.get("win")),
@@ -4107,11 +4235,7 @@ async def league_ongoing_game():
                 "mastery_points": champion_mastery.get("championPoints", 0),
             },
             "jungle_analysis": jungle_analysis,
-            "performance_tags": _ongoing_performance_tags(
-                detail_matches,
-                show_streaks=settings.ongoing_show_streak_tags,
-                show_performance=settings.ongoing_show_performance_tags,
-            ),
+            "performance_tags": extra_tags + card_tags,
         }, history or {})
     enriched = await asyncio.gather(*(enrich(row) for row in selections))
     players = [result[0] for result in enriched if result[0]]
@@ -5598,6 +5722,43 @@ async def league_bench_swap(champion_id: int):
             f"/lol-champ-select/v1/session/bench/swap/{champion_id}",
         )
         await league_lab_service._refresh_state()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return league_lab_service.status()
+
+
+@router.put("/champ-select/auto-select-temporarily-disabled")
+async def league_set_auto_select_temporarily_disabled(body: AutoSelectTemporaryDisableBody):
+    if league_lab_service.phase != "ChampSelect":
+        league_lab_service.auto_select_temporarily_disabled = False
+        raise HTTPException(status_code=409, detail="当前不在英雄选择阶段")
+    league_lab_service.auto_select_temporarily_disabled = body.disabled
+    if body.disabled:
+        league_lab_service._champion_action_due_at.clear()
+    return league_lab_service.status()
+
+
+@router.post("/champ-select/dodge")
+async def league_champ_select_dodge(body: ChampSelectDodgeRequest):
+    _require_toolkit_account_actions()
+    try:
+        phase = str(await league_lab_service.request("GET", "/lol-gameflow/v1/gameflow-phase") or "")
+        if phase != "ChampSelect":
+            raise HTTPException(status_code=409, detail="当前不在英雄选择阶段")
+        await league_lab_service.request(
+            "POST",
+            "/lol-login/v1/session/invoke",
+            params={
+                "destination": "lcdsServiceProxy",
+                "method": "call",
+                "args": '["", "teambuilder-draft", "quitV2", ""]',
+            },
+            json_body={"data": ["", "teambuilder-draft", "quitV2", ""]},
+        )
+        league_lab_service.last_action = "已执行一次英雄选择秒退"
+        league_lab_service.last_action_at = time.time()
+    except HTTPException:
+        raise
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return league_lab_service.status()

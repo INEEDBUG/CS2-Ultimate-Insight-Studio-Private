@@ -673,6 +673,7 @@ def test_normalized_champ_select_exposes_mini_bench_state():
         "benchChampions": [{"championId": 12}, {"championId": 34}],
         "rerollsRemaining": 1,
         "allowRerolling": True,
+        "actions": [[{"id": 7, "actorCellId": 2, "type": "pick", "championId": 22, "isInProgress": True}]],
         "timer": {"phase": "FINALIZATION", "adjustedTimeLeftInPhase": 9000},
     })
     assert normalized["current_champion_id"] == 22
@@ -680,6 +681,18 @@ def test_normalized_champ_select_exposes_mini_bench_state():
     assert normalized["rerolls_remaining"] == 1
     assert normalized["timer_phase"] == "FINALIZATION"
     assert normalized["timer_deadline_at"] > 0
+    assert normalized["my_actions"] == [{"id": 7, "type": "pick", "champion_id": 22, "completed": False, "in_progress": True}]
+
+
+def test_auto_select_temporary_disable_blocks_all_client_calls(monkeypatch):
+    service = LeagueLabService()
+    service.auto_select_temporarily_disabled = True
+
+    async def request(*args, **kwargs):
+        raise AssertionError("temporary disable must return before touching LCU")
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(service._run_auto_select())
 
 
 def test_auto_select_delay_is_non_blocking_and_visible(monkeypatch):
@@ -1103,6 +1116,28 @@ def test_toolkit_account_writes_are_disabled_by_default(monkeypatch):
     with pytest.raises(league_lab.HTTPException) as caught:
         asyncio.run(league_lab.league_claim_event_rewards(body))
     assert caught.value.status_code == 403
+
+
+def test_champ_select_dodge_is_gated_and_revalidates_live_phase(monkeypatch):
+    monkeypatch.setattr(
+        league_lab.league_lab_service, "settings", LeagueLabSettings(toolkit_account_actions_enabled=True)
+    )
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, json_body, params))
+        if path == "/lol-gameflow/v1/gameflow-phase":
+            return "ChampSelect"
+        return None
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    result = asyncio.run(league_lab.league_champ_select_dodge(
+        league_lab.ChampSelectDodgeRequest(confirmation="我确认秒退")
+    ))
+    assert result["last_action"] == "已执行一次英雄选择秒退"
+    assert calls[0][1] == "/lol-gameflow/v1/gameflow-phase"
+    assert calls[1][1] == "/lol-login/v1/session/invoke"
+    assert calls[1][3]["destination"] == "lcdsServiceProxy"
 
 
 def test_mission_claim_revalidates_status_selection_and_exact_write(monkeypatch):
@@ -1931,6 +1966,8 @@ def test_match_history_and_ongoing_navigation_defaults_are_safe():
     assert settings.ongoing_show_local_tag is True
     assert settings.ongoing_show_streak_tags is True
     assert settings.ongoing_show_performance_tags is True
+    assert settings.ongoing_player_card_tag_settings["great-performance"] is True
+    assert settings.ongoing_player_card_tag_settings["average-team-damage"] is False
 
 
 def test_legacy_ongoing_champion_visibility_migrates_to_three_state_mode():
@@ -1952,9 +1989,38 @@ def test_ongoing_performance_tags_cover_streaks_and_recent_form():
         }
         for _ in range(5)
     ]
-    tags = league_lab._ongoing_performance_tags(matches)
+    tags = league_lab._ongoing_performance_tags(matches, tag_settings={"average-cs-per-minute": True})
     ids = {tag["id"] for tag in tags}
-    assert {"winning-streak", "high-win-rate", "great-kda", "high-cs"}.issubset(ids)
+    assert {"winning-streak", "high-win-rate", "great-kda", "average-cs-per-minute"}.issubset(ids)
+    assert all(tag.get("title") for tag in tags)
+
+
+def test_ongoing_performance_tags_match_granular_upstream_metrics():
+    team = [
+        {"team_id": 100, "kills": 4, "damage": 10000, "damage_taken": 9000, "gold": 10000}
+        for _ in range(5)
+    ]
+    matches = [{
+        "win": True,
+        "team_id": 100,
+        "participants": team,
+        "kills": 12,
+        "deaths": 2,
+        "assists": 8,
+        "damage": 24000,
+        "damage_taken": 9000,
+        "gold": 12000,
+        "duration_seconds": 1800,
+        "spell1_id": 4 if index % 2 else 14,
+        "spell2_id": 14 if index % 2 else 4,
+    } for index in range(8)]
+    tags = league_lab._ongoing_performance_tags(matches, tag_settings={
+        "average-team-damage": True,
+        "average-team-gold": True,
+        "akari-score": True,
+    })
+    ids = {tag["id"] for tag in tags}
+    assert {"average-team-damage", "average-team-gold", "suspicious-flash-position", "akari-score"}.issubset(ids)
 
 
 def test_ongoing_performance_tags_respect_visibility_settings():

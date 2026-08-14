@@ -414,3 +414,13 @@ export async function selectLeagueChampionSkin(skinId) {
   const { data } = await API.post(`/league-lab/champ-select/skin/${skinId}`);
   return data;
 }
+
+export async function setLeagueAutoSelectTemporarilyDisabled(disabled) {
+  const { data } = await API.put("/league-lab/champ-select/auto-select-temporarily-disabled", { disabled });
+  return data;
+}
+
+export async function dodgeLeagueChampSelect(confirmation) {
+  const { data } = await API.post("/league-lab/champ-select/dodge", { confirmation });
+  return data;
+}

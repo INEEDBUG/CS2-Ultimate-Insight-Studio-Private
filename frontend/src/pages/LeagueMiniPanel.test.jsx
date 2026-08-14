@@ -19,6 +19,8 @@ vi.mock("../api/leagueLabApi", () => ({
   runLeagueLabAction: vi.fn(),
   saveLeagueLabSettings: vi.fn(),
   selectLeagueChampionSkin: vi.fn(),
+  setLeagueAutoSelectTemporarilyDisabled: vi.fn(),
+  dodgeLeagueChampSelect: vi.fn(),
   swapLeagueBenchChampion: vi.fn(),
 }));
 
@@ -34,7 +36,7 @@ describe("LeagueMiniPanel", () => {
       phase: "ChampSelect",
       summoner_name: "Tester",
       settings: { mini_opacity: 1 },
-      champ_select: { my_team: [{ cell_id: 1, champion_id: 22 }] },
+      champ_select: { my_team: [{ cell_id: 1, champion_id: 22 }], my_actions: [{ id: 1, type: "pick", champion_id: 22, in_progress: true }] },
     });
   });
 
@@ -43,6 +45,8 @@ describe("LeagueMiniPanel", () => {
     expect(await screen.findByText("英雄选择")).toBeTruthy();
     expect(screen.getByText("Tester")).toBeTruthy();
     expect(screen.getByAltText("22").getAttribute("src")).toBe("champion-22.png");
+    expect(screen.getByText("我的英雄选择流程")).toBeTruthy();
+    expect(screen.getByText("进行中")).toBeTruthy();
   });
 
   it("exposes working pin, minimize, close and refresh controls", async () => {
