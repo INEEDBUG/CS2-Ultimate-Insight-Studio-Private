@@ -1,11 +1,12 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LeagueDetailedMatchCard from "./LeagueDetailedMatchCard";
-import { fetchLeagueMatchDetails, fetchLeagueReplay } from "../../api/leagueLabApi";
+import { fetchLeagueLoadoutCatalog, fetchLeagueMatchDetails, fetchLeagueReplay } from "../../api/leagueLabApi";
 
 vi.mock("../../api/leagueLabApi", () => ({
   deleteLeaguePlayerEncounter: vi.fn(),
   downloadLeagueReplay: vi.fn(),
+  fetchLeagueLoadoutCatalog: vi.fn(),
   fetchLeagueMatchDetails: vi.fn(),
   fetchLeagueReplay: vi.fn(),
   watchLeagueReplay: vi.fn(),
@@ -31,9 +32,9 @@ const match = {
   win: true,
   items: [1001, 1002],
   participants: [
-    { puuid: "self", team_id: 100, champion_id: 1, champion_name: "安妮", game_name: "自己", kills: 10, deaths: 2, assists: 8, damage: 20000, cs: 180, gold: 12000, win: true, items: [1001] },
-    { puuid: "ally", team_id: 100, champion_id: 2, champion_name: "奥拉夫", game_name: "队友", kills: 5, deaths: 4, assists: 7, damage: 12000, cs: 140, gold: 9000, win: true, items: [1002] },
-    { puuid: "enemy", team_id: 200, champion_id: 3, champion_name: "加里奥", game_name: "对手", kills: 4, deaths: 8, assists: 3, damage: 9000, cs: 150, gold: 8000, win: false, items: [1003] },
+    { participant_id: 1, puuid: "self", team_id: 100, champion_id: 1, champion_name: "安妮", game_name: "自己", kills: 10, deaths: 2, assists: 8, damage: 20000, cs: 180, gold: 12000, win: true, items: [1001], perks: [8010], raw_stats: { kills: 10, totalDamageDealtToChampions: 20000 } },
+    { participant_id: 2, puuid: "ally", team_id: 100, champion_id: 2, champion_name: "奥拉夫", game_name: "队友", kills: 5, deaths: 4, assists: 7, damage: 12000, cs: 140, gold: 9000, win: true, items: [1002], raw_stats: { kills: 5, totalDamageDealtToChampions: 12000 } },
+    { participant_id: 6, puuid: "enemy", team_id: 200, champion_id: 3, champion_name: "加里奥", game_name: "对手", kills: 4, deaths: 8, assists: 3, damage: 9000, cs: 150, gold: 8000, win: false, items: [1003] },
   ],
 };
 
@@ -41,7 +42,16 @@ describe("LeagueDetailedMatchCard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fetchLeagueReplay.mockResolvedValue({ enabled: false });
-    fetchLeagueMatchDetails.mockResolvedValue({ source: "lcu", frame_count: 30, event_count: 120, frames: [], events: [], participants: [] });
+    fetchLeagueMatchDetails.mockResolvedValue({
+      source: "lcu", frame_count: 2, event_count: 1,
+      participants: [{ participant_id: 1, team_id: 100, game_name: "自己" }, { participant_id: 6, team_id: 200, game_name: "对手" }],
+      frames: [
+        { timestamp: 0, participant_frames: { "1": { totalGold: 500 }, "6": { totalGold: 500 } }, events: [] },
+        { timestamp: 60000, participant_frames: { "1": { totalGold: 1200 }, "6": { totalGold: 900 } }, events: [] },
+      ],
+      events: [{ type: "CHAMPION_KILL", timestamp: 45000, killerId: 1, victimId: 6, position: { x: 7000, y: 7000 } }],
+    });
+    fetchLeagueLoadoutCatalog.mockResolvedValue({ perks: [{ id: 8010, name: "征服者", long_description: "攻击英雄时提供适应之力。" }] });
   });
 
   it("expands into both team scoreboards and opens a participant", async () => {
@@ -61,6 +71,31 @@ describe("LeagueDetailedMatchCard", () => {
     expect(fetchLeagueMatchDetails).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "时间线" }));
     await waitFor(() => expect(fetchLeagueMatchDetails).toHaveBeenCalledWith(1001, "auto"));
-    expect(await screen.findByText("120")).toBeTruthy();
+    expect(await screen.findByText("经济差")).toBeTruthy();
+  });
+
+  it("shows the searchable ten-player stat matrix and visual rune metadata", async () => {
+    render(<LeagueDetailedMatchCard match={match} />);
+    fireEvent.click(screen.getByRole("button", { name: "展开战绩详情" }));
+    fireEvent.click(screen.getByRole("button", { name: "详细属性" }));
+    expect(screen.getByText("对英雄伤害")).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText("筛选属性名称…"), { target: { value: "击杀" } });
+    expect(screen.getByText("击杀")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "符文" }));
+    await waitFor(() => expect(fetchLeagueLoadoutCatalog).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("征服者")).toBeTruthy();
+  });
+
+  it("filters events by champion and exposes map and player timeline views", async () => {
+    render(<LeagueDetailedMatchCard match={{ ...match, map_id: 11 }} />);
+    fireEvent.click(screen.getByRole("button", { name: "展开战绩详情" }));
+    fireEvent.click(screen.getByRole("button", { name: "事件" }));
+    expect(await screen.findByText("按英雄筛选")).toBeTruthy();
+    expect(screen.getByText("查看地图位置")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "时间线" }));
+    fireEvent.click(await screen.findByRole("button", { name: "玩家属性" }));
+    expect(screen.getByRole("img", { name: "玩家属性时间线" })).toBeTruthy();
   });
 });

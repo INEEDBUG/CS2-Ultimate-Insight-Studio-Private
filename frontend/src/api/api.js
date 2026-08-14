@@ -99,6 +99,12 @@ export function getLeagueItemIconUrl(itemId) {
   return withDesktopSessionToken(url);
 }
 
+export function getLeaguePerkIconUrl(perkId) {
+  const id = encodeURIComponent(String(perkId || ""));
+  const url = API_BASE_URL ? `${API_BASE_URL}/api/league-lab/assets/perks/${id}.png` : `/api/league-lab/assets/perks/${id}.png`;
+  return withDesktopSessionToken(url);
+}
+
 export function getLeagueProfileIconUrl(profileIconId) {
   const id = encodeURIComponent(String(profileIconId ?? ""));
   const url = API_BASE_URL ? `${API_BASE_URL}/api/league-lab/assets/profile-icons/${id}.jpg` : `/api/league-lab/assets/profile-icons/${id}.jpg`;

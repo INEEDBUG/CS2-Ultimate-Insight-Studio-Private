@@ -1262,6 +1262,33 @@ def test_profile_icon_falls_back_to_png(monkeypatch):
     assert response.media_type == "image/png"
 
 
+def test_loadout_catalog_enriches_perks_and_proxies_validated_icon(monkeypatch):
+    async def request(method, path, *, json_body=None, params=None):
+        if path.endswith("perkstyles.json"):
+            return [{"id": 8000, "name": "精密", "slots": [{"perks": [{"id": 8010, "name": "征服者"}]}]}]
+        if path.endswith("summoner-spells.json"):
+            return [{"id": 4, "name": "闪现"}]
+        if path.endswith("perks.json"):
+            return [{"id": 8010, "name": "征服者", "longDesc": "获得适应之力", "iconPath": "/lol-game-data/assets/v1/perks/8010.png"}]
+        raise AssertionError(path)
+
+    async def request_bytes(path):
+        assert path == "/lol-game-data/assets/v1/perks/8010.png"
+        return b"perk-png", "image/png"
+
+    league_lab._loadout_catalog_cache.update({"expires_at": 0.0, "payload": None})
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    monkeypatch.setattr(league_lab.league_lab_service, "request_bytes", request_bytes)
+
+    catalog = asyncio.run(league_lab.league_loadout_catalog())
+    response = asyncio.run(league_lab.league_perk_icon(8010))
+
+    assert catalog["perks"][0]["name"] == "征服者"
+    assert catalog["perks"][0]["long_description"] == "获得适应之力"
+    assert catalog["styles"][0]["perks"][0]["icon_path"].endswith("/8010.png")
+    assert response.body == b"perk-png"
+
+
 def test_sgp_server_routing_matches_tencent_and_global_clients():
     assert league_lab._sgp_server_id(league_lab.LcuCredentials(1, "x", "CN", "HN1")) == "TENCENT_HN1"
     assert league_lab._sgp_server_id(league_lab.LcuCredentials(1, "x", "TENCENT", "HN10")) == "TENCENT_HN10"
@@ -1313,6 +1340,19 @@ def test_sgp_match_rows_normalize_wrapped_summary():
     assert row["participants"][0]["tag_line"] == "HN1"
     assert row["participants"][0]["profile_icon_id"] == 29
     assert row["participants"][0]["champion_name"] == "寒冰射手"
+    assert row["participants"][0]["raw_stats"]["kills"] == 10
+
+
+def test_scalar_match_stats_flattens_challenges_and_drops_nested_values():
+    result = league_lab._scalar_match_stats({
+        "kills": 12,
+        "win": True,
+        "nested": {"drop": 1},
+        "items": [1001],
+        "challenges": {"killParticipation": 0.71, "nested": {"drop": 1}},
+    })
+
+    assert result == {"kills": 12, "win": True, "challenge.killParticipation": 0.71}
 
 
 def test_single_jungle_analysis_matches_leagueakari_geometry_and_early_ganks():

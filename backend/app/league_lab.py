@@ -2113,6 +2113,20 @@ def _time_sort_value(value) -> int:
         return 0
 
 
+def _scalar_match_stats(payload: dict) -> dict[str, bool | float | int | str | None]:
+    """Keep the scalar match fields used by LeagueAkari's searchable ten-player matrix."""
+    result: dict[str, bool | float | int | str | None] = {}
+    for key, value in (payload or {}).items():
+        if isinstance(value, (bool, int, float, str)) or value is None:
+            result[str(key)] = value
+    challenges = (payload or {}).get("challenges")
+    if isinstance(challenges, dict):
+        for key, value in challenges.items():
+            if isinstance(value, (bool, int, float, str)) or value is None:
+                result[f"challenge.{key}"] = value
+    return result
+
+
 def _remember_recent_players(players: list[dict], game_id=None) -> None:
     existing = {str(row.get("puuid")): row for row in _read_recent_players() if row.get("puuid")}
     now = int(time.time() * 1000)
@@ -2249,6 +2263,7 @@ def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "")
                 "perks": [row_stats.get(f"perk{i}") for i in range(6) if row_stats.get(f"perk{i}")],
                 "augments": [row_stats.get(f"playerAugment{i}") for i in range(1, 7) if row_stats.get(f"playerAugment{i}")],
                 "challenges": row.get("challenges") or row_stats.get("challenges") or {},
+                "raw_stats": _scalar_match_stats({**row_stats, "challenges": row.get("challenges") or row_stats.get("challenges") or {}}),
             })
         normalized.append(
             {
@@ -2328,6 +2343,7 @@ def _normalize_sgp_match_rows(payload: dict, names: dict[int, str], puuid: str) 
                 "tower_damage": row.get("damageDealtToTurrets", 0), "vision_score": row.get("visionScore", 0),
                 "items": [row.get(f"item{i}") for i in range(7) if row.get(f"item{i}")], "perks": [row.get(f"perk{i}") for i in range(6) if row.get(f"perk{i}")],
                 "augments": [row.get(f"playerAugment{i}") for i in range(1, 7) if row.get(f"playerAugment{i}")], "challenges": row.get("challenges") or {},
+                "raw_stats": _scalar_match_stats(row),
             })
         normalized.append(
             {
@@ -3696,30 +3712,48 @@ async def league_profile_icon(profile_icon_id: int):
     raise HTTPException(status_code=404, detail=str(last_error or "召唤师头像不存在"))
 
 
-@router.get("/loadout-catalog")
-async def league_loadout_catalog():
+_loadout_catalog_cache: dict = {"expires_at": 0.0, "payload": None}
+
+
+async def _league_loadout_catalog_payload() -> dict:
+    cached = _loadout_catalog_cache.get("payload")
+    if isinstance(cached, dict) and time.monotonic() < float(_loadout_catalog_cache.get("expires_at") or 0):
+        return cached
     try:
-        styles, spells = await asyncio.gather(
+        styles, spells, perk_rows = await asyncio.gather(
             league_lab_service.request("GET", "/lol-game-data/assets/v1/perkstyles.json"),
             league_lab_service.request("GET", "/lol-game-data/assets/v1/summoner-spells.json"),
+            league_lab_service.request("GET", "/lol-game-data/assets/v1/perks.json"),
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    perk_catalog = {
+        int(perk.get("id")): {
+            "id": int(perk.get("id")),
+            "name": str(perk.get("name") or perk.get("id")),
+            "short_description": str(perk.get("shortDesc") or perk.get("shortDescription") or ""),
+            "long_description": str(perk.get("longDesc") or perk.get("longDescription") or ""),
+            "icon_path": str(perk.get("iconPath") or ""),
+        }
+        for perk in (perk_rows or [])
+        if isinstance(perk, dict) and perk.get("id")
+    }
     normalized_styles = []
     for style in styles if isinstance(styles, list) else []:
         if not isinstance(style, dict) or not style.get("id"):
             continue
         perks = []
         for slot in style.get("slots") or []:
-            perks.extend(
-                {
-                    "id": int(perk.get("id")),
-                    "name": str(perk.get("name") or perk.get("id")),
-                    "icon_path": perk.get("iconPath") or "",
-                }
-                for perk in (slot.get("perks") or [])
-                if isinstance(perk, dict) and perk.get("id")
-            )
+            for perk in (slot.get("perks") or []):
+                if not isinstance(perk, dict) or not perk.get("id"):
+                    continue
+                perk_id = int(perk.get("id"))
+                perks.append({
+                    **perk_catalog.get(perk_id, {}),
+                    "id": perk_id,
+                    "name": str(perk_catalog.get(perk_id, {}).get("name") or perk.get("name") or perk_id),
+                    "icon_path": str(perk_catalog.get(perk_id, {}).get("icon_path") or perk.get("iconPath") or ""),
+                })
         normalized_styles.append(
             {
                 "id": int(style["id"]),
@@ -3739,7 +3773,30 @@ async def league_loadout_catalog():
         for spell in spell_rows
         if isinstance(spell, dict) and spell.get("id")
     ]
-    return {"styles": normalized_styles, "spells": normalized_spells}
+    payload = {"styles": normalized_styles, "spells": normalized_spells, "perks": list(perk_catalog.values())}
+    _loadout_catalog_cache.update({"expires_at": time.monotonic() + 300.0, "payload": payload})
+    return payload
+
+
+@router.get("/assets/perks/{perk_id}.png")
+async def league_perk_icon(perk_id: int):
+    if perk_id <= 0:
+        raise HTTPException(status_code=404, detail="符文图标不存在")
+    catalog = await _league_loadout_catalog_payload()
+    perk = next((row for row in catalog.get("perks") or [] if int(row.get("id") or 0) == perk_id), None)
+    icon_path = str((perk or {}).get("icon_path") or "")
+    if not icon_path.startswith("/lol-game-data/assets/"):
+        raise HTTPException(status_code=404, detail="符文图标不存在")
+    try:
+        content, media_type = await league_lab_service.request_bytes(icon_path)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(content=content, media_type=media_type, headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.get("/loadout-catalog")
+async def league_loadout_catalog():
+    return await _league_loadout_catalog_payload()
 
 
 _OPGG_BASE_URL = "https://lol-api-champion.op.gg"

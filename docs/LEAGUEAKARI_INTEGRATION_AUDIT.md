@@ -48,7 +48,7 @@ This document prevents the League integration from becoming a collection of unre
 - Match-replay parity: current and searched-player match cards read LCU replay availability, create the required version/queue/game-end metadata, show live `.rofl` download progress and hand a completed replay back to League for playback. Download and playback are always explicit button actions.
 - Champion-mastery parity: the profile keeps a fast top-ten summary and exposes the complete LCU mastery catalog on demand with official icons, mastery level/points, point ordering and local search.
 - Encounter-history parity: current-account match imports build a per-opponent shared-game index, isolated by the active local account. A searched player's profile exposes paginated head-to-head rows with both champions and K/D/A, and allows removing an individual locally persisted encounter without touching Riot data.
-- Expanded match-card foundation: collapsed performance rows now open into both-team scoreboards, target-player combat/economy/vision details, spell/rune/augment summaries, filterable major events, per-player skill/item build order, team-gold timeline and replay actions. LCU and SGP match normalization retains the ten-player identities and the detail endpoint returns only the timeline fields required by the UI.
+- Expanded match-card foundation: collapsed performance rows now open into both-team scoreboards, a searchable ten-player raw-stat matrix, official spell/rune metadata, filterable major events with champion filters and coordinate previews, per-player skill/item build order, team gold/economic-difference/player-stat timelines and replay actions. LCU and SGP match normalization retains the ten-player identities and scalar raw statistics, while the detail endpoint returns only the timeline fields required by the UI.
 - Opt-in local respawn countdown in League Mini through the in-game Live Client Data endpoint; disabled by default.
 - Thirty-second enriched live-game cache so frequent UI refreshes do not repeatedly request every player's history.
 - League Mini ARAM bench card with current champion, bench choices, reroll count, manual swap and reroll actions.
@@ -92,11 +92,11 @@ This table is stricter than the shard matrix below: a backend capability is not 
 | Player tabs and summoner search | integrated player center | current/cross-region Riot ID lookup, recent tabs, ranked, mastery, challenges, tags, pagination and collection | Equivalent with host layout |
 | Match-history overview | detailed match cards | collapsed result/performance row, ten-player roster, replay action and expandable tabs | Equivalent foundation |
 | Match summary | `双方总览` | both teams, clickable players, K/D/A, KP, damage share, CS/gold and loadouts | Equivalent foundation |
-| Raw match details | `详细属性` | target-player combat/economy/vision cards only; upstream searchable ten-player raw-stat matrix is not yet reproduced | Partial |
-| Runes | `符文` | all participants, spells and stored perk/augment IDs; official perk artwork and end-of-game descriptions remain | Partial |
-| Events | `事件` | chronological major-event filters and actors/victims; champion filters, plate totals and map-position popovers remain | Partial |
+| Raw match details | `详细属性` | searchable horizontal ten-player scalar-stat matrix with sticky headers, game/source/version/map metadata and common Chinese labels | Equivalent foundation; per-stat chart popovers remain |
+| Runes | `符文` | all participants, official spell/perk artwork, catalog names/descriptions and augment IDs | Equivalent foundation; post-game computed description fidelity still needs real SGP fixtures |
+| Events | `事件` | chronological major-event and champion filters, actor/victim context, plate totals and coordinate previews | Equivalent foundation; official Riot map backgrounds remain license-gated |
 | Builds | `出装过程` | per-player skills and item purchases with timestamps; upstream navigator, evolutions, undo/sell grouping and SGP spacer presentation remain | Partial |
-| Timeline | `时间线` | frame/event counts and team-gold chart; upstream participant/stat selection, difference lines and SGP stats-line remain | Partial |
+| Timeline | `时间线` | team-gold lines, economic-difference line and selectable per-player gold/level/XP/CS/damage series | Equivalent foundation; upstream hover labels and richer SGP stat groups remain |
 | Encountered games | integrated encounter history | account-isolated shared games, pagination and local single-row removal | Equivalent with host layout |
 | Ongoing game | main and independent ongoing views | ten-player cards, recent form, premade and jungle analysis | Equivalent foundation; visual parity still needs real-window review |
 | Automation | League automation sections | gameflow, selection/ban, champion config and miscellaneous behavior | Equivalent; real Tencent state-machine acceptance pending |
