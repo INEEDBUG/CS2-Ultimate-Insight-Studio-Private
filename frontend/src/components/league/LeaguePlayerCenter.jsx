@@ -3,6 +3,8 @@ import { ChevronLeft, ChevronRight, Clock3, RefreshCw, Search, Shield, Tag, Trop
 import { fetchCurrentLeaguePlayer, fetchLeaguePlayer, fetchLeaguePlayerCollection, fetchRecentLeaguePlayers, saveLeaguePlayerTag, searchLeaguePlayer } from "../../api/leagueLabApi";
 import { getLeagueChampionIconUrl } from "../../api/api";
 import LeagueMatchFilterPresets from "./LeagueMatchFilterPresets";
+import LeagueAdvancedMatchFilters from "./LeagueAdvancedMatchFilters";
+import { matchesLeagueRules } from "../../utils/leagueMatchFilter";
 
 function queueRows(ranked) {
   if (Array.isArray(ranked?.queues)) return ranked.queues;
@@ -14,7 +16,7 @@ export default function LeaguePlayerCenter({ currentPuuid = "", onError }) {
   const [data, setData] = useState(null);
   const [recent, setRecent] = useState([]);
   const [page, setPage] = useState(0);
-  const [filter, setFilter] = useState({ result: "all", mode: "all", position: "all", text: "", minKills: "", maxDeaths: "", minKda: "" });
+  const [filter, setFilter] = useState({ result: "all", mode: "all", position: "all", text: "", minKills: "", maxDeaths: "", minKda: "", advancedLogic:"and", advancedRules:[] });
   const [busy, setBusy] = useState(false);
   const [tag, setTag] = useState({ label: "", note: "", color: "emerald" });
   const load = async (target = currentPuuid, nextPage = 0, collect = false) => {
@@ -46,6 +48,7 @@ export default function LeaguePlayerCenter({ currentPuuid = "", onError }) {
     if (filter.maxDeaths !== "" && Number(match.deaths || 0) > Number(filter.maxDeaths)) return false;
     const kda = (Number(match.kills || 0) + Number(match.assists || 0)) / Math.max(1, Number(match.deaths || 0));
     if (filter.minKda !== "" && kda < Number(filter.minKda)) return false;
+    if (!matchesLeagueRules(match, filter.advancedRules || [], filter.advancedLogic || "and")) return false;
     const text = filter.text.trim().toLowerCase();
     return !text || String(match.champion_name || "").toLowerCase().includes(text) || String(match.queue_id || "").includes(text);
   }), [data, filter]);
@@ -62,6 +65,7 @@ export default function LeaguePlayerCenter({ currentPuuid = "", onError }) {
   const summoner = data?.summoner || {};
   return <div className="space-y-4">
     <LeagueMatchFilterPresets filter={filter} onApply={setFilter} />
+    <LeagueAdvancedMatchFilters rules={filter.advancedRules||[]} logic={filter.advancedLogic||"and"} onChange={(advancedRules,advancedLogic)=>setFilter({...filter,advancedRules,advancedLogic})}/>
     {collectionChallenges.length>0&&<section className="rounded-2xl border border-cs2-border bg-cs2-bg-elevated p-4"><h3 className="mb-3 text-sm font-bold">藏品挑战</h3><div className="grid grid-cols-2 gap-2 md:grid-cols-3">{collectionChallenges.map((row)=><span key={row.id} className="rounded-lg bg-white/[.04] p-3 text-xs">{row.label}<br/><b className="text-base">{Number(row.currentValue||0).toLocaleString()}</b><span className="ml-2 text-[10px] text-cs2-text-muted">{row.currentLevel||""}</span></span>)}</div></section>}
     <div className="flex gap-2"><div className="relative flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 text-cs2-text-muted"/><input value={query} onChange={(e)=>setQuery(e.target.value)} onKeyDown={(e)=>e.key==="Enter"&&load(query,0)} placeholder="搜索 Riot ID，例如：玩家名#标签" className="w-full rounded-xl border border-cs2-border bg-cs2-bg-input py-2 pl-9 pr-3 text-sm"/></div><button onClick={()=>load(query,0)} className="rounded-xl border border-cs2-border px-4 text-xs font-semibold"><RefreshCw className={`inline h-4 w-4 ${busy?"animate-spin":""}`}/> 读取</button><button disabled={!data?.summoner?.puuid||busy} onClick={()=>load(data.summoner.puuid,0,true)} className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-4 text-xs font-semibold text-cyan-200 disabled:opacity-40">收集 100 场</button><button disabled={!data?.collection_count||busy} onClick={openCollection} className="rounded-xl border border-violet-400/30 bg-violet-400/10 px-4 text-xs font-semibold text-violet-200 disabled:opacity-40">本地 {data?.collection_count||0} 场</button></div>
     {recent.length>0&&<section className="rounded-xl border border-cs2-border bg-cs2-bg-elevated p-3"><div className="mb-2 text-xs font-semibold text-cs2-text-secondary"><Clock3 className="mr-1 inline h-3.5 w-3.5"/>最近遇见</div><div className="flex flex-wrap gap-2">{recent.slice(0,12).map((row)=><button key={row.puuid} onClick={()=>load(row.puuid,0)} className="rounded-lg border border-cs2-border-subtle px-3 py-2 text-left text-xs hover:border-emerald-400/30"><b>{row.game_name||"未知玩家"}</b><span className="text-cs2-text-muted">#{row.tag_line}</span>{row.tag?.label&&<span className="ml-2 text-emerald-300">{row.tag.label}</span>}</button>)}</div></section>}

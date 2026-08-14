@@ -56,14 +56,14 @@ This document prevents the League integration from becoming a collection of unre
 - Champion config: saved loadouts plus LCU-backed champion artwork search, primary/secondary rune selection, named summoner-spell selection and LeagueAkari-equivalent normal/ranked-position/ARAM/URF/Nexus Blitz/Ultimate Spellbook routing with fallback are implemented.
 - Honor: strategy parity is implemented; the UI intentionally keeps the feature opt-in and disabled by default.
 - Invitations: per-type strategy, priority ordering, away gating and the complete upstream dynamic queue-type strategy catalog are implemented.
-- Match history: current and cross-player rows, Riot ID lookup, pagination, ranked/mastery summary, recently encountered players, local tags, result/mode/champion/position/minimum-kills/maximum-deaths/minimum-KDA filters, named filter presets, SGP fallback, one-click 100-match SQLite collection that survives restarts, aggregate KDA/participation/vision/damage metrics, SGP collection challenges and expanded match cards exist; the full composable-filter language remains.
+- Match history: current and cross-player rows, Riot ID lookup, pagination, ranked/mastery summary, recently encountered players, local tags, basic filters, named presets, AND/OR composable rules over champion/mode/position/queue/KDA/combat/economy fields, SGP fallback, one-click 100-match SQLite collection, aggregate performance metrics, SGP collection challenges and expanded match cards exist; upstream-only predicates that require richer timeline/team payloads remain.
 - Mini window: phase-driven show/hide, safe manual close, dedicated `mini.html`, ARAM bench swap/reroll, owned-skin selection, respawn countdown, live ReadyCheck/pick-ban/matchmaking/phase-action countdowns and champ-select phase timer are implemented; remaining auxiliary cards remain.
 
 ### Not implemented yet
 
 - Full cross-region Riot ID search through SGP; direct PUUID summoner fallback, match history and ranked-stat routing are implemented. Champion mastery remains LCU-only, matching current LeagueAkari behavior.
 - Ongoing-game jungle-path analysis (live team/profile cards, premade detection and champion-usage summaries work now).
-- Saved named filter presets are implemented with local persistence; the full upstream composable-filter language remains (the durable SQLite collection workspace works now).
+- Saved named filter presets and a local AND/OR composable rule builder are implemented; predicates requiring richer timeline/team payloads remain (the durable SQLite collection workspace works now).
 - OP.GG and remaining specialized auxiliary overlay windows (an independent native real-time match window and Mini respawn timer now work).
 - Reward/mission/event claiming plus mutating loot and friend tools (the read-only overview works now; writes require separate safety review).
 - In-game preset messaging: explicit fixed-text presets for lobby/champion-select, plus manual chat availability and status-message tools are implemented; generated rating/jungle/premade presets and native keyboard injection during an active match remain.
