@@ -771,3 +771,20 @@ def test_chat_presence_update_is_explicit_and_uses_lcu(monkeypatch):
 
     assert calls[0] == ("PUT", "/lol-chat/v1/me", {"availability": "away", "statusMessage": "休息中"})
     assert result["chat_presence"]["availability"] == "away"
+
+
+def test_manual_chat_preset_sends_to_champion_select(monkeypatch):
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, json_body))
+        if method == "GET":
+            return [{"id": "champ", "type": "championSelect"}]
+        return None
+
+    league_lab.league_lab_service.phase = "ChampSelect"
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    result = asyncio.run(league_lab.league_send_chat_message(league_lab.ChatMessageSend(lines=["第一行", "第二行"])))
+
+    assert calls[-1] == ("POST", "/lol-chat/v1/conversations/champ/messages", {"body": "第一行\n第二行", "type": "chat"})
+    assert result["line_count"] == 2

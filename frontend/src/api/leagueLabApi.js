@@ -75,6 +75,11 @@ export async function updateLeagueChatPresence(payload) {
   return data;
 }
 
+export async function sendLeagueChatMessage(lines) {
+  const { data } = await API.post("/league-lab/toolkit/chat-message", { lines });
+  return data;
+}
+
 export async function swapLeagueBenchChampion(championId) {
   const { data } = await API.post(`/league-lab/champ-select/bench/swap/${championId}`);
   return data;

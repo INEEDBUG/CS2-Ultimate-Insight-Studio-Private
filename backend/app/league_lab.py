@@ -131,6 +131,10 @@ class ChatPresenceUpdate(BaseModel):
     status_message: str | None = Field(default=None, max_length=500)
 
 
+class ChatMessageSend(BaseModel):
+    lines: list[str] = Field(min_length=1, max_length=10)
+
+
 LeagueLabSettings.model_rebuild()
 
 
@@ -1962,6 +1966,37 @@ async def league_update_chat_presence(body: ChatPresenceUpdate):
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"chat_presence": current if isinstance(current, dict) else patch, "applied": True}
+
+
+@router.post("/toolkit/chat-message")
+async def league_send_chat_message(body: ChatMessageSend):
+    lines = [line.strip() for line in body.lines if line.strip()]
+    if not lines:
+        raise HTTPException(status_code=422, detail="消息内容不能为空")
+    if any(len(line) > 300 for line in lines):
+        raise HTTPException(status_code=422, detail="单行消息不能超过 300 字")
+    try:
+        conversations = await league_lab_service.request("GET", "/lol-chat/v1/conversations")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    wanted = {"ChampSelect": {"championselect", "champion-select"}, "Lobby": {"customgame", "custom-game"}}.get(
+        league_lab_service.phase, set()
+    )
+    conversation = next(
+        (row for row in conversations if isinstance(row, dict) and str(row.get("type") or "").lower() in wanted),
+        None,
+    ) if isinstance(conversations, list) else None
+    if not conversation or not conversation.get("id"):
+        raise HTTPException(status_code=409, detail="当前不在可发送消息的房间或英雄选择阶段")
+    try:
+        await league_lab_service.request(
+            "POST",
+            f"/lol-chat/v1/conversations/{conversation['id']}/messages",
+            json_body={"body": "\n".join(lines), "type": "chat"},
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"sent": True, "phase": league_lab_service.phase, "line_count": len(lines)}
 
 
 @router.post("/actions/{action}")

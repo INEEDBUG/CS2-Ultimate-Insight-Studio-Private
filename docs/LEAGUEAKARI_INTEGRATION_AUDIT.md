@@ -66,7 +66,7 @@ This document prevents the League integration from becoming a collection of unre
 - Saved filter presets and the full upstream composable-filter language (the durable SQLite collection workspace works now).
 - OP.GG and remaining specialized auxiliary overlay windows (an independent native real-time match window and Mini respawn timer now work).
 - Reward/mission/event claiming plus mutating loot and friend tools (the read-only overview works now; writes require separate safety review).
-- In-game preset messaging (manual chat availability and status-message tools are implemented).
+- In-game preset messaging: explicit fixed-text presets for lobby/champion-select, plus manual chat availability and status-message tools are implemented; native keyboard injection during an active match remains.
 - Client window sizing, game-client process controls and streamer mode.
 
 ## Porting decisions
