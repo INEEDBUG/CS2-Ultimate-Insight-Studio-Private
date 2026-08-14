@@ -85,6 +85,16 @@ export async function terminateLeagueGameClient() {
   return data;
 }
 
+export async function fetchLeagueGameSettingsFile() {
+  const { data } = await API.get("/league-lab/toolkit/game-settings-file");
+  return data;
+}
+
+export async function updateLeagueGameSettingsFile(mode) {
+  const { data } = await API.put("/league-lab/toolkit/game-settings-file", { mode });
+  return data;
+}
+
 export async function swapLeagueBenchChampion(championId) {
   const { data } = await API.post(`/league-lab/champ-select/bench/swap/${championId}`);
   return data;

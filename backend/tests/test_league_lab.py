@@ -1,4 +1,5 @@
 import asyncio
+import stat
 import subprocess
 import time
 
@@ -852,3 +853,35 @@ def test_terminate_game_client_endpoint_preserves_guard_error(monkeypatch):
         assert "未执行任何操作" in str(exc.detail)
     else:
         raise AssertionError("foreground guard must block termination")
+
+
+def test_game_settings_file_mode_uses_tencent_game_config(tmp_path, monkeypatch):
+    install_root = tmp_path / "LeagueClient"
+    install_root.mkdir()
+    settings_path = tmp_path / "Game" / "Config" / "PersistedSettings.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text("{}", encoding="utf-8")
+
+    async def request(method, path, **_kwargs):
+        assert (method, path) == ("GET", "/data-store/v1/install-dir")
+        return str(install_root)
+
+    original = league_lab.league_lab_service.credentials
+    league_lab.league_lab_service.credentials = league_lab.LcuCredentials(1, "token", region="TENCENT")
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    try:
+        readonly = asyncio.run(
+            league_lab.league_game_settings_file_update(
+                league_lab.GameSettingsFileModeUpdate(mode="readonly")
+            )
+        )
+        assert readonly["mode"] == "readonly"
+        writable = asyncio.run(
+            league_lab.league_game_settings_file_update(
+                league_lab.GameSettingsFileModeUpdate(mode="writable")
+            )
+        )
+        assert writable["mode"] == "writable"
+    finally:
+        league_lab.league_lab_service.credentials = original
+        settings_path.chmod(stat.S_IREAD | stat.S_IWRITE)

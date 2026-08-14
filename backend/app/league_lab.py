@@ -16,6 +16,7 @@ import os
 import random
 import re
 import ssl
+import stat
 import subprocess
 import time
 from dataclasses import dataclass
@@ -137,6 +138,10 @@ class ChatPresenceUpdate(BaseModel):
 
 class ChatMessageSend(BaseModel):
     lines: list[str] = Field(min_length=1, max_length=10)
+
+
+class GameSettingsFileModeUpdate(BaseModel):
+    mode: Literal["readonly", "writable"]
 
 
 LeagueLabSettings.model_rebuild()
@@ -2038,6 +2043,47 @@ async def league_toolkit_overview():
         },
         "read_only": True,
     }
+
+
+async def _league_game_settings_path() -> Path:
+    install_root = await league_lab_service.request("GET", "/data-store/v1/install-dir")
+    if not isinstance(install_root, str) or not install_root.strip():
+        raise RuntimeError("LCU 未返回游戏安装目录")
+    root = Path(install_root).expanduser().resolve()
+    region = (league_lab_service.credentials.region if league_lab_service.credentials else "").upper()
+    config_dir = (root.parent / "Game" / "Config") if region == "TENCENT" else (root / "Config")
+    settings_path = (config_dir / "PersistedSettings.json").resolve()
+    if not settings_path.is_file():
+        raise RuntimeError("未找到 PersistedSettings.json")
+    return settings_path
+
+
+async def _league_game_settings_file_mode() -> str:
+    settings_path = await _league_game_settings_path()
+    return "writable" if settings_path.stat().st_mode & stat.S_IWRITE else "readonly"
+
+
+@router.get("/toolkit/game-settings-file")
+async def league_game_settings_file_status():
+    try:
+        path = await _league_game_settings_path()
+        mode = "writable" if path.stat().st_mode & stat.S_IWRITE else "readonly"
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"mode": mode, "file_name": path.name}
+
+
+@router.put("/toolkit/game-settings-file")
+async def league_game_settings_file_update(body: GameSettingsFileModeUpdate):
+    try:
+        path = await _league_game_settings_path()
+        os.chmod(path, stat.S_IREAD if body.mode == "readonly" else stat.S_IREAD | stat.S_IWRITE)
+        mode = await _league_game_settings_file_mode()
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=f"修改游戏设置文件属性失败: {exc}") from exc
+    if mode != body.mode:
+        raise HTTPException(status_code=409, detail="游戏设置文件属性未按预期生效")
+    return {"mode": mode, "file_name": path.name, "applied": True}
 
 
 @router.put("/toolkit/chat-presence")

@@ -50,6 +50,7 @@ This document prevents the League integration from becoming a collection of unre
 - League Mini owned-skin selector with chroma support; options come from the current LCU inventory snapshot and unowned/disabled IDs are rejected server-side.
 - Visual rune and summoner-spell loadout editor backed by the current LCU catalog; perk selection no longer requires manually typing numeric IDs.
 - LeagueAkari-style streamer privacy mode across the main League lab, player center, Mini and independent ongoing-game window, with stable optional aliases, local-tag/PUUID masking and optional native capture protection.
+- Reversible `PersistedSettings.json` read-only/writable control using the LCU-reported install directory, including Tencent's separate `Game/Config` layout.
 
 ### Partially implemented; upstream behavior is richer
 
@@ -67,7 +68,7 @@ This document prevents the League integration from becoming a collection of unre
 - Saved named filter presets and a local AND/OR composable rule builder are implemented; predicates requiring richer timeline/team payloads remain (the durable SQLite collection workspace works now).
 - OP.GG and remaining specialized auxiliary overlay windows (an independent native real-time match window and Mini respawn timer now work).
 - Reward/mission/event claiming plus mutating loot and friend tools (the read-only overview works now; writes require separate safety review).
-- In-game preset messaging: explicit fixed-text presets for lobby/champion-select, plus manual chat availability and status-message tools are implemented; generated rating/jungle/premade presets and native keyboard injection during an active match remain.
+- In-game preset messaging: explicit fixed-text presets plus generated recent-form and premade drafts for lobby/champion-select, along with manual chat availability and status-message tools, are implemented. Jungle-path drafts and native keyboard injection during an active match remain.
 - Client window sizing and global terminate shortcut remain. Explicit foreground-only League game-process termination, streamer text masking and native Windows capture exclusion are implemented.
 
 ## Porting decisions
