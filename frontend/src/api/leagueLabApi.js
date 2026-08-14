@@ -125,6 +125,11 @@ export async function fetchLeagueToolkitOverview() {
   return data;
 }
 
+export async function fetchLeagueFriendMetadata() {
+  const { data } = await API.get("/league-lab/toolkit/friends/metadata");
+  return data;
+}
+
 export async function claimLeagueMissionReward(missionId, rewardGroupIds, confirmation) {
   const { data } = await API.post("/league-lab/toolkit/claims/mission", {
     mission_id: missionId,

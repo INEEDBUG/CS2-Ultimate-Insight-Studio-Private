@@ -1448,6 +1448,9 @@ class LeagueLabService:
 
     async def _run_chat_ready_automation(self) -> None:
         """Apply LeagueAkari login automations once, after `/lol-chat/v1/me` settles for two seconds."""
+        if self.credentials is None:
+            self._chat_ready_since = None
+            return
         if self._chat_ready_automation_done:
             return
         try:
@@ -1683,14 +1686,22 @@ def _sgp_region_path(credentials: LcuCredentials | None = None, server_id: str |
     return aliases.get(server_id, server_id)
 
 
-async def _sgp_match_history(puuid: str, beg_index: int, count: int, server_id: str | None = None) -> dict:
+async def _sgp_match_history(
+    puuid: str,
+    beg_index: int,
+    count: int,
+    server_id: str | None = None,
+    access_token: str | None = None,
+) -> dict:
     credentials = league_lab_service.credentials
     server_id = _normalize_sgp_server_id(server_id) if server_id else _sgp_server_id(credentials)
     host = _SGP_MATCH_HISTORY_HOSTS.get(server_id)
     if not host:
         raise RuntimeError(f"当前区服不支持 SGP 战绩源: {server_id or '未知区服'}")
-    token_payload = await league_lab_service.request("GET", "/entitlements/v1/token")
-    token = token_payload.get("accessToken") if isinstance(token_payload, dict) else None
+    token = access_token
+    if not token:
+        token_payload = await league_lab_service.request("GET", "/entitlements/v1/token")
+        token = token_payload.get("accessToken") if isinstance(token_payload, dict) else None
     if not token:
         raise RuntimeError("LCU 未返回 SGP 授权令牌")
     url = f"{host}/match-history-query/v1/products/lol/player/{puuid}/SUMMARY"
@@ -3391,9 +3402,9 @@ async def league_opgg_apply_runes(body: OpggRuneApply):
 
 @router.get("/toolkit/overview")
 async def league_toolkit_overview():
-    async def optional(path: str):
+    async def optional(path: str, *, params: dict | None = None):
         try:
-            return await league_lab_service.request("GET", path)
+            return await league_lab_service.request("GET", path, params=params)
         except RuntimeError:
             return None
 
@@ -3460,6 +3471,84 @@ async def league_toolkit_overview():
         "read_only": not league_lab_service.settings.toolkit_account_actions_enabled,
         "account_actions_enabled": league_lab_service.settings.toolkit_account_actions_enabled,
     }
+
+
+def _first_match_timestamp(payload: dict | None) -> int | str | None:
+    games = (payload or {}).get("games") or []
+    if isinstance(games, dict):
+        games = games.get("games") or []
+    if not isinstance(games, list) or not games:
+        return None
+    wrapper = games[0]
+    game = wrapper.get("json") if isinstance(wrapper, dict) and isinstance(wrapper.get("json"), dict) else wrapper
+    if not isinstance(game, dict):
+        return None
+    return game.get("gameCreation") or game.get("gameCreationDate") or game.get("gameStartTimestamp")
+
+
+@router.get("/toolkit/friends/metadata")
+async def league_friend_metadata():
+    """Load LeagueAkari-compatible friend dates without delaying the toolkit overview."""
+
+    async def optional(path: str, *, params: dict | None = None):
+        try:
+            return await league_lab_service.request("GET", path, params=params)
+        except RuntimeError:
+            return None
+
+    friends, giftable = await asyncio.gather(
+        optional("/lol-chat/v1/friends"),
+        optional("/lol-store/v1/giftablefriends"),
+    )
+    friend_rows = [row for row in (friends or []) if isinstance(row, dict) and row.get("puuid")]
+    giftable_rows = [row for row in (giftable or []) if isinstance(row, dict)]
+    friend_since_by_summoner = {
+        str(row.get("summonerId")): row.get("friendsSince")
+        for row in giftable_rows
+        if row.get("summonerId") is not None and row.get("friendsSince")
+    }
+
+    server_id = _sgp_server_id(league_lab_service.credentials)
+    token = None
+    if server_id in _SGP_MATCH_HISTORY_HOSTS:
+        token_payload = await optional("/entitlements/v1/token")
+        if isinstance(token_payload, dict):
+            token = token_payload.get("accessToken")
+
+    semaphore = asyncio.Semaphore(6)
+
+    async def enrich(friend: dict) -> tuple[str, dict]:
+        puuid = str(friend.get("puuid") or "")
+        source = "lcu"
+        last_game_at = None
+        async with semaphore:
+            if token:
+                try:
+                    history = await _sgp_match_history(
+                        puuid,
+                        0,
+                        1,
+                        server_id or None,
+                        access_token=token,
+                    )
+                    last_game_at = _first_match_timestamp(history)
+                    source = "sgp"
+                except RuntimeError:
+                    pass
+            if not token or (source != "sgp" and last_game_at is None):
+                history = await optional(
+                    f"/lol-match-history/v1/products/lol/{quote(puuid, safe='')}/matches",
+                    params={"begIndex": 0, "endIndex": 0},
+                )
+                last_game_at = _first_match_timestamp(history)
+        return puuid, {
+            "last_game_at": last_game_at,
+            "friends_since": friend_since_by_summoner.get(str(friend.get("summonerId"))),
+            "source": source,
+        }
+
+    metadata = dict(await asyncio.gather(*(enrich(friend) for friend in friend_rows)))
+    return {"friends": metadata, "count": len(metadata), "source": "sgp" if token else "lcu"}
 
 
 def _require_toolkit_account_actions() -> None:

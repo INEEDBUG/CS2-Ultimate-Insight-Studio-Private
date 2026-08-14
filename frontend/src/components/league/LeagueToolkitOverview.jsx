@@ -16,7 +16,7 @@ const cards = [
 const rankedQueues = [["RANKED_SOLO_5x5","单双排位"],["RANKED_FLEX_SR","灵活排位"],["RANKED_TFT","云顶之弈"]];
 const rankedTiers = ["IRON","BRONZE","SILVER","GOLD","PLATINUM","EMERALD","DIAMOND","MASTER","GRANDMASTER","CHALLENGER"];
 
-export default function LeagueToolkitOverview({ onError, settings, onSettingsUpdate, onDryRunGame }) {
+export default function LeagueToolkitOverview({ onError, settings, onSettingsUpdate, onDryRunGame, onOpenPlayer }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [availability,setAvailability]=useState("chat");
@@ -41,7 +41,7 @@ export default function LeagueToolkitOverview({ onError, settings, onSettingsUpd
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-bold">League 客户端工具箱</h2><p className="mt-1 text-xs text-cs2-text-muted">读取任务、奖励、活动、战利品与好友概况；账号写入保护默认关闭。</p></div><div className="flex gap-2"><button onClick={toggleAccountActions} disabled={busy} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${settings?.toolkit_account_actions_enabled?"border-amber-400/30 bg-amber-400/10 text-amber-200":"border-cs2-border text-cs2-text-muted"}`}>账号写入：{settings?.toolkit_account_actions_enabled?"已启用":"已关闭"}</button><button onClick={load} className="rounded-xl border border-cs2-border px-3 py-2 text-xs"><RefreshCw className={`mr-1 inline h-4 w-4 ${busy ? "animate-spin" : ""}`}/>刷新</button></div></div>
     <section className="grid gap-3 md:grid-cols-4">{cards.map(([key,label,Icon])=><article key={key} className="rounded-2xl border border-cs2-border bg-cs2-bg-elevated p-4"><Icon className="mb-5 h-5 w-5 text-emerald-300"/><div className="text-2xl font-bold">{data?.counts?.[key] ?? "—"}</div><div className="mt-1 text-xs text-cs2-text-muted">{label}</div></article>)}</section>
     <section className="rounded-2xl border border-cs2-border bg-cs2-bg-elevated p-4"><h3 className="text-sm font-bold">进行中的任务</h3><div className="mt-3 grid gap-2">{(data?.missions||[]).slice(0,12).map((mission,index)=><div key={mission.id||index} className="rounded-xl border border-cs2-border-subtle px-3 py-2 text-xs"><b>{mission.title||mission.name||mission.id||"未命名任务"}</b><span className="ml-2 text-cs2-text-muted">{mission.status||mission.state||""}</span></div>)}{data&&!data.missions?.length&&<div className="text-xs text-cs2-text-muted">暂无可显示任务</div>}</div></section>
-    <LeagueAccountTools data={data} enabled={Boolean(settings?.toolkit_account_actions_enabled)} busy={busy} onBusyChange={setBusy} onRefresh={load} onError={onError}/>
+    <LeagueAccountTools data={data} enabled={Boolean(settings?.toolkit_account_actions_enabled)} busy={busy} onBusyChange={setBusy} onRefresh={load} onError={onError} onOpenPlayer={onOpenPlayer}/>
     <LeagueAdvancedToolkit enabled={Boolean(settings?.toolkit_account_actions_enabled)} busy={busy} onBusyChange={setBusy} onError={onError} onDryRunGame={onDryRunGame}/>
     <LeagueInGamePresetTools settings={settings} busy={busy} onSettingsUpdate={onSettingsUpdate} onBusyChange={setBusy} onError={onError}/>
     <LeagueAuxShortcutSettings settings={settings} busy={busy} onSettingsUpdate={onSettingsUpdate}/>

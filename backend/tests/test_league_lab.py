@@ -563,6 +563,9 @@ def test_auto_invite_online_friend_removes_completed_target(monkeypatch, tmp_pat
 def test_player_search_uses_lcu_riot_id_alias(monkeypatch):
     calls = []
 
+    async def unavailable_riot_aliases(game_name, tag_line):
+        raise RuntimeError("Riot Client API unavailable in this fixture")
+
     async def request(method, path, *, json_body=None, params=None):
         calls.append((method, path, json_body, params))
         if path.endswith("/aliases"):
@@ -573,6 +576,7 @@ def test_player_search_uses_lcu_riot_id_alias(monkeypatch):
         return {"summoner": summoner, "matches": []}
 
     monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    monkeypatch.setattr(league_lab, "_riot_player_account_aliases", unavailable_riot_aliases)
     monkeypatch.setattr(league_lab, "_load_player_bundle", bundle)
     result = asyncio.run(league_lab.search_league_player(" Player ", " CN1 "))
 
@@ -686,6 +690,45 @@ def test_toolkit_overview_is_read_only(monkeypatch):
     assert result["read_only"] is True
     assert result["account_actions_enabled"] is False
     assert result["counts"] == {"missions": 1, "unclaimed_rewards": 1, "loot": 1, "friends": 1}
+
+
+def test_friend_metadata_matches_league_akari_dates_without_writing(monkeypatch):
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, params))
+        assert method == "GET"
+        if path == "/lol-chat/v1/friends":
+            return [
+                {"puuid": "friend-a", "summonerId": 11},
+                {"puuid": "friend-b", "summonerId": 22},
+            ]
+        if path == "/lol-store/v1/giftablefriends":
+            return [{"summonerId": 11, "friendsSince": "2025-01-02T03:04:05Z"}]
+        if path.endswith("/friend-a/matches"):
+            assert params == {"begIndex": 0, "endIndex": 0}
+            return {"games": {"games": [{"gameCreation": 1770000000000}]}}
+        if path.endswith("/friend-b/matches"):
+            return {"games": {"games": []}}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(league_lab.league_lab_service, "credentials", None)
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    result = asyncio.run(league_lab.league_friend_metadata())
+
+    assert result == {
+        "friends": {
+            "friend-a": {
+                "last_game_at": 1770000000000,
+                "friends_since": "2025-01-02T03:04:05Z",
+                "source": "lcu",
+            },
+            "friend-b": {"last_game_at": None, "friends_since": None, "source": "lcu"},
+        },
+        "count": 2,
+        "source": "lcu",
+    }
+    assert all(method == "GET" for method, _path, _params in calls)
 
 
 def test_toolkit_account_writes_are_disabled_by_default(monkeypatch):
@@ -1299,6 +1342,7 @@ def test_chat_presence_update_is_explicit_and_uses_lcu(monkeypatch):
 
 def test_chat_ready_automation_applies_status_and_apex_rank_once(monkeypatch):
     service = LeagueLabService()
+    service.credentials = league_lab.LcuCredentials(port=1, token="fixture")
     service.settings = LeagueLabSettings(
         automation_enabled=True,
         auto_set_status_message_enabled=True,
@@ -1329,6 +1373,7 @@ def test_chat_ready_automation_applies_status_and_apex_rank_once(monkeypatch):
 
 def test_chat_ready_automation_never_writes_when_master_switch_is_off(monkeypatch):
     service = LeagueLabService()
+    service.credentials = league_lab.LcuCredentials(port=1, token="fixture")
     service.settings = LeagueLabSettings(
         automation_enabled=False,
         auto_set_status_message_enabled=True,

@@ -1,13 +1,14 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LeagueAccountTools from "./LeagueAccountTools";
-import { claimLeagueMissionReward, deleteLeagueFriends } from "../../api/leagueLabApi";
+import { claimLeagueMissionReward, deleteLeagueFriends, fetchLeagueFriendMetadata } from "../../api/leagueLabApi";
 
 vi.mock("../../api/leagueLabApi", () => ({
   claimLeagueMissionReward: vi.fn(),
   claimLeagueRewardGrant: vi.fn(),
   claimLeagueEventRewards: vi.fn(),
   deleteLeagueFriends: vi.fn(),
+  fetchLeagueFriendMetadata: vi.fn(),
 }));
 
 const data = {
@@ -40,8 +41,19 @@ describe("LeagueAccountTools", () => {
     props.onRefresh.mockResolvedValue(undefined);
     claimLeagueMissionReward.mockResolvedValue({ claimed: true });
     deleteLeagueFriends.mockResolvedValue({ count: 1 });
+    fetchLeagueFriendMetadata.mockReturnValue(new Promise(()=>{}));
     window.prompt = vi.fn();
   });
+
+  const resolveFriendMetadata = () => fetchLeagueFriendMetadata.mockResolvedValueOnce({
+      friends: {
+        "puuid-1": {
+          last_game_at: "2026-08-10T12:00:00Z",
+          friends_since: "2025-01-02T03:04:05Z",
+          source: "lcu",
+        },
+      },
+    });
 
   it("keeps account actions inert while the master protection is disabled", () => {
     render(<LeagueAccountTools {...props} enabled={false}/>);
@@ -72,5 +84,16 @@ describe("LeagueAccountTools", () => {
     await waitFor(()=>expect(deleteLeagueFriends).toHaveBeenCalledWith(
       ["friend-1"], "我确认删除"
     ));
+  });
+
+  it("loads LeagueAkari friend dates and opens the selected player profile", async () => {
+    resolveFriendMetadata();
+    const onOpenPlayer = vi.fn();
+    render(<LeagueAccountTools {...props} enabled={false} onOpenPlayer={onOpenPlayer}/>);
+
+    await waitFor(()=>expect(fetchLeagueFriendMetadata).toHaveBeenCalledOnce());
+    expect(await screen.findByText(/上局 .*2026.*好友自 .*2025/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Friend#CN1" }));
+    expect(onOpenPlayer).toHaveBeenCalledWith("puuid-1");
   });
 });

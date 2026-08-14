@@ -1,6 +1,6 @@
 # LeagueAkari integration audit
 
-Baseline reviewed: `LeagueAkari` dev branch at `6e40999728f6408bddbb067fb89a81e086ae7d58`, plus the locally installed League Akari 1.5.1 shell. The upstream remains MIT licensed and is credited in `THIRD_PARTY_LICENSES.md`.
+Baseline reviewed: `LeagueAkari` dev branch at `cb236b6caf196e2505c7dfa6b34185020fd1e570`, plus the locally installed League Akari 1.5.1 shell. The only upstream change after the functional baseline `6e40999728f6408bddbb067fb89a81e086ae7d58` is documentation-only. The upstream remains MIT licensed and is credited in `THIRD_PARTY_LICENSES.md`.
 
 This document prevents the League integration from becoming a collection of unrelated toggles. It maps the upstream product into this project's Python/FastAPI + React/Tauri architecture and records what is actually implemented.
 
@@ -43,6 +43,7 @@ This document prevents the League integration from becoming a collection of unre
 - Live-game recent-form and current-champion usage summaries, plus LeagueAkari-style premade inference from repeated same-team match history.
 - Client toolkit overview plus LeagueAkari-equivalent mission (`SELECT_REWARDS`), reward-grant (`PENDING_SELECTION`) and Event Hub claim flows, and selected-friend deletion. The implementation re-reads live LCU state immediately before every write, never preselects or randomly chooses a reward, requires a default-off account-write master switch and exact confirmation phrase, and deletes only explicitly selected friend IDs.
 - LeagueAkari client/lobby/profile toolkit parity: eligible/unavailable queue discovery, revalidated queue-lobby creation, explicit lobby leave, Strawberry champion slot/map/difficulty controls, profile background skin/augment selection, banner accent, prestige-crest removal, challenge-token clearing and account-scope emote clearing. Every account write shares the default-off toolkit gate, exact confirmation phrase and live catalog/lobby revalidation.
+- Friend-tool parity: grouped/searchable Riot IDs, selected-only deletion, background enrichment of last-match and friendship-start dates through LCU/SGP, and one-click routing into the integrated player center. Date enrichment is read-only and intentionally does not delay the toolkit overview.
 - Opt-in local respawn countdown in League Mini through the in-game Live Client Data endpoint; disabled by default.
 - Thirty-second enriched live-game cache so frequent UI refreshes do not repeatedly request every player's history.
 - League Mini ARAM bench card with current champion, bench choices, reroll count, manual swap and reroll actions.
@@ -75,6 +76,38 @@ This document prevents the League integration from becoming a collection of unre
 ### Deliberately not exposed because upstream is incomplete
 
 - Loot crafting/redeeming is intentionally not exposed: the reviewed upstream `LootTools.vue` labels itself under development and leaves its `craft` handler empty. Read-only inventory parity is retained until upstream itself has a working, auditable user flow.
+
+## Shard-to-host traceability matrix
+
+This is the completion checklist against the authoritative registration list in upstream `src/main/bootstrap/index.ts`. “Host equivalent” means the responsibility is provided by the existing React/Tauri/FastAPI shell instead of copying Electron-only plumbing.
+
+| Upstream shard | Local evidence surface | Status |
+| --- | --- | --- |
+| `akari-api` | GitHub updater channel and bundled configuration; no upstream announcement/bootstrap service dependency | Host equivalent |
+| `akari-protocol`, `ipc` | FastAPI routes plus Tauri commands/capabilities | Host equivalent |
+| `app-common` | theme, locale, streamer privacy and capture protection | Equivalent |
+| `logger-factory` | Python/Rust application logging | Host equivalent |
+| `mobx-utils` | React/Zustand state and LCU WebSocket event propagation | Host equivalent |
+| `config-migrate`, `setting-factory`, `storage` | versioned Pydantic settings plus local SQLite/JSON persistence | Host equivalent |
+| `game-client` | foreground guard, termination shortcut, Live Client Data and settings-file control | Equivalent |
+| `league-client`, `league-client-ux`, `riot-client` | native command-line discovery, memory-only credentials, HTTPS and WebSocket clients | Equivalent; multi-client chooser remains under audit |
+| `client-installation` | no launcher surface yet | Pending: detected-client chooser and TCLS/WeGame/Riot launchers |
+| `window-manager`, `tray` | Tauri main/Mini/ongoing/OP.GG/cooldown windows and close-to-tray lifecycle | Equivalent |
+| `keyboard-shortcuts` | Tauri global-shortcut managers with default-off settings | Equivalent |
+| `self-update` | signed Tauri GitHub updater | Host equivalent |
+| `feature-gating` | features are bundled and locally gated by explicit settings; no remote kill switch | Deliberate host policy |
+| `auto-champ-config` | visual rune/spell loadouts with mode/position routing | Equivalent |
+| `auto-gameflow` | ready check, honor, rematch, invitations, matchmaking and ARAM side state machines | Equivalent |
+| `auto-misc` | reply, presence lock, login status/rank and friend-invite queue | Equivalent |
+| `auto-select` | mode/position profiles, intent, subset/Arena, bench and trade behavior | Equivalent |
+| `in-game-send` | fixed/form/premade/jungle presets, target shortcuts and foreground guard | Equivalent |
+| `ongoing-game` | enriched ten-player view, premade inference, champion usage and jungle timelines | Equivalent |
+| `respawn-timer` | opt-in Live Client Data timer in Mini | Equivalent |
+| `saved-player` | durable tags, recent encounters and player-center routing | Equivalent |
+| `sgp` | Tencent/global SGP routing with in-memory entitlements token and LCU fallback | Equivalent |
+| `statistics` | upstream version telemetry is not transmitted | Deliberately excluded for privacy |
+| `extra-assets` | LCU-backed champion/rune/spell/skin image proxy and bundled map metadata | Host equivalent |
+| `renderer-debug` | development-only diagnostics are not shipped as user features | Deliberately excluded |
 
 ## Porting decisions
 
