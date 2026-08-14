@@ -123,6 +123,19 @@ def test_champion_config_prefers_ranked_position_loadout():
     assert rune_write["selectedPerkIds"] == [8112]
 
 
+def test_sgp_player_challenges_uses_league_session_service(monkeypatch):
+    calls = []
+
+    async def fake_common(method, path, *, json_body=None):
+        calls.append((method, path, json_body))
+        return {"playerChallenges": [{"id": 505001, "currentValue": 170}]}
+
+    monkeypatch.setattr(league_lab, "_sgp_common_request", fake_common)
+    payload = asyncio.run(league_lab._sgp_player_challenges("player-puuid"))
+    assert payload["playerChallenges"][0]["currentValue"] == 170
+    assert calls == [("POST", "/challenges-client/v2/all-player-data/?puuid=player-puuid", [])]
+
+
 def test_ready_check_runs_auto_accept_once(monkeypatch):
     service = LeagueLabService()
     service.settings = LeagueLabSettings(
@@ -721,9 +734,14 @@ def test_player_bundle_falls_back_to_sgp_history(monkeypatch):
         assert puuid == "player-1"
         return {"queues": [{"queueType": "RANKED_SOLO_5x5", "tier": "GOLD", "division": "II"}]}
 
+    async def challenges(puuid):
+        assert puuid == "player-1"
+        return {}
+
     monkeypatch.setattr(league_lab.league_lab_service, "request", request)
     monkeypatch.setattr(league_lab, "_sgp_match_history", sgp)
     monkeypatch.setattr(league_lab, "_sgp_ranked_stats", ranked)
+    monkeypatch.setattr(league_lab, "_sgp_player_challenges", challenges)
     monkeypatch.setattr(league_lab, "_champion_names", names)
     result = asyncio.run(league_lab._load_player_bundle({"puuid": "player-1"}))
 

@@ -1267,6 +1267,13 @@ async def _sgp_ranked_stats(puuid: str) -> dict:
     return normalized
 
 
+async def _sgp_player_challenges(puuid: str) -> dict:
+    payload = await _sgp_common_request("POST", f"/challenges-client/v2/all-player-data/?puuid={puuid}", json_body=[])
+    if not isinstance(payload, dict):
+        raise RuntimeError("SGP 挑战数据返回格式无效")
+    return payload
+
+
 async def _sgp_summoner_by_puuid(puuid: str) -> dict:
     region_path = _sgp_region_path(league_lab_service.credentials)
     payload = await _sgp_common_request(
@@ -1643,6 +1650,11 @@ async def _load_player_bundle(summoner, match_limit: int = 20, beg_index: int = 
                 match_source = "sgp"
         except RuntimeError:
             pass
+    challenges = {}
+    try:
+        challenges = await _sgp_player_challenges(puuid)
+    except RuntimeError:
+        pass
     tags = _read_player_tags().get(puuid) or {}
     if match_limit >= 100 and beg_index == 0 and matches:
         await _store_match_collection(puuid, matches)
@@ -1659,6 +1671,7 @@ async def _load_player_bundle(summoner, match_limit: int = 20, beg_index: int = 
         "ranked": ranked or {},
         "ranked_source": ranked_source,
         "mastery": mastery or {},
+        "player_challenges": challenges,
         "matches": matches,
         "match_source": match_source,
         "collection_count": collection_count,
