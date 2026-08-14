@@ -12,7 +12,8 @@ from app.league_lab import LeagueLabService, LeagueLabSettings, parse_league_cli
 def test_parse_league_client_command_line_extracts_lcu_credentials():
     parsed = parse_league_client_command_line(
         '"LeagueClientUx.exe" --app-port=54321 --remoting-auth-token=secret_token '
-        '--region=CN --rso_platform_id=HN1 --app-pid=1234'
+        '--region=CN --rso_platform_id=HN1 --app-pid=1234 '
+        '--riotclient-app-port=60001 --riotclient-auth-token=riot_secret'
     )
 
     assert parsed is not None
@@ -20,7 +21,10 @@ def test_parse_league_client_command_line_extracts_lcu_credentials():
     assert parsed.token == "secret_token"
     assert parsed.region == "CN"
     assert parsed.platform_id == "HN1"
+    assert parsed.riot_client_port == 60001
+    assert parsed.riot_client_token == "riot_secret"
     assert "secret_token" not in parsed.base_url
+    assert "riot_secret" not in parsed.riot_client_base_url
 
 
 def test_parse_league_client_command_line_rejects_incomplete_input():
@@ -537,6 +541,40 @@ def test_player_search_uses_lcu_riot_id_alias(monkeypatch):
             None,
         )
     ]
+
+
+def test_cross_region_player_search_uses_riot_alias_and_target_sgp(monkeypatch):
+    league_lab.league_lab_service.credentials = league_lab.LcuCredentials(1, "x", "CN", "HN1", 2, "riot")
+
+    async def aliases(game_name, tag_line):
+        assert (game_name, tag_line) == ("Player", "KR1")
+        return [{"puuid": "global-puuid", "alias": {"game_name": "Player", "tag_line": "KR1"}}]
+
+    async def summoner(puuid, server_id=None):
+        assert (puuid, server_id) == ("global-puuid", "KR")
+        return {"puuid": puuid, "displayName": "", "source": "sgp", "summonerLevel": 50}
+
+    async def bundle(summoner_row, match_limit=20, beg_index=0, sgp_server_id=None, prefer_sgp=False):
+        assert summoner_row["gameName"] == "Player"
+        assert summoner_row["tagLine"] == "KR1"
+        assert sgp_server_id == "KR"
+        assert prefer_sgp is True
+        return {"summoner": summoner_row, "server_id": sgp_server_id}
+
+    monkeypatch.setattr(league_lab, "_riot_player_account_aliases", aliases)
+    monkeypatch.setattr(league_lab, "_sgp_summoner_by_puuid", summoner)
+    monkeypatch.setattr(league_lab, "_load_player_bundle", bundle)
+
+    result = asyncio.run(league_lab.search_league_player(" Player ", " KR1 ", "kr"))
+    assert result["server_id"] == "KR"
+
+
+def test_player_search_servers_marks_current_region():
+    league_lab.league_lab_service.credentials = league_lab.LcuCredentials(1, "x", "CN", "HN10")
+    result = asyncio.run(league_lab.league_player_search_servers())
+    assert result["current"] == "TENCENT_HN10"
+    current = [row for row in result["servers"] if row["current"]]
+    assert current == [{"id": "TENCENT_HN10", "label": "黑色玫瑰", "current": True}]
 
 
 def test_recent_players_are_deduplicated_and_sorted(monkeypatch, tmp_path):

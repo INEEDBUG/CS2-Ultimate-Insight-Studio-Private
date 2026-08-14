@@ -39,6 +39,8 @@ _PORT_RE = re.compile(r"--app-port=(\d+)")
 _TOKEN_RE = re.compile(r"--remoting-auth-token=([\w_-]+)")
 _REGION_RE = re.compile(r"--region=([\w_-]+)", re.IGNORECASE)
 _PLATFORM_RE = re.compile(r"--rso[_-]platform[_-]id=([\w_-]+)", re.IGNORECASE)
+_RIOT_CLIENT_PORT_RE = re.compile(r"--riotclient-app-port=(\d+)")
+_RIOT_CLIENT_TOKEN_RE = re.compile(r"--riotclient-auth-token=([\w_-]+)")
 
 
 PositionKey = Literal["default", "top", "jungle", "middle", "bottom", "utility"]
@@ -153,6 +155,8 @@ class LcuCredentials:
     token: str
     region: str = ""
     platform_id: str = ""
+    riot_client_port: int = 0
+    riot_client_token: str = ""
 
     @property
     def base_url(self) -> str:
@@ -163,6 +167,15 @@ class LcuCredentials:
         encoded = base64.b64encode(f"riot:{self.token}".encode("utf-8")).decode("ascii")
         return f"Basic {encoded}"
 
+    @property
+    def riot_client_base_url(self) -> str:
+        return f"https://127.0.0.1:{self.riot_client_port}"
+
+    @property
+    def riot_client_auth_header(self) -> str:
+        encoded = base64.b64encode(f"riot:{self.riot_client_token}".encode("utf-8")).decode("ascii")
+        return f"Basic {encoded}"
+
 
 def parse_league_client_command_line(command_line: str) -> LcuCredentials | None:
     port_match = _PORT_RE.search(command_line or "")
@@ -171,11 +184,15 @@ def parse_league_client_command_line(command_line: str) -> LcuCredentials | None
         return None
     region_match = _REGION_RE.search(command_line)
     platform_match = _PLATFORM_RE.search(command_line)
+    riot_client_port_match = _RIOT_CLIENT_PORT_RE.search(command_line)
+    riot_client_token_match = _RIOT_CLIENT_TOKEN_RE.search(command_line)
     return LcuCredentials(
         port=int(port_match.group(1)),
         token=token_match.group(1),
         region=region_match.group(1) if region_match else "",
         platform_id=platform_match.group(1) if platform_match else "",
+        riot_client_port=int(riot_client_port_match.group(1)) if riot_client_port_match else 0,
+        riot_client_token=riot_client_token_match.group(1) if riot_client_token_match else "",
     )
 
 
@@ -541,6 +558,29 @@ class LeagueLabService:
         except httpx.HTTPError as exc:
             self.last_error = f"LCU 资源请求失败: {type(exc).__name__}"
             raise RuntimeError(self.last_error) from exc
+
+    async def riot_request(self, method: str, path: str, *, json_body=None, params=None):
+        """Call the local Riot Client API without exposing its credentials outside this process."""
+        if not await self.refresh_connection():
+            raise RuntimeError("未检测到正在运行的英雄联盟客户端")
+        credentials = self.credentials
+        if not credentials or not credentials.riot_client_port or not credentials.riot_client_token:
+            raise RuntimeError("英雄联盟客户端未提供 Riot Client 本地接口")
+        try:
+            async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
+                response = await client.request(
+                    method,
+                    f"{credentials.riot_client_base_url}{path}",
+                    headers={"Authorization": credentials.riot_client_auth_header},
+                    json=json_body,
+                    params=params,
+                )
+            response.raise_for_status()
+            if response.status_code == 204 or not response.content:
+                return None
+            return response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise RuntimeError(f"Riot Client 请求失败: {type(exc).__name__}") from exc
 
     async def snapshot(self) -> dict:
         connected = await self.refresh_connection(force=True)
@@ -1230,6 +1270,35 @@ _SGP_COMMON_HOSTS = {
     "KR": "https://kr-red.lol.sgp.pvp.net",
 }
 
+_SGP_SERVER_LABELS = {
+    "TENCENT_HN1": "艾欧尼亚",
+    "TENCENT_HN10": "黑色玫瑰",
+    "TENCENT_TJ100": "峡谷之巅",
+    "TENCENT_TJ101": "联盟一区",
+    "TENCENT_NJ100": "联盟二区",
+    "TENCENT_GZ100": "联盟三区",
+    "TENCENT_CQ100": "联盟四区",
+    "TENCENT_BGP2": "男爵领域",
+    "TENCENT_PBE": "国服体验服",
+    "TENCENT_PREPBE": "国服预发布服",
+    "TW2": "中国台湾",
+    "SG2": "新加坡",
+    "PH2": "菲律宾",
+    "VN2": "越南",
+    "PBE": "PBE",
+    "EUW": "欧洲西部",
+    "JP": "日本",
+    "RU": "俄罗斯",
+    "BR1": "巴西",
+    "OC1": "大洋洲",
+    "TR1": "土耳其",
+    "LA1": "拉丁美洲北部",
+    "LA2": "拉丁美洲南部",
+    "NA1": "北美",
+    "TH2": "泰国",
+    "KR": "韩国",
+}
+
 
 def _sgp_server_id(credentials: LcuCredentials | None) -> str:
     if not credentials:
@@ -1242,17 +1311,26 @@ def _sgp_server_id(credentials: LcuCredentials | None) -> str:
     return aliases.get(region, region)
 
 
-def _sgp_region_path(credentials: LcuCredentials | None) -> str:
-    server_id = _sgp_server_id(credentials)
+def _normalize_sgp_server_id(server_id: str | None) -> str:
+    value = str(server_id or "").strip().upper()
+    aliases = {"EUW1": "EUW", "JP1": "JP", "NA": "NA1", "BR": "BR1", "TR": "TR1", "LAN": "LA1", "LAS": "LA2", "OCE": "OC1"}
+    value = aliases.get(value, value)
+    if value not in _SGP_COMMON_HOSTS or value not in _SGP_MATCH_HISTORY_HOSTS:
+        raise RuntimeError(f"不支持的 SGP 区服: {value or '空'}")
+    return value
+
+
+def _sgp_region_path(credentials: LcuCredentials | None = None, server_id: str | None = None) -> str:
+    server_id = _normalize_sgp_server_id(server_id) if server_id else _sgp_server_id(credentials)
     if server_id.startswith("TENCENT_"):
         return server_id.split("_", 1)[1]
     aliases = {"PBE": "PBE1", "EUW": "EUW1", "JP": "JP1"}
     return aliases.get(server_id, server_id)
 
 
-async def _sgp_match_history(puuid: str, beg_index: int, count: int) -> dict:
+async def _sgp_match_history(puuid: str, beg_index: int, count: int, server_id: str | None = None) -> dict:
     credentials = league_lab_service.credentials
-    server_id = _sgp_server_id(credentials)
+    server_id = _normalize_sgp_server_id(server_id) if server_id else _sgp_server_id(credentials)
     host = _SGP_MATCH_HISTORY_HOSTS.get(server_id)
     if not host:
         raise RuntimeError(f"当前区服不支持 SGP 战绩源: {server_id or '未知区服'}")
@@ -1277,10 +1355,10 @@ async def _sgp_match_history(puuid: str, beg_index: int, count: int) -> dict:
     return payload
 
 
-async def _sgp_common_request(method: str, path: str, *, json_body=None):
+async def _sgp_common_request(method: str, path: str, *, json_body=None, server_id: str | None = None):
     """Call an SGP common service with an on-demand, memory-only League session token."""
     credentials = league_lab_service.credentials
-    server_id = _sgp_server_id(credentials)
+    server_id = _normalize_sgp_server_id(server_id) if server_id else _sgp_server_id(credentials)
     host = _SGP_COMMON_HOSTS.get(server_id)
     if not host:
         raise RuntimeError(f"当前区服不支持 SGP 通用数据源: {server_id or '未知区服'}")
@@ -1319,27 +1397,31 @@ def _normalize_sgp_ranked(payload) -> dict:
     return result
 
 
-async def _sgp_ranked_stats(puuid: str) -> dict:
-    payload = await _sgp_common_request("GET", f"/leagues-ledge/v2/rankedStats/puuid/{puuid}")
+async def _sgp_ranked_stats(puuid: str, server_id: str | None = None) -> dict:
+    kwargs = {"server_id": server_id} if server_id else {}
+    payload = await _sgp_common_request("GET", f"/leagues-ledge/v2/rankedStats/puuid/{puuid}", **kwargs)
     normalized = _normalize_sgp_ranked(payload)
     if not normalized:
         raise RuntimeError("SGP 排位数据返回格式无效")
     return normalized
 
 
-async def _sgp_player_challenges(puuid: str) -> dict:
-    payload = await _sgp_common_request("POST", f"/challenges-client/v2/all-player-data/?puuid={puuid}", json_body=[])
+async def _sgp_player_challenges(puuid: str, server_id: str | None = None) -> dict:
+    kwargs = {"server_id": server_id} if server_id else {}
+    payload = await _sgp_common_request("POST", f"/challenges-client/v2/all-player-data/?puuid={puuid}", json_body=[], **kwargs)
     if not isinstance(payload, dict):
         raise RuntimeError("SGP 挑战数据返回格式无效")
     return payload
 
 
-async def _sgp_summoner_by_puuid(puuid: str) -> dict:
-    region_path = _sgp_region_path(league_lab_service.credentials)
+async def _sgp_summoner_by_puuid(puuid: str, server_id: str | None = None) -> dict:
+    region_path = _sgp_region_path(league_lab_service.credentials, server_id)
+    kwargs = {"server_id": server_id} if server_id else {}
     payload = await _sgp_common_request(
         "POST",
         f"/summoner-ledge/v1/regions/{region_path}/summoners/puuids",
         json_body=[puuid],
+        **kwargs,
     )
     row = payload[0] if isinstance(payload, list) and payload else None
     if not isinstance(row, dict):
@@ -1354,6 +1436,15 @@ async def _sgp_summoner_by_puuid(puuid: str) -> dict:
         "profileIconId": row.get("profileIconId"),
         "source": "sgp",
     }
+
+
+async def _riot_player_account_aliases(game_name: str, tag_line: str) -> list[dict]:
+    payload = await league_lab_service.riot_request(
+        "GET",
+        "/player-account/aliases/v1/lookup",
+        params={"gameName": game_name, "tagLine": tag_line},
+    )
+    return [row for row in (payload or []) if isinstance(row, dict) and row.get("puuid")]
 
 
 async def _champion_names() -> dict[int, str]:
@@ -1631,21 +1722,70 @@ async def current_league_player():
 
 
 @router.get("/players/search")
-async def search_league_player(game_name: str, tag_line: str):
+async def search_league_player(game_name: str, tag_line: str, server_id: str = ""):
     if not game_name.strip() or not tag_line.strip():
         raise HTTPException(status_code=422, detail="请输入完整的游戏名称和标签")
+    current_server_id = _sgp_server_id(league_lab_service.credentials)
     try:
-        rows = await league_lab_service.request(
-            "POST",
-            "/lol-summoner/v1/summoners/aliases",
-            json_body=[{"gameName": game_name.strip(), "tagLine": tag_line.strip()}],
-        )
+        target_server_id = _normalize_sgp_server_id(server_id) if server_id.strip() else current_server_id
     except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    summoner = rows[0] if isinstance(rows, list) and rows else None
-    if not summoner:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    aliases = []
+    try:
+        aliases = await _riot_player_account_aliases(game_name.strip(), tag_line.strip())
+    except RuntimeError:
+        try:
+            rows = await league_lab_service.request(
+                "POST",
+                "/lol-summoner/v1/summoners/aliases",
+                json_body=[{"gameName": game_name.strip(), "tagLine": tag_line.strip()}],
+            )
+            aliases = [row for row in (rows or []) if isinstance(row, dict) and row.get("puuid")]
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    alias = aliases[0] if aliases else None
+    if not alias:
         raise HTTPException(status_code=404, detail="未找到该 Riot ID")
+    puuid = str(alias["puuid"])
+    alias_name = alias.get("alias") or {}
+    prefer_sgp = bool(target_server_id and target_server_id != current_server_id)
+    summoner = alias if not alias_name and (alias.get("gameName") or alias.get("displayName")) else None
+    if not prefer_sgp:
+        if not isinstance(summoner, dict):
+            try:
+                summoner = await league_lab_service.request("GET", f"/lol-summoner/v2/summoners/puuid/{puuid}")
+            except RuntimeError:
+                pass
+    if not isinstance(summoner, dict) or not summoner.get("puuid"):
+        try:
+            summoner = await _sgp_summoner_by_puuid(puuid, target_server_id or None)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=404, detail=f"该 Riot ID 在所选区服不存在: {exc}") from exc
+    summoner = {
+        **summoner,
+        "gameName": summoner.get("gameName") or alias_name.get("game_name") or game_name.strip(),
+        "tagLine": summoner.get("tagLine") or alias_name.get("tag_line") or tag_line.strip(),
+    }
+    if server_id.strip():
+        return await _load_player_bundle(
+            summoner,
+            sgp_server_id=target_server_id or None,
+            prefer_sgp=prefer_sgp,
+        )
     return await _load_player_bundle(summoner)
+
+
+@router.get("/players/search-servers")
+async def league_player_search_servers():
+    current = _sgp_server_id(league_lab_service.credentials)
+    return {
+        "current": current,
+        "servers": [
+            {"id": server_id, "label": _SGP_SERVER_LABELS.get(server_id, server_id), "current": server_id == current}
+            for server_id in _SGP_COMMON_HOSTS
+            if server_id in _SGP_MATCH_HISTORY_HOSTS
+        ],
+    }
 
 
 @router.get("/players/recent")
@@ -1656,22 +1796,40 @@ async def recent_league_players(limit: int = 40):
 
 
 @router.get("/players/{puuid}")
-async def league_player_bundle(puuid: str, match_limit: int = 20, beg_index: int = 0):
+async def league_player_bundle(puuid: str, match_limit: int = 20, beg_index: int = 0, server_id: str = ""):
     try:
-        summoner = await league_lab_service.request("GET", f"/lol-summoner/v2/summoners/puuid/{puuid}")
-    except RuntimeError as lcu_exc:
+        target_server_id = _normalize_sgp_server_id(server_id) if server_id.strip() else ""
+    except RuntimeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    prefer_sgp = bool(target_server_id and target_server_id != _sgp_server_id(league_lab_service.credentials))
+    lcu_exc = RuntimeError("已选择跨区 SGP 数据源")
+    summoner = None
+    if not prefer_sgp:
         try:
-            summoner = await _sgp_summoner_by_puuid(puuid)
+            summoner = await league_lab_service.request("GET", f"/lol-summoner/v2/summoners/puuid/{puuid}")
+        except RuntimeError as exc:
+            lcu_exc = exc
+    if not isinstance(summoner, dict):
+        try:
+            summoner = await _sgp_summoner_by_puuid(puuid, target_server_id or None)
         except RuntimeError as sgp_exc:
             raise HTTPException(status_code=409, detail=f"{lcu_exc}; {sgp_exc}") from sgp_exc
     return await _load_player_bundle(
         summoner,
         match_limit=max(1, min(match_limit, 100)),
         beg_index=max(0, beg_index),
+        sgp_server_id=target_server_id or None,
+        prefer_sgp=prefer_sgp,
     )
 
 
-async def _load_player_bundle(summoner, match_limit: int = 20, beg_index: int = 0) -> dict:
+async def _load_player_bundle(
+    summoner,
+    match_limit: int = 20,
+    beg_index: int = 0,
+    sgp_server_id: str | None = None,
+    prefer_sgp: bool = False,
+) -> dict:
     if not isinstance(summoner, dict) or not summoner.get("puuid"):
         raise HTTPException(status_code=404, detail="未找到召唤师")
     puuid = str(summoner["puuid"])
@@ -1692,18 +1850,24 @@ async def _load_player_bundle(summoner, match_limit: int = 20, beg_index: int = 
         ),
         _champion_names(),
     )
+    if prefer_sgp:
+        ranked, mastery, history = None, None, None
     match_source = "lcu"
     ranked_source = "lcu" if ranked else "none"
     if not ranked:
         try:
-            ranked = await _sgp_ranked_stats(puuid)
+            ranked = await (_sgp_ranked_stats(puuid, sgp_server_id) if sgp_server_id else _sgp_ranked_stats(puuid))
             ranked_source = "sgp"
         except RuntimeError:
             pass
     matches = _normalize_match_rows(history or {}, names, puuid)
     if len(matches) < match_limit:
         try:
-            sgp_history = await _sgp_match_history(puuid, beg_index, match_limit)
+            sgp_history = await (
+                _sgp_match_history(puuid, beg_index, match_limit, sgp_server_id)
+                if sgp_server_id
+                else _sgp_match_history(puuid, beg_index, match_limit)
+            )
             sgp_matches = _normalize_sgp_match_rows(sgp_history, names, puuid)
             if sgp_matches:
                 matches = sgp_matches
@@ -1712,7 +1876,11 @@ async def _load_player_bundle(summoner, match_limit: int = 20, beg_index: int = 
             pass
     challenges = {}
     try:
-        challenges = await _sgp_player_challenges(puuid)
+        challenges = await (
+            _sgp_player_challenges(puuid, sgp_server_id)
+            if sgp_server_id
+            else _sgp_player_challenges(puuid)
+        )
     except RuntimeError:
         pass
     tags = _read_player_tags().get(puuid) or {}
@@ -1735,6 +1903,7 @@ async def _load_player_bundle(summoner, match_limit: int = 20, beg_index: int = 
         "matches": matches,
         "match_source": match_source,
         "collection_count": collection_count,
+        "server_id": sgp_server_id or _sgp_server_id(league_lab_service.credentials),
         "page": {
             "beg_index": beg_index,
             "end_index": beg_index + match_limit - 1,

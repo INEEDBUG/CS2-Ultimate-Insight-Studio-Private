@@ -47,6 +47,7 @@ This document prevents the League integration from becoming a collection of unre
 - League Mini ARAM bench card with current champion, bench choices, reroll count, manual swap and reroll actions.
 - Independent resizable real-time match window, sharing the cached team/premade/champion-usage analysis with the main lab.
 - SGP match-history fallback for Tencent and supported global regions, using an on-demand in-memory entitlements token and exposing the active LCU/SGP source in the player center.
+- Full cross-region Riot ID lookup through the local Riot Client player-account alias endpoint, followed by target-server SGP summoner, ranked, challenge and match-history routing; Riot Client credentials remain memory-only.
 - League Mini owned-skin selector with chroma support; options come from the current LCU inventory snapshot and unowned/disabled IDs are rejected server-side.
 - Visual rune and summoner-spell loadout editor backed by the current LCU catalog; perk selection no longer requires manually typing numeric IDs.
 - LeagueAkari-style streamer privacy mode across the main League lab, player center, Mini and independent ongoing-game window, with stable optional aliases, local-tag/PUUID masking and optional native capture protection.
@@ -63,7 +64,6 @@ This document prevents the League integration from becoming a collection of unre
 
 ### Not implemented yet
 
-- Full cross-region Riot ID search through SGP; direct PUUID summoner fallback, match history and ranked-stat routing are implemented. Champion mastery remains LCU-only, matching current LeagueAkari behavior.
 - Ongoing-game jungle-path analysis (live team/profile cards, premade detection and champion-usage summaries work now).
 - Saved named filter presets and a local AND/OR composable rule builder are implemented; predicates requiring richer timeline/team payloads remain (the durable SQLite collection workspace works now).
 - OP.GG and remaining specialized auxiliary overlay windows (an independent native real-time match window and Mini respawn timer now work).
