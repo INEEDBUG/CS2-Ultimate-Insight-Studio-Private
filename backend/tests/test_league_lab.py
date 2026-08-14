@@ -719,6 +719,56 @@ def test_sgp_match_rows_normalize_wrapped_summary():
     }]
 
 
+def test_single_jungle_analysis_matches_leagueakari_geometry_and_early_ganks():
+    frames = [
+        {"participantFrames": {}, "events": []},
+        {"participantFrames": {"7": {"position": {"x": 3830, "y": 7880}, "level": 1}}, "events": []},
+        {"participantFrames": {"7": {"position": {"x": 4200, "y": 9800}, "level": 2}}, "events": []},
+        {
+            "participantFrames": {"7": {"position": {"x": 4500, "y": 10100}, "level": 3, "minionsKilled": 0, "jungleMinionsKilled": 16, "damageStats": {"totalDamageDoneToChampions": 100}}},
+            "events": [{"type": "CHAMPION_KILL", "timestamp": 175000, "killerId": 7, "assistingParticipantIds": [], "position": {"x": 4300, "y": 10200}}],
+        },
+        {
+            "participantFrames": {"7": {"position": {"x": 10800, "y": 4200}, "level": 4, "damageStats": {"totalDamageDoneToChampions": 220}}},
+            "events": [{"type": "CHAMPION_KILL", "timestamp": 220000, "killerId": 2, "assistingParticipantIds": [7], "position": {"x": 10600, "y": 4100}}],
+        },
+    ]
+
+    result = league_lab._compute_single_jungle_analysis(frames, 7)
+
+    assert result["start_camp"] == {"camp": "blue", "side": "blue"}
+    assert result["ganks"] == {"top": 1, "mid": 0, "bot": 1}
+    assert result["level3_gank_detected"] is True
+    assert result["level4_gank_detected"] is True
+    assert result["zone_weights"]["top"] >= 8
+    assert result["zone_weights"]["bot"] >= 6
+
+
+def test_aggregate_jungle_analysis_generates_local_unsent_draft():
+    samples = [
+        {"zone_weights": {"top": 10, "mid": 2, "bot": 1}, "total_zone_weight": 13, "ganks": {"top": 2, "mid": 0, "bot": 0}, "start_camp": {"side": "blue", "camp": "blue"}, "level3_gank_detected": True, "level4_gank_detected": False},
+        {"zone_weights": {"top": 7, "mid": 3, "bot": 2}, "total_zone_weight": 12, "ganks": {"top": 1, "mid": 1, "bot": 0}, "start_camp": {"side": "blue", "camp": "blue"}, "level3_gank_detected": False, "level4_gank_detected": True},
+    ]
+
+    result = league_lab._aggregate_jungle_analyses(samples)
+
+    assert result["games_analyzed"] == 2
+    assert result["preferred_lane"] == "top"
+    assert result["preferred_start_camp"] == "blue:blue"
+    assert result["early_gank"] == {"level3_rate": 0.5, "level4_rate": 0.5}
+    assert "近 2 场打野时间线" in result["draft"]
+
+
+def test_jungle_game_participant_accepts_position_or_smite():
+    game = {
+        "participantIdentities": [{"participantId": 2, "player": {"puuid": "p1"}}],
+        "participants": [{"participantId": 2, "teamPosition": "TOP", "spell1Id": 11, "spell2Id": 4}],
+    }
+
+    assert league_lab._jungle_game_participant(game, "p1")["participantId"] == 2
+    assert league_lab._jungle_game_participant(game, "missing") is None
+
+
 def test_sgp_ranked_rows_normalize_division_and_queue_map():
     result = league_lab._normalize_sgp_ranked({
         "queues": [{

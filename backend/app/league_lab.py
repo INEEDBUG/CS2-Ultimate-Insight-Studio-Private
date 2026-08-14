@@ -1355,6 +1355,31 @@ async def _sgp_match_history(puuid: str, beg_index: int, count: int, server_id: 
     return payload
 
 
+async def _sgp_game_details(game_id: int, server_id: str | None = None) -> dict:
+    credentials = league_lab_service.credentials
+    server_id = _normalize_sgp_server_id(server_id) if server_id else _sgp_server_id(credentials)
+    host = _SGP_MATCH_HISTORY_HOSTS.get(server_id)
+    if not host:
+        raise RuntimeError(f"当前区服不支持 SGP 时间线源: {server_id or '未知区服'}")
+    token_payload = await league_lab_service.request("GET", "/entitlements/v1/token")
+    token = token_payload.get("accessToken") if isinstance(token_payload, dict) else None
+    if not token:
+        raise RuntimeError("LCU 未返回 SGP 授权令牌")
+    region_path = _sgp_region_path(credentials, server_id)
+    url = f"{host}/match-history-query/v1/products/lol/{region_path}_{int(game_id)}/DETAILS"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise RuntimeError(f"SGP 时间线请求失败: {type(exc).__name__}") from exc
+    body = payload.get("json") if isinstance(payload, dict) and isinstance(payload.get("json"), dict) else payload
+    if not isinstance(body, dict) or not isinstance(body.get("frames"), list):
+        raise RuntimeError("SGP 时间线返回格式无效")
+    return body
+
+
 async def _sgp_common_request(method: str, path: str, *, json_body=None, server_id: str | None = None):
     """Call an SGP common service with an on-demand, memory-only League session token."""
     credentials = league_lab_service.credentials
@@ -1687,6 +1712,307 @@ def _infer_premade_groups(histories: dict[str, dict], active_puuids: set[str], t
     return groups
 
 
+_JUNGLE_ANALYSIS_MINUTES = 14
+_JUNGLE_KILL_WEIGHT = 5
+_JUNGLE_CAMPS = (
+    {"x": 3830, "y": 7880, "camp": "blue", "side": "blue"},
+    {"x": 3800, "y": 6440, "camp": "wolves", "side": "blue"},
+    {"x": 7760, "y": 4010, "camp": "red", "side": "blue"},
+    {"x": 6970, "y": 5460, "camp": "raptors", "side": "blue"},
+    {"x": 10990, "y": 7000, "camp": "blue", "side": "red"},
+    {"x": 11020, "y": 8440, "camp": "wolves", "side": "red"},
+    {"x": 7060, "y": 10870, "camp": "red", "side": "red"},
+    {"x": 7850, "y": 9420, "camp": "raptors", "side": "red"},
+)
+
+
+def _classify_jungle_map_zone(x: float, y: float) -> str:
+    if x < 5000 and y > 9000:
+        return "top"
+    if x > 9000 and y < 5000:
+        return "bot"
+    if abs(y - x) <= 3500:
+        return "mid"
+    return "top" if y > x else "bot"
+
+
+def _classify_jungle_gank_lane(x: float, y: float) -> str | None:
+    if x < 5000 and y > 9000:
+        return "top"
+    if x > 9000 and y < 5000:
+        return "bot"
+    midpoint = (x + y) / 2
+    if abs(y - x) < 4000 and 3000 < midpoint < 12000:
+        return "mid"
+    return None
+
+
+def _detect_jungle_start_camp(x: float, y: float) -> dict:
+    nearest = min(_JUNGLE_CAMPS, key=lambda camp: (x - camp["x"]) ** 2 + (y - camp["y"]) ** 2)
+    return {"camp": nearest["camp"], "side": nearest["side"]}
+
+
+def _timeline_participant_frame(frame: dict, participant_id: int) -> dict:
+    rows = (frame or {}).get("participantFrames") or {}
+    if isinstance(rows, dict):
+        row = rows.get(str(participant_id), rows.get(participant_id))
+        return row if isinstance(row, dict) else {}
+    return {}
+
+
+def _compute_single_jungle_analysis(frames: list[dict], participant_id: int) -> dict:
+    zone_weights = {"top": 0, "mid": 0, "bot": 0}
+    kill_zone_weights = {"top": 0, "mid": 0, "bot": 0}
+    minute_positions = []
+    total_frames = 0
+    for minute, frame in enumerate(frames[1 : _JUNGLE_ANALYSIS_MINUTES + 1], start=1):
+        participant_frame = _timeline_participant_frame(frame, participant_id)
+        position = participant_frame.get("position") or {}
+        if position.get("x") is None or position.get("y") is None:
+            continue
+        x, y = float(position["x"]), float(position["y"])
+        lane = _classify_jungle_map_zone(x, y)
+        zone_weights[lane] += 1
+        total_frames += 1
+        minute_positions.append({"x": x, "y": y, "lane": lane, "minute": minute})
+
+    ganks = {"top": 0, "mid": 0, "bot": 0}
+    gank_positions, level3_positions, level4_positions = [], [], []
+    kill_weight_total = 0
+    for frame in frames:
+        for event in (frame or {}).get("events") or []:
+            if not isinstance(event, dict) or event.get("type") != "CHAMPION_KILL":
+                continue
+            timestamp = int(event.get("timestamp") or 0)
+            if timestamp > _JUNGLE_ANALYSIS_MINUTES * 60 * 1000:
+                continue
+            assists = event.get("assistingParticipantIds") or []
+            if event.get("killerId") != participant_id and participant_id not in assists:
+                continue
+            position = event.get("position") or {}
+            if position.get("x") is None or position.get("y") is None:
+                continue
+            x, y = float(position["x"]), float(position["y"])
+            zone = _classify_jungle_map_zone(x, y)
+            kill_zone_weights[zone] += _JUNGLE_KILL_WEIGHT
+            kill_weight_total += _JUNGLE_KILL_WEIGHT
+            lane = _classify_jungle_gank_lane(x, y)
+            point = {"x": x, "y": y, "lane": lane or zone, "timestamp": timestamp}
+            if lane:
+                ganks[lane] += 1
+                gank_positions.append(point)
+            if timestamp <= 180000:
+                level3_positions.append(point)
+            elif timestamp <= 240000:
+                level4_positions.append(point)
+
+    start_camp = None
+    if len(frames) > 1:
+        position = _timeline_participant_frame(frames[1], participant_id).get("position") or {}
+        if position.get("x") is not None and position.get("y") is not None:
+            start_camp = _detect_jungle_start_camp(float(position["x"]), float(position["y"]))
+
+    frame3 = _timeline_participant_frame(frames[3], participant_id) if len(frames) > 3 else {}
+    frame4 = _timeline_participant_frame(frames[4], participant_id) if len(frames) > 4 else {}
+    damage3 = ((frame3.get("damageStats") or {}).get("totalDamageDoneToChampions"))
+    damage4 = ((frame4.get("damageStats") or {}).get("totalDamageDoneToChampions"))
+    cs3 = int(frame3.get("minionsKilled") or 0) + int(frame3.get("jungleMinionsKilled") or 0)
+    level3_gank = 12 <= cs3 < 20 and int(frame3.get("level") or 0) == 3 and (
+        (damage3 is not None and float(damage3) > 0) or bool(level3_positions)
+    )
+    level4_gank = bool(level4_positions) or (
+        damage3 is not None and damage4 is not None and float(damage4) > float(damage3)
+    )
+    combined = {
+        lane: zone_weights[lane] + kill_zone_weights[lane]
+        for lane in ("top", "mid", "bot")
+    }
+    return {
+        "zone_weights": combined,
+        "total_zone_weight": total_frames + kill_weight_total,
+        "ganks": ganks,
+        "start_camp": start_camp,
+        "level3_gank_detected": level3_gank,
+        "level4_gank_detected": level4_gank,
+        "level3_kill_positions": level3_positions,
+        "level4_kill_positions": level4_positions,
+        "gank_positions": gank_positions,
+        "minute_positions": minute_positions,
+    }
+
+
+def _aggregate_jungle_analyses(samples: list[dict]) -> dict | None:
+    if not samples:
+        return None
+    total_weight = sum(int(sample.get("total_zone_weight") or 0) for sample in samples)
+    zone_weights = {
+        lane: sum(int((sample.get("zone_weights") or {}).get(lane) or 0) for sample in samples)
+        for lane in ("top", "mid", "bot")
+    }
+    ganks = {
+        lane: sum(int((sample.get("ganks") or {}).get(lane) or 0) for sample in samples)
+        for lane in ("top", "mid", "bot")
+    }
+    camp_counts: dict[str, int] = {}
+    for sample in samples:
+        start = sample.get("start_camp") or {}
+        if start.get("camp") and start.get("side"):
+            key = f'{start["side"]}:{start["camp"]}'
+            camp_counts[key] = camp_counts.get(key, 0) + 1
+    games = len(samples)
+    preferred_lane = max(zone_weights, key=zone_weights.get) if total_weight else "unknown"
+    preferred_camp = max(camp_counts, key=camp_counts.get) if camp_counts else "unknown"
+    zone_percentages = {
+        lane: round(zone_weights[lane] / total_weight, 4) if total_weight else 0
+        for lane in ("top", "mid", "bot")
+    }
+    average_ganks = {lane: round(ganks[lane] / games, 2) for lane in ("top", "mid", "bot")}
+    level3_rate = round(sum(bool(sample.get("level3_gank_detected")) for sample in samples) / games, 4)
+    level4_rate = round(sum(bool(sample.get("level4_gank_detected")) for sample in samples) / games, 4)
+    lane_labels = {"top": "上半区", "mid": "中路", "bot": "下半区", "unknown": "未知区域"}
+    camp_labels = {"blue": "蓝 BUFF", "red": "红 BUFF", "wolves": "三狼", "raptors": "F6", "unknown": "未知营地"}
+    camp_side, _, camp_name = preferred_camp.partition(":")
+    side_label = {"blue": "蓝色方野区", "red": "红色方野区"}.get(camp_side, "")
+    draft = (
+        f"近 {games} 场打野时间线：首开偏好 {side_label}{camp_labels.get(camp_name, camp_name or '未知营地')}；"
+        f"前 14 分钟活动更偏 {lane_labels.get(preferred_lane, preferred_lane)}；"
+        f"3 分钟内参与击杀率 {level3_rate * 100:.0f}%，4 分钟内新增参与率 {level4_rate * 100:.0f}%。"
+    )
+    return {
+        "games_analyzed": games,
+        "zone_percentages": zone_percentages,
+        "average_ganks": average_ganks,
+        "early_gank": {
+            "level3_rate": level3_rate,
+            "level4_rate": level4_rate,
+        },
+        "start_camps": camp_counts,
+        "preferred_lane": preferred_lane,
+        "preferred_start_camp": preferred_camp,
+        "draft": draft,
+        "samples": samples,
+    }
+
+
+def _history_games(payload: dict) -> list[dict]:
+    rows = (payload or {}).get("games") or []
+    if isinstance(rows, dict):
+        rows = rows.get("games") or []
+    result = []
+    for wrapper in rows if isinstance(rows, list) else []:
+        game = wrapper.get("json") if isinstance(wrapper, dict) and isinstance(wrapper.get("json"), dict) else wrapper
+        if isinstance(game, dict):
+            result.append(game)
+    return result
+
+
+def _jungle_game_participant(game: dict, puuid: str) -> dict | None:
+    identities = game.get("participantIdentities") or []
+    participant_id = next(
+        (
+            row.get("participantId")
+            for row in identities
+            if str((row.get("player") or {}).get("puuid") or row.get("puuid") or "") == puuid
+        ),
+        None,
+    )
+    participant = next(
+        (
+            row
+            for row in (game.get("participants") or [])
+            if str(row.get("puuid") or "") == puuid
+            or (participant_id is not None and row.get("participantId") == participant_id)
+        ),
+        None,
+    )
+    if not isinstance(participant, dict):
+        return None
+    position = str(
+        participant.get("teamPosition")
+        or participant.get("individualPosition")
+        or (participant.get("timeline") or {}).get("lane")
+        or ""
+    ).upper()
+    spells = {
+        int(value)
+        for value in (
+            participant.get("spell1Id"),
+            participant.get("spell2Id"),
+            participant.get("summoner1Id"),
+            participant.get("summoner2Id"),
+        )
+        if value is not None
+    }
+    if position != "JUNGLE" and 11 not in spells:
+        return None
+    return participant
+
+
+async def _load_jungle_analysis(
+    puuid: str,
+    history: dict,
+    *,
+    limit: int = 6,
+    server_id: str | None = None,
+    prefer_sgp: bool = False,
+) -> dict:
+    candidates = []
+    for game in _history_games(history):
+        participant = _jungle_game_participant(game, puuid)
+        game_id = game.get("gameId") or game.get("game_id")
+        if participant and game_id:
+            candidates.append((int(game_id), int(participant.get("participantId") or 0), game))
+        if len(candidates) >= max(1, min(limit, 10)):
+            break
+
+    async def analyze(entry):
+        game_id, participant_id, game = entry
+        timeline = None
+        source = "sgp" if prefer_sgp else "lcu"
+        if prefer_sgp:
+            try:
+                timeline = await _sgp_game_details(game_id, server_id)
+            except RuntimeError:
+                return None
+        else:
+            try:
+                timeline = await league_lab_service.request(
+                    "GET", f"/lol-match-history/v1/game-timelines/{game_id}"
+                )
+            except RuntimeError:
+                try:
+                    timeline = await _sgp_game_details(game_id, server_id)
+                    source = "sgp"
+                except RuntimeError:
+                    return None
+        if not participant_id:
+            participant = next(
+                (
+                    row
+                    for row in (timeline or {}).get("participants") or []
+                    if str(row.get("puuid") or "") == puuid
+                ),
+                None,
+            )
+            participant_id = int((participant or {}).get("participantId") or 0)
+        frames = (timeline or {}).get("frames") or []
+        if not participant_id or not isinstance(frames, list) or not frames:
+            return None
+        sample = _compute_single_jungle_analysis(frames, participant_id)
+        sample.update(
+            {
+                "game_id": game_id,
+                "team_id": int((game and (_jungle_game_participant(game, puuid) or {}).get("teamId")) or 0),
+                "source": source,
+            }
+        )
+        return sample
+
+    samples = [sample for sample in await asyncio.gather(*(analyze(row) for row in candidates)) if sample]
+    aggregate = _aggregate_jungle_analyses(samples)
+    return aggregate or {"games_analyzed": 0, "samples": [], "reason": "最近战绩中没有可用的打野时间线"}
+
+
 @router.get("/status")
 async def league_lab_status():
     return await league_lab_service.snapshot()
@@ -1998,6 +2324,41 @@ async def league_player_collection(puuid: str, limit: int = 100):
     return {"puuid": puuid, "matches": matches, "count": len(matches), "source": "sqlite"}
 
 
+@router.get("/players/{puuid}/jungle-analysis")
+async def league_player_jungle_analysis(puuid: str, limit: int = 6, server_id: str = ""):
+    try:
+        target_server_id = _normalize_sgp_server_id(server_id) if server_id.strip() else _sgp_server_id(league_lab_service.credentials)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    prefer_sgp = bool(server_id.strip() and target_server_id != _sgp_server_id(league_lab_service.credentials))
+    history = None
+    source = "sgp" if prefer_sgp else "lcu"
+    if not prefer_sgp:
+        try:
+            history = await league_lab_service.request(
+                "GET",
+                f"/lol-match-history/v1/products/lol/{puuid}/matches",
+                params={"begIndex": 0, "endIndex": 29},
+            )
+        except RuntimeError:
+            pass
+    if not isinstance(history, dict):
+        try:
+            history = await _sgp_match_history(puuid, 0, 30, target_server_id or None)
+            source = "sgp"
+            prefer_sgp = True
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    result = await _load_jungle_analysis(
+        puuid,
+        history,
+        limit=max(1, min(limit, 10)),
+        server_id=target_server_id or None,
+        prefer_sgp=prefer_sgp,
+    )
+    return {**result, "puuid": puuid, "server_id": target_server_id, "history_source": source}
+
+
 class PlayerTagBody(BaseModel):
     label: str = Field(default="", max_length=40)
     note: str = Field(default="", max_length=500)
@@ -2026,12 +2387,31 @@ async def league_ongoing_game():
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     game_data = (gameflow or {}).get("gameData") or {}
-    selections = game_data.get("playerChampionSelections") or []
+    team_metadata = {}
+    for team_id, key in ((100, "teamOne"), (200, "teamTwo")):
+        for member in game_data.get(key) or []:
+            if not isinstance(member, dict):
+                continue
+            puuid = str(member.get("puuid") or member.get("playerPuuid") or "")
+            if puuid:
+                team_metadata[puuid] = {**member, "team": member.get("team") or member.get("teamId") or team_id}
+    selections, seen = [], set()
+    for selection in game_data.get("playerChampionSelections") or []:
+        if not isinstance(selection, dict):
+            continue
+        puuid = str(selection.get("puuid") or selection.get("playerPuuid") or "")
+        metadata = team_metadata.get(puuid) or {}
+        merged = {**metadata, **selection}
+        merged["team"] = selection.get("team") or selection.get("teamId") or metadata.get("team")
+        merged["selectedPosition"] = selection.get("selectedPosition") or metadata.get("selectedPosition") or ""
+        selections.append(merged)
+        seen.add(puuid)
+    selections.extend(row for puuid, row in team_metadata.items() if puuid not in seen)
     cache_key = json.dumps(
         [
             game_data.get("gameId"),
             [
-                [row.get("puuid") or row.get("playerPuuid"), row.get("championId"), row.get("team") or row.get("teamId")]
+                [row.get("puuid") or row.get("playerPuuid"), row.get("championId"), row.get("team") or row.get("teamId"), row.get("selectedPosition")]
                 for row in selections if isinstance(row, dict)
             ],
         ],
@@ -2059,11 +2439,16 @@ async def league_ongoing_game():
         champion_id = int(row.get("championId") or 0)
         matches = _normalize_match_rows(history or {}, names, puuid)
         champion_matches = [match for match in matches if match.get("champion_id") == champion_id]
+        selected_position = str(row.get("selectedPosition") or row.get("assignedPosition") or "").upper()
+        jungle_analysis = None
+        if selected_position == "JUNGLE" and isinstance(history, dict):
+            jungle_analysis = await _load_jungle_analysis(puuid, history, limit=4)
         return ({
             "puuid": puuid,
             "team": row.get("team") or row.get("teamId"),
             "champion_id": champion_id,
             "champion_name": names.get(champion_id, str(champion_id)),
+            "position": selected_position,
             "summoner": summoner or {},
             "ranked": ranked or {},
             "tag": _read_player_tags().get(puuid) or {},
@@ -2076,6 +2461,7 @@ async def league_ongoing_game():
                 "wins": sum(1 for match in champion_matches if match.get("win")),
                 "average_kda": round(sum((match.get("kills", 0) + match.get("assists", 0)) / max(1, match.get("deaths", 0)) for match in champion_matches) / max(1, len(champion_matches)), 2),
             },
+            "jungle_analysis": jungle_analysis,
         }, history or {})
     enriched = await asyncio.gather(*(enrich(row) for row in selections))
     players = [result[0] for result in enriched if result[0]]

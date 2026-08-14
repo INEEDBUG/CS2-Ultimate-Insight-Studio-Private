@@ -45,6 +45,11 @@ export async function fetchLeaguePlayerCollection(puuid, limit = 100) {
   return data;
 }
 
+export async function fetchLeaguePlayerJungleAnalysis(puuid, limit = 6, serverId = "") {
+  const { data } = await API.get(`/league-lab/players/${encodeURIComponent(puuid)}/jungle-analysis`, { params: { limit, server_id: serverId || undefined } });
+  return data;
+}
+
 export async function searchLeaguePlayer(gameName, tagLine, serverId = "") {
   const { data } = await API.get("/league-lab/players/search", { params: { game_name: gameName, tag_line: tagLine, server_id: serverId || undefined } });
   return data;
