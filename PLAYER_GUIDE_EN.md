@@ -109,7 +109,7 @@ After installation, **CS2 Insight Agent** shortcuts are available from the deskt
 
 Double-click the desktop shortcut. The app opens as a desktop application: you do not need to open a browser or start a backend service manually.
 
-The app checks for updates when it starts. When a new release is available, use the prompt in the upper-right corner to download and install it. Your settings and demo-library data are retained.
+The app checks for updates at startup and every 15 minutes while it is running or in the tray. When a new signed release is available, it shows the version and release notes, downloads and verifies the package, performs the in-place upgrade, and relaunches the new version automatically. No second installer click is required, and your settings and demo-library data are retained.
 
 You can also install a newer installer from [this project's Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases) over the existing version.
 

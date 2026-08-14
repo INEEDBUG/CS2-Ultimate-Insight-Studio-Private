@@ -115,7 +115,7 @@ By default, the window `×` button asks whether to keep the app running in the W
 
 After installation, launch from desktop or start menu. **No browser or manual backend start is required.** The lightweight Tauri shell starts the bundled Python backend and renders the UI with the Windows system WebView2 runtime.
 
-The app does not run a background updater. Download new versions directly from [this project's Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases).
+The desktop app checks the signed GitHub updater channel at launch and every 15 minutes while running or resident in the tray. When a new release is found, it downloads and verifies the signed package, starts an in-place NSIS upgrade, closes the old process, and relaunches the new version automatically. User settings, demo data, and projects remain in the separate application-data directory. Manual installers remain available on [this project's Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases).
 
 > **Recommended: Installation path without Chinese characters.** e.g., `D:\CS2-Insight-Agent\` ✅, `D:\游戏工具\CS2-Insight-Agent\` ❌
 
