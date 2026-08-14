@@ -4810,6 +4810,13 @@ def _normalize_match_timeline(game: dict, timeline: dict | None, source: str) ->
         "totalGold", "currentGold", "level", "xp", "minionsKilled", "jungleMinionsKilled",
         "position", "damageStats",
     }
+    champion_stat_keys = {
+        "health", "healthMax", "healthRegen", "power", "powerMax", "powerRegen",
+        "attackDamage", "attackSpeed", "abilityPower", "abilityHaste", "cooldownReduction",
+        "armor", "magicResist", "armorPen", "armorPenPercent", "bonusArmorPenPercent",
+        "magicPen", "magicPenPercent", "bonusMagicPenPercent", "movementSpeed", "lifesteal",
+        "physicalVamp", "spellVamp", "omnivamp", "ccReduction",
+    }
     for frame in (timeline or {}).get("frames") or []:
         if not isinstance(frame, dict):
             continue
@@ -4822,9 +4829,16 @@ def _normalize_match_timeline(game: dict, timeline: dict | None, source: str) ->
         for participant_id, participant_frame in (frame.get("participantFrames") or {}).items():
             if not isinstance(participant_frame, dict):
                 continue
-            normalized_participants[str(participant_id)] = {
+            normalized_frame = {
                 key: value for key, value in participant_frame.items() if key in participant_frame_keys
             }
+            champion_stats = participant_frame.get("championStats")
+            if isinstance(champion_stats, dict):
+                normalized_frame["championStats"] = {
+                    key: value for key, value in champion_stats.items()
+                    if key in champion_stat_keys and isinstance(value, (int, float))
+                }
+            normalized_participants[str(participant_id)] = normalized_frame
         frames.append({
             "timestamp": int(frame.get("timestamp") or 0),
             "participant_frames": normalized_participants,
@@ -4833,6 +4847,7 @@ def _normalize_match_timeline(game: dict, timeline: dict | None, source: str) ->
     return {
         "source": source,
         "game_id": game.get("gameId"),
+        "map_id": game.get("mapId"),
         "participants": participants,
         "frames": frames,
         "events": [event for frame in frames for event in frame["events"]],

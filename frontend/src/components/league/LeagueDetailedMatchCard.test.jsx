@@ -43,16 +43,17 @@ describe("LeagueDetailedMatchCard", () => {
     vi.clearAllMocks();
     fetchLeagueReplay.mockResolvedValue({ enabled: false });
     fetchLeagueMatchDetails.mockResolvedValue({
-      source: "lcu", frame_count: 2, event_count: 4,
+      source: "sgp", map_id: 11, frame_count: 2, event_count: 5,
       participants: [{ participant_id: 1, team_id: 100, game_name: "自己" }, { participant_id: 6, team_id: 200, game_name: "对手" }],
       frames: [
         { timestamp: 0, participant_frames: { "1": { totalGold: 500 }, "6": { totalGold: 500 } }, events: [] },
-        { timestamp: 60000, participant_frames: { "1": { totalGold: 1200 }, "6": { totalGold: 900 } }, events: [] },
+        { timestamp: 60000, participant_frames: { "1": { totalGold: 1200, position: { x: 7000, y: 7000 }, championStats: { health: 640, healthMax: 900, attackDamage: 82, abilityHaste: 15 } }, "6": { totalGold: 900 } }, events: [] },
       ],
       events: [
         { type: "CHAMPION_KILL", timestamp: 45000, killerId: 1, victimId: 6, position: { x: 7000, y: 7000 } },
         { type: "ITEM_PURCHASED", timestamp: 30000, participantId: 1, itemId: 1001 },
         { type: "ITEM_SOLD", timestamp: 90000, participantId: 1, itemId: 1001 },
+        { type: "ITEM_PURCHASED", timestamp: 120000, participantId: 1, itemId: 6032 },
         { type: "SKILL_LEVEL_UP", timestamp: 60000, participantId: 1, skillSlot: 1, levelUpType: "EVOLVE" },
       ],
     });
@@ -83,11 +84,17 @@ describe("LeagueDetailedMatchCard", () => {
     render(<LeagueDetailedMatchCard match={match} />);
     fireEvent.click(screen.getByRole("button", { name: "展开战绩详情" }));
     fireEvent.click(screen.getByRole("button", { name: "详细属性" }));
+    expect(screen.getAllByText("战斗数据").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("伤害与承伤").length).toBeGreaterThan(0);
     expect(screen.getAllByText("对英雄伤害").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByTitle("totalDamageDealtToChampions · 点击比较十名玩家"));
     expect(screen.getAllByText("20,000").length).toBeGreaterThan(1);
     fireEvent.change(screen.getByPlaceholderText("筛选属性名称…"), { target: { value: "击杀" } });
     expect(screen.getAllByText("击杀").length).toBeGreaterThan(0);
+    fireEvent.change(screen.getByLabelText("属性分组"), { target: { value: "damage" } });
+    expect(screen.queryByText("击杀")).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText("筛选属性名称…"), { target: { value: "" } });
+    expect(screen.getAllByText("伤害与承伤").length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole("button", { name: "符文" }));
     await waitFor(() => expect(fetchLeagueLoadoutCatalog).toHaveBeenCalledTimes(1));
@@ -106,6 +113,9 @@ describe("LeagueDetailedMatchCard", () => {
     fireEvent.click(await screen.findByRole("button", { name: "玩家属性" }));
     expect(screen.getByRole("img", { name: "玩家属性时间线" })).toBeTruthy();
     expect(screen.getByText("1:00 · 总金币 1,200")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("时间线帧"), { target: { value: "1" } });
+    expect(screen.getByText("640 / 900")).toBeTruthy();
+    expect(screen.getByText("技能急速")).toBeTruthy();
   });
 
   it("shows purchase, sale and evolved-skill build events with a player navigator", async () => {
@@ -114,6 +124,8 @@ describe("LeagueDetailedMatchCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "出装过程" }));
     expect(await screen.findByText(/出售 1:30/)).toBeTruthy();
     expect(screen.getByTitle("1:00 · EVOLVE")).toBeTruthy();
+    expect(screen.getByText("铁砧 × 1")).toBeTruthy();
+    expect(screen.getByLabelText("购买阶段分隔")).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: /队友/ }).at(-1));
     expect(screen.getAllByText("无数据")).toHaveLength(2);
   });

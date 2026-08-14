@@ -2011,13 +2011,14 @@ def test_arbitrary_game_preview_normalizes_lcu_scoreboard_and_timeline(monkeypat
 def test_match_timeline_normalizes_participants_frames_and_build_events():
     game = {
         "gameId": 77,
+        "mapId": 11,
         "participantIdentities": [{"participantId": 1, "player": {"puuid": "p1", "gameName": "Alpha", "tagLine": "CN1"}}],
         "participants": [{"participantId": 1, "teamId": 100, "championId": 86}],
     }
     timeline = {
         "frames": [{
             "timestamp": 60000,
-            "participantFrames": {"1": {"totalGold": 900, "currentGold": 300, "level": 2, "xp": 500, "minionsKilled": 7, "jungleMinionsKilled": 0, "position": {"x": 100, "y": 200}, "unknown": "drop"}},
+            "participantFrames": {"1": {"totalGold": 900, "currentGold": 300, "level": 2, "xp": 500, "minionsKilled": 7, "jungleMinionsKilled": 0, "position": {"x": 100, "y": 200}, "championStats": {"health": 550, "healthMax": 700, "attackDamage": 82, "unknown": 999}, "unknown": "drop"}},
             "events": [
                 {"type": "ITEM_PURCHASED", "timestamp": 61000, "participantId": 1, "itemId": 1001, "secret": "drop"},
                 {"type": "SKILL_LEVEL_UP", "timestamp": 62000, "participantId": 1, "skillSlot": 1, "levelUpType": "NORMAL"},
@@ -2029,8 +2030,10 @@ def test_match_timeline_normalizes_participants_frames_and_build_events():
 
     assert result["participants"] == [{"participant_id": 1, "puuid": "p1", "game_name": "Alpha", "tag_line": "CN1", "champion_id": 86, "team_id": 100}]
     assert result["frame_count"] == 1
+    assert result["map_id"] == 11
     assert result["event_count"] == 2
     assert result["frames"][0]["participant_frames"]["1"]["totalGold"] == 900
+    assert result["frames"][0]["participant_frames"]["1"]["championStats"] == {"health": 550, "healthMax": 700, "attackDamage": 82}
     assert "unknown" not in result["frames"][0]["participant_frames"]["1"]
     assert result["events"][0] == {"type": "ITEM_PURCHASED", "timestamp": 61000, "participantId": 1, "itemId": 1001}
 

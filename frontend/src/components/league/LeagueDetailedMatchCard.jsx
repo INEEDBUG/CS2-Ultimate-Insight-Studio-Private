@@ -103,6 +103,31 @@ const RAW_STAT_LABELS = {
   tripleKills: "三杀", quadraKills: "四杀", pentaKills: "五杀",
 };
 
+// Adapted from LeagueAkari's MIT-licensed match detail taxonomy. Keep the
+// client-facing matrix readable while still preserving unknown Riot fields.
+const RAW_STAT_GROUPS = [
+  ["combat", "战斗数据", /^(kills|deaths|assists|firstBlood|doubleKills|tripleKills|quadraKills|pentaKills|unrealKills|killingSprees|largestKillingSpree|largestMultiKill|longestTimeSpentLiving|largestCriticalStrike|legendaryCount|highestChampionDamage|damageGoldEfficiency)$/],
+  ["damage", "伤害与承伤", /(Damage|damage|Shielded|shielded|Mitigated|mitigated)/],
+  ["control", "控制", /(CC|CrowdControl|Immobil|immobil|knockEnemy)/],
+  ["vision", "视野", /(vision|Vision|ward|Ward|sweeper|Sweeper)/],
+  ["buildings", "建筑与防御塔", /(turret|Turret|tower|Tower|inhibitor|Inhibitor|nexus|Nexus|Plate|plate)/],
+  ["economy", "经济与补刀", /(gold|Gold|minion|Minion|cs|Cs|purchased|Purchased|supportQuest|Mejais|mejais)/],
+  ["healing", "治疗与护盾", /(heal|Heal|shield|Shield)/],
+  ["pings", "信号", /Pings$/],
+  ["objectives", "野区与地图目标", /(baron|Baron|dragon|Dragon|riftHerald|RiftHerald|epicMonster|EpicMonster|jungle|Jungle|scuttle|Scuttle|buffsStolen|voidMonster)/],
+  ["abilities", "技能使用", /(abilityUses|spell\d|summoner\d|skillshots|SkillShots|snowballsHit)/],
+  ["survival", "生存能力", /(surviv|Surviv|deathsByEnemy|saveAlly|quickCleanse|blastCone|fistBump)/],
+  ["teamfight", "团战", /(Ace|ace|fullTeamTakedown|AssistStreak|teleportTakedowns)/],
+  ["state", "比赛状态", /^(gameEnded|caused|earlySurrender|teamEarly|teamIGNB|wasPremade|wasSevere|hadAfk|PlayerBehavior|positionAssigned|selectedRole|playedChampSelect)/],
+  ["misc", "其他", /.*/],
+];
+
+const RAW_STAT_HIDDEN = /^(identity|champion(Id|Name|Transform)|participantId|teamId|puuid|summoner(Id|Name|Level)|profileIcon|riotId|lane$|role$|teamPosition|individualPosition|placement|subteamPlacement|playerSubteamId|item[0-6]|roleBoundItem|playerAugment|perks$|perk\d|perkPrimaryStyle|perkSubStyle|PlayerScore|playerScore|combatPlayerScore|objectivePlayerScore|totalPlayerScore|totalScoreRank|win$|eligibleForProgression|InfernalScalePickup|SWARM_|poroExplosions|spell[12]Id|legendaryItemUsed)/;
+
+function rawStatGroup(key) {
+  return RAW_STAT_GROUPS.find(([, , matcher]) => matcher.test(key))?.[0] || "misc";
+}
+
 function rawValue(value) {
   if (typeof value === "boolean") return value ? "是" : "否";
   if (typeof value === "number") return Number.isInteger(value) ? formatNumber(value) : value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
@@ -141,22 +166,38 @@ function RawStatHeader({ statKey, participants, streamerMode, useAliases }) {
 
 function RawDetailsTab({ match, participants, streamerMode, useAliases }) {
   const [filter, setFilter] = useState("");
-  const keys = useMemo(() => {
+  const [groupFilter, setGroupFilter] = useState("all");
+  const groups = useMemo(() => {
     const all = new Set();
     participants.forEach((player) => Object.keys(player.raw_stats || {}).forEach((key) => all.add(key)));
     const needle = filter.trim().toLowerCase();
-    return [...all].filter((key) => !needle || key.toLowerCase().includes(needle) || String(RAW_STAT_LABELS[key] || "").includes(needle));
-  }, [filter, participants]);
+    const grouped = new Map();
+    [...all]
+      .filter((key) => !RAW_STAT_HIDDEN.test(key))
+      .filter((key) => !needle || key.toLowerCase().includes(needle) || String(RAW_STAT_LABELS[key] || "").toLowerCase().includes(needle))
+      .forEach((key) => {
+        const group = rawStatGroup(key);
+        if (groupFilter !== "all" && group !== groupFilter) return;
+        if (!grouped.has(group)) grouped.set(group, []);
+        grouped.get(group).push(key);
+      });
+    return RAW_STAT_GROUPS
+      .map(([id, label]) => ({ id, label, keys: (grouped.get(id) || []).sort((a, b) => a.localeCompare(b)) }))
+      .filter((group) => group.keys.length);
+  }, [filter, groupFilter, participants]);
+  const keyCount = groups.reduce((sum, group) => sum + group.keys.length, 0);
   return <section className="space-y-2">
     <div className="flex flex-wrap items-center gap-3 rounded-xl border border-cs2-border-subtle bg-white/[.025] p-2 text-[10px] text-cs2-text-muted">
       <span>Game ID <b className="select-text text-cs2-text-primary">{match.game_id || "—"}</b></span>
       <span>数据源 <b className="text-cs2-text-primary">{String(match.source || "LCU").toUpperCase()}</b></span>
       <span>版本 <b className="text-cs2-text-primary">{match.game_version || "—"}</b></span>
       <span>地图 <b className="text-cs2-text-primary">{match.map_id || "—"}</b></span>
-      <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="筛选属性名称…" className="ml-auto min-w-52 rounded-lg border border-cs2-border bg-cs2-bg-input px-2.5 py-1.5 text-xs text-cs2-text-primary outline-none focus:border-cyan-400/60"/>
+      <span><b className="text-cs2-text-primary">{keyCount}</b> 项</span>
+      <select aria-label="属性分组" value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)} className="ml-auto rounded-lg border border-cs2-border bg-cs2-bg-input px-2 py-1.5 text-xs text-cs2-text-primary"><option value="all">全部分组</option>{RAW_STAT_GROUPS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>
+      <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="筛选属性名称…" className="min-w-52 rounded-lg border border-cs2-border bg-cs2-bg-input px-2.5 py-1.5 text-xs text-cs2-text-primary outline-none focus:border-cyan-400/60"/>
     </div>
     <div className="max-h-[430px] overflow-auto rounded-xl border border-cs2-border-subtle">
-      {keys.length ? <table className="min-w-max border-collapse text-[10px]"><thead className="sticky top-0 z-20 bg-cs2-bg-elevated"><tr><th className="sticky left-0 z-30 min-w-40 border-b border-r border-cs2-border-subtle bg-cs2-bg-elevated p-2 text-left">属性</th>{participants.map((player, index) => <th key={player.puuid || player.participant_id || index} className="min-w-24 border-b border-cs2-border-subtle p-2"><Icon src={getLeagueChampionIconUrl(player.champion_id)} title={player.champion_name} className="mx-auto h-7 w-7"/><span className="mt-1 block max-w-24 truncate">{participantDisplay(player, index, streamerMode, useAliases)}</span></th>)}</tr></thead><tbody>{keys.map((key) => <tr key={key} className="odd:bg-white/[.018]"><th className="sticky left-0 z-10 max-w-48 border-r border-t border-cs2-border-subtle bg-cs2-bg-elevated p-2 text-left"><RawStatHeader statKey={key} participants={participants} streamerMode={streamerMode} useAliases={useAliases}/>{RAW_STAT_LABELS[key] ? <small className="block truncate font-normal text-cs2-text-muted">{key}</small> : null}</th>{participants.map((player, index) => <td key={player.puuid || player.participant_id || index} className="max-w-32 truncate border-t border-cs2-border-subtle p-2 text-center font-mono" title={rawValue(player.raw_stats?.[key])}>{rawValue(player.raw_stats?.[key])}</td>)}</tr>)}</tbody></table> : <p className="py-12 text-center text-xs text-cs2-text-muted">没有匹配的属性</p>}
+      {groups.length ? <table className="min-w-max border-collapse text-[10px]"><thead className="sticky top-0 z-20 bg-cs2-bg-elevated"><tr><th className="sticky left-0 z-30 min-w-40 border-b border-r border-cs2-border-subtle bg-cs2-bg-elevated p-2 text-left">属性</th>{participants.map((player, index) => <th key={player.puuid || player.participant_id || index} className="min-w-24 border-b border-cs2-border-subtle p-2"><Icon src={getLeagueChampionIconUrl(player.champion_id)} title={player.champion_name} className="mx-auto h-7 w-7"/><span className="mt-1 block max-w-24 truncate">{participantDisplay(player, index, streamerMode, useAliases)}</span></th>)}</tr></thead><tbody>{groups.flatMap((group) => [<tr key={`group-${group.id}`}><th colSpan={participants.length + 1} className="sticky left-0 z-[9] border-y border-cyan-400/15 bg-cyan-400/[.07] px-3 py-2 text-left text-[10px] font-black uppercase tracking-[.16em] text-cyan-200">{group.label}<span className="ml-2 font-mono font-normal text-cs2-text-muted">{group.keys.length}</span></th></tr>, ...group.keys.map((key) => <tr key={key} className="odd:bg-white/[.018]"><th className="sticky left-0 z-10 max-w-48 border-r border-t border-cs2-border-subtle bg-cs2-bg-elevated p-2 text-left"><RawStatHeader statKey={key} participants={participants} streamerMode={streamerMode} useAliases={useAliases}/>{RAW_STAT_LABELS[key] ? <small className="block truncate font-normal text-cs2-text-muted">{key}</small> : null}</th>{participants.map((player, index) => <td key={player.puuid || player.participant_id || index} className="max-w-32 truncate border-t border-cs2-border-subtle p-2 text-center font-mono" title={rawValue(player.raw_stats?.[key])}>{rawValue(player.raw_stats?.[key])}</td>)}</tr>)])}</tbody></table> : <p className="py-12 text-center text-xs text-cs2-text-muted">没有匹配的属性</p>}
     </div>
   </section>;
 }
@@ -228,6 +269,22 @@ function EventsTab({ details, participants, mapId, streamerMode, useAliases }) {
   </div>;
 }
 
+const ANVIL_ITEM_IDS = new Set([6032, 220000]);
+
+function itemTimelineWithSpacers(events) {
+  const rows = [];
+  let lastPurchase = 0;
+  for (const event of events) {
+    const timestamp = Number(event.timestamp || 0);
+    if (event.type === "ITEM_PURCHASED" && lastPurchase && timestamp - lastPurchase > 30000) {
+      rows.push({ type: "SPACER", timestamp, key: `spacer-${timestamp}-${rows.length}` });
+    }
+    rows.push({ ...event, key: `${event.type}-${timestamp}-${rows.length}` });
+    if (event.type === "ITEM_PURCHASED") lastPurchase = timestamp;
+  }
+  return rows;
+}
+
 function BuildsTab({ details, participants, streamerMode, useAliases }) {
   const byParticipant = new Map();
   for (const event of details?.events || []) {
@@ -243,7 +300,14 @@ function BuildsTab({ details, participants, streamerMode, useAliases }) {
       const events = byParticipant.get(Number(player.participant_id)) || [];
       const itemEvents = events.filter((event) => ["ITEM_PURCHASED", "ITEM_SOLD", "ITEM_UNDO"].includes(event.type));
       const skills = events.filter((event) => event.type === "SKILL_LEVEL_UP");
-      return <section key={player.puuid || player.participant_id || index} className="rounded-xl border border-cs2-border-subtle p-3"><div className="mb-3 flex items-center gap-2"><Icon src={getLeagueChampionIconUrl(player.champion_id)} title={player.champion_name} className="h-8 w-8"/><b className="text-xs">{participantDisplay(player, index, streamerMode, useAliases)}</b></div><div className="grid gap-3 md:grid-cols-2"><div><h5 className="mb-2 text-[10px] font-semibold text-cs2-text-muted">技能升级顺序</h5><div className="flex flex-wrap gap-1">{skills.length ? skills.map((event, skillIndex) => <span key={`${event.timestamp}-${skillIndex}`} title={`${formatDuration(Number(event.timestamp || 0) / 1000)}${event.levelUpType ? ` · ${event.levelUpType}` : ""}`} className={`grid h-7 w-7 place-items-center rounded text-xs font-black ${event.levelUpType === "EVOLVE" ? "border border-amber-300 bg-rose-400/30 text-amber-100" : "bg-violet-400/10 text-violet-200"}`}>{["?", "Q", "W", "E", "R"][Number(event.skillSlot || 0)] || "?"}</span>) : <span className="text-[10px] text-cs2-text-muted">无数据</span>}</div></div><div><h5 className="mb-2 text-[10px] font-semibold text-cs2-text-muted">装备操作时间线</h5><div className="flex flex-wrap items-start gap-1">{itemEvents.length ? itemEvents.map((event, itemIndex) => { const itemId = Number(event.itemId || event.afterId || event.beforeId || 0); const label = event.type === "ITEM_SOLD" ? "出售" : event.type === "ITEM_UNDO" ? "撤销" : "购买"; return <span key={`${event.timestamp}-${itemIndex}`} className={`rounded p-0.5 text-center ${event.type === "ITEM_SOLD" ? "bg-rose-400/10" : event.type === "ITEM_UNDO" ? "bg-amber-400/10" : ""}`}>{itemId ? <Icon src={getLeagueItemIconUrl(itemId)} title={`${formatDuration(Number(event.timestamp || 0) / 1000)} · ${label}装备 ${itemId}`} className="h-8 w-8"/> : <span className="grid h-8 w-8 place-items-center rounded bg-white/5 text-[9px]">{label}</span>}<small className="block font-mono text-[8px] text-cs2-text-muted">{label} {formatDuration(Number(event.timestamp || 0) / 1000)}</small></span>; }) : <span className="text-[10px] text-cs2-text-muted">无数据</span>}</div></div></div></section>;
+      const displaySkills = skills.reduce((rows, event) => {
+        const level = event.levelUpType === "EVOLVE" ? null : rows.filter((row) => row.level != null).length + 1;
+        rows.push({ ...event, level });
+        return rows;
+      }, []);
+      const itemTimeline = itemTimelineWithSpacers(itemEvents);
+      const anvilCount = itemEvents.filter((event) => event.type === "ITEM_PURCHASED" && ANVIL_ITEM_IDS.has(Number(event.itemId))).length;
+      return <section key={player.puuid || player.participant_id || index} className="rounded-xl border border-cs2-border-subtle p-3"><div className="mb-3 flex items-center gap-2"><Icon src={getLeagueChampionIconUrl(player.champion_id)} title={player.champion_name} className="h-8 w-8"/><b className="text-xs">{participantDisplay(player, index, streamerMode, useAliases)}</b>{anvilCount ? <span className="rounded bg-amber-400/10 px-2 py-1 text-[9px] font-bold text-amber-200">铁砧 × {anvilCount}</span> : null}</div><div className="grid gap-3 md:grid-cols-2"><div><h5 className="mb-2 text-[10px] font-semibold text-cs2-text-muted">技能升级顺序</h5><div className="flex flex-wrap gap-1">{displaySkills.length ? displaySkills.map((event, skillIndex) => <span key={`${event.timestamp}-${skillIndex}`} title={`${event.level ? `${event.level}级 · ` : ""}${formatDuration(Number(event.timestamp || 0) / 1000)}${event.levelUpType ? ` · ${event.levelUpType}` : ""}`} className={`relative grid h-7 w-7 place-items-center rounded text-xs font-black ${event.levelUpType === "EVOLVE" ? "border border-amber-300 bg-rose-400/30 text-amber-100" : "bg-violet-400/10 text-violet-200"}`}>{["?", "Q", "W", "E", "R"][Number(event.skillSlot || 0)] || "?"}{event.level ? <small className="absolute -bottom-1 -right-1 min-w-3 rounded bg-black/70 px-0.5 text-[8px] leading-3 text-white">{event.level}</small> : null}</span>) : <span className="text-[10px] text-cs2-text-muted">无数据</span>}</div></div><div><h5 className="mb-2 text-[10px] font-semibold text-cs2-text-muted">装备操作时间线</h5><div className="flex flex-wrap items-start gap-1">{itemTimeline.length ? itemTimeline.map((event) => { if (event.type === "SPACER") return <span key={event.key} aria-label="购买阶段分隔" className="grid h-8 w-7 place-items-center text-sm text-cs2-text-muted">→</span>; const itemId = Number(event.itemId || event.afterId || event.beforeId || 0); const label = event.type === "ITEM_SOLD" ? "出售" : event.type === "ITEM_UNDO" ? "撤销" : "购买"; return <span key={event.key} className={`rounded p-0.5 text-center ${event.type === "ITEM_SOLD" ? "bg-rose-400/10" : event.type === "ITEM_UNDO" ? "bg-amber-400/10" : ""}`}>{itemId ? <Icon src={getLeagueItemIconUrl(itemId)} title={`${formatDuration(Number(event.timestamp || 0) / 1000)} · ${label}装备 ${itemId}`} className="h-8 w-8"/> : <span className="grid h-8 w-8 place-items-center rounded bg-white/5 text-[9px]">{label}</span>}<small className="block font-mono text-[8px] text-cs2-text-muted">{label} {formatDuration(Number(event.timestamp || 0) / 1000)}</small></span>; }) : <span className="text-[10px] text-cs2-text-muted">无数据</span>}</div></div></div></section>;
     })}</div>
     <aside className="max-h-[460px] overflow-y-auto rounded-xl border border-cs2-border-subtle p-2"><button type="button" onClick={() => setSelectedParticipant("all")} className={`mb-1 w-full rounded-lg px-2 py-1.5 text-left text-[10px] ${selectedParticipant === "all" ? "bg-cyan-400/15 text-cyan-200" : "text-cs2-text-muted hover:bg-white/5"}`}>全部玩家</button>{participants.map((player, index) => <button key={player.puuid || player.participant_id || index} type="button" onClick={() => setSelectedParticipant(String(player.participant_id))} className={`mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[10px] ${selectedParticipant === String(player.participant_id) ? "bg-cyan-400/15 text-cyan-200" : "text-cs2-text-muted hover:bg-white/5"}`}><Icon src={getLeagueChampionIconUrl(player.champion_id)} title={player.champion_name} className="h-6 w-6"/><span className="min-w-0 flex-1 truncate">{participantDisplay(player, index, streamerMode, useAliases)}</span></button>)}</aside>
   </div>;
@@ -279,6 +343,18 @@ const TIMELINE_METRICS = [
   ["cs", "补刀"], ["damageDealt", "造成伤害"], ["damageTaken", "承受伤害"],
 ];
 
+const CHAMPION_STAT_METRICS = [
+  ["生命值", "health", (value, stats) => `${formatNumber(value)} / ${formatNumber(stats.healthMax)}`],
+  ["生命回复", "healthRegen"], ["资源值", "power", (value, stats) => `${formatNumber(value)} / ${formatNumber(stats.powerMax)}`],
+  ["资源回复", "powerRegen"], ["攻击力", "attackDamage"], ["攻击速度", "attackSpeed", (value) => `${rawValue(value)}%`],
+  ["法术强度", "abilityPower"], ["技能急速", "abilityHaste"], ["冷却缩减", "cooldownReduction", (value) => `${rawValue(value)}%`],
+  ["护甲", "armor"], ["魔抗", "magicResist"], ["护甲穿透", "armorPen"], ["百分比护穿", "armorPenPercent", (value) => `${rawValue(value)}%`],
+  ["额外护穿", "bonusArmorPenPercent", (value) => `${rawValue(value)}%`], ["法术穿透", "magicPen"], ["百分比法穿", "magicPenPercent", (value) => `${rawValue(value)}%`],
+  ["额外法穿", "bonusMagicPenPercent", (value) => `${rawValue(value)}%`], ["移动速度", "movementSpeed"], ["生命偷取", "lifesteal", (value) => `${rawValue(value)}%`],
+  ["物理吸血", "physicalVamp", (value) => `${rawValue(value)}%`], ["法术吸血", "spellVamp", (value) => `${rawValue(value)}%`],
+  ["全能吸血", "omnivamp", (value) => `${rawValue(value)}%`], ["韧性", "ccReduction", (value) => `${rawValue(value)}%`],
+];
+
 function participantTimelineValue(stats, metric) {
   if (metric === "cs") return Number(stats.minionsKilled || 0) + Number(stats.jungleMinionsKilled || 0);
   if (metric === "damageDealt") return Number(stats.damageStats?.totalDamageDealt || 0);
@@ -290,11 +366,16 @@ function PlayerStatsTimeline({ details, participants, streamerMode, useAliases }
   const ids = (details?.participants || []).map((player) => Number(player.participant_id)).filter(Boolean);
   const [participantId, setParticipantId] = useState(ids[0] || 1);
   const [metric, setMetric] = useState("totalGold");
+  const [frameIndex, setFrameIndex] = useState(0);
   const rows = (details?.frames || []).map((frame) => ({ time: Number(frame.timestamp || 0), value: participantTimelineValue(frame.participant_frames?.[String(participantId)] || {}, metric) }));
+  const selectedFrame = details?.frames?.[Math.min(frameIndex, Math.max(0, (details?.frames?.length || 1) - 1))] || null;
+  const selectedFrameStats = selectedFrame?.participant_frames?.[String(participantId)] || {};
+  const championStats = selectedFrameStats.championStats || {};
+  const visibleChampionStats = CHAMPION_STAT_METRICS.filter(([, key]) => championStats[key] != null);
   const maxTime = Math.max(1, ...rows.map((point) => point.time));
   const maxValue = Math.max(1, ...rows.map((point) => point.value));
   const metricLabel = TIMELINE_METRICS.find(([id]) => id === metric)?.[1] || metric;
-  return <div className="rounded-xl border border-cs2-border-subtle p-3"><div className="mb-3 flex flex-wrap gap-2"><select value={participantId} onChange={(event) => setParticipantId(Number(event.target.value))} className="rounded-lg border border-cs2-border bg-cs2-bg-input px-2 py-1.5 text-xs">{ids.map((id, index) => { const player = participants.find((row) => Number(row.participant_id) === id) || details.participants.find((row) => Number(row.participant_id) === id); return <option key={id} value={id}>{participantDisplay(player, index, streamerMode, useAliases)}</option>; })}</select><select value={metric} onChange={(event) => setMetric(event.target.value)} className="rounded-lg border border-cs2-border bg-cs2-bg-input px-2 py-1.5 text-xs">{TIMELINE_METRICS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></div>{rows.length > 1 ? <svg viewBox="0 0 800 220" className="h-auto w-full" role="img" aria-label="玩家属性时间线"><path d="M35 10V190H790" fill="none" stroke="rgba(255,255,255,.15)"/><g stroke="rgba(255,255,255,.06)">{[1,2,3].map((line) => <path key={line} d={`M35 ${10 + line * 45}H790`}/>)}</g><polyline fill="none" stroke="#a78bfa" strokeWidth="3" points={rows.map((point) => `${35 + point.time / maxTime * 755},${190 - point.value / maxValue * 175}`).join(" ")}/>{rows.map((point) => <circle key={point.time} cx={35 + point.time / maxTime * 755} cy={190 - point.value / maxValue * 175} r="5" fill="#a78bfa" opacity="0.01"><title>{`${formatDuration(point.time / 1000)} · ${metricLabel} ${formatNumber(point.value)}`}</title></circle>)}</svg> : <p className="py-8 text-center text-xs text-cs2-text-muted">该玩家没有足够的时间线数据</p>}</div>;
+  return <div className="rounded-xl border border-cs2-border-subtle p-3"><div className="mb-3 flex flex-wrap gap-2"><select aria-label="时间线玩家" value={participantId} onChange={(event) => setParticipantId(Number(event.target.value))} className="rounded-lg border border-cs2-border bg-cs2-bg-input px-2 py-1.5 text-xs">{ids.map((id, index) => { const player = participants.find((row) => Number(row.participant_id) === id) || details.participants.find((row) => Number(row.participant_id) === id); return <option key={id} value={id}>{participantDisplay(player, index, streamerMode, useAliases)}</option>; })}</select><select value={metric} onChange={(event) => setMetric(event.target.value)} className="rounded-lg border border-cs2-border bg-cs2-bg-input px-2 py-1.5 text-xs">{TIMELINE_METRICS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></div>{rows.length > 1 ? <svg viewBox="0 0 800 220" className="h-auto w-full" role="img" aria-label="玩家属性时间线"><path d="M35 10V190H790" fill="none" stroke="rgba(255,255,255,.15)"/><g stroke="rgba(255,255,255,.06)">{[1,2,3].map((line) => <path key={line} d={`M35 ${10 + line * 45}H790`}/>)}</g><polyline fill="none" stroke="#a78bfa" strokeWidth="3" points={rows.map((point) => `${35 + point.time / maxTime * 755},${190 - point.value / maxValue * 175}`).join(" ")}/>{rows.map((point) => <circle key={point.time} cx={35 + point.time / maxTime * 755} cy={190 - point.value / maxValue * 175} r="5" fill="#a78bfa" opacity="0.01"><title>{`${formatDuration(point.time / 1000)} · ${metricLabel} ${formatNumber(point.value)}`}</title></circle>)}</svg> : <p className="py-8 text-center text-xs text-cs2-text-muted">该玩家没有足够的时间线数据</p>}{details?.frames?.length ? <section className="mt-4 border-t border-cs2-border-subtle pt-3"><div className="flex items-center gap-3"><input aria-label="时间线帧" type="range" min="0" max={Math.max(0, details.frames.length - 1)} value={Math.min(frameIndex, details.frames.length - 1)} onChange={(event) => setFrameIndex(Number(event.target.value))} className="min-w-0 flex-1 accent-violet-400"/><b className="w-14 text-right font-mono text-[10px] text-violet-200">{formatDuration(Number(selectedFrame?.timestamp || 0) / 1000)}</b></div>{visibleChampionStats.length ? <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(105px,1fr))] gap-2">{visibleChampionStats.map(([label, key, formatter]) => <span key={key} className="rounded-lg bg-white/[.025] p-2 text-[10px] text-cs2-text-muted">{label}<b className="mt-0.5 block text-sm text-cs2-text-primary">{formatter ? formatter(championStats[key], championStats) : rawValue(championStats[key])}</b></span>)}</div> : <p className="mt-3 text-[10px] text-cs2-text-muted">当前数据源没有提供逐帧英雄面板属性；经济、等级、补刀和伤害曲线仍可使用。</p>}<MapPositionPreview mapId={details.map_id} position={selectedFrameStats.position}/></section> : null}</div>;
 }
 
 function TimelineTab({ details, participants, streamerMode, useAliases, hideStats = false }) {
