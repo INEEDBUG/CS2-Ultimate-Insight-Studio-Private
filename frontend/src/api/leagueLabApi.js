@@ -105,6 +105,16 @@ export async function updateLeagueGameSettingsFile(mode) {
   return data;
 }
 
+export async function fetchLeagueClientWindow() {
+  const { data } = await API.get("/league-lab/toolkit/client-window");
+  return data;
+}
+
+export async function resizeLeagueClientWindow(baseWidth, baseHeight) {
+  const { data } = await API.put("/league-lab/toolkit/client-window", { base_width: baseWidth, base_height: baseHeight });
+  return data;
+}
+
 export async function swapLeagueBenchChampion(championId) {
   const { data } = await API.post(`/league-lab/champ-select/bench/swap/${championId}`);
   return data;

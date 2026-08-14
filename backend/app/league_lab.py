@@ -146,6 +146,11 @@ class GameSettingsFileModeUpdate(BaseModel):
     mode: Literal["readonly", "writable"]
 
 
+class LeagueClientWindowResize(BaseModel):
+    base_width: int = Field(default=1280, ge=640, le=3840)
+    base_height: int = Field(default=720, ge=360, le=2160)
+
+
 LeagueLabSettings.model_rebuild()
 
 
@@ -2618,6 +2623,53 @@ async def _league_game_settings_file_mode() -> str:
     return "writable" if settings_path.stat().st_mode & stat.S_IWRITE else "readonly"
 
 
+def _league_client_window_handles():
+    if os.name != "nt":
+        raise RuntimeError("League 客户端窗口调整仅支持 Windows")
+    user32 = ctypes.windll.user32
+    user32.FindWindowW.restype = wintypes.HWND
+    user32.FindWindowExW.restype = wintypes.HWND
+    parent = user32.FindWindowW("RCLIENT", "League of Legends")
+    child = user32.FindWindowExW(parent, None, None, "CefBrowserWindow") if parent else None
+    if not parent or not child:
+        raise RuntimeError("未找到 LeagueClientUx 主窗口，请先显示客户端")
+    return user32, parent, child
+
+
+def _league_client_window_info() -> dict:
+    user32, parent, _ = _league_client_window_handles()
+    rect = wintypes.RECT()
+    if not user32.GetWindowRect(parent, ctypes.byref(rect)):
+        raise RuntimeError("读取 LeagueClientUx 窗口尺寸失败")
+    dpi = int(user32.GetDpiForWindow(parent)) if hasattr(user32, "GetDpiForWindow") else 96
+    return {
+        "width": int(rect.right - rect.left),
+        "height": int(rect.bottom - rect.top),
+        "left": int(rect.left),
+        "top": int(rect.top),
+        "dpi": dpi or 96,
+        "scale_factor": round((dpi or 96) / 96, 3),
+        "supported": True,
+    }
+
+
+def _resize_league_client_window(base_width: int, base_height: int, zoom: float) -> dict:
+    if zoom <= 0:
+        raise RuntimeError("LeagueClientUx 返回了无效缩放比例")
+    user32, parent, child = _league_client_window_handles()
+    width = max(1, round(base_width * zoom))
+    height = max(1, round(base_height * zoom))
+    screen_width = int(user32.GetSystemMetrics(0))
+    screen_height = int(user32.GetSystemMetrics(1))
+    x, y = (screen_width - width) // 2, (screen_height - height) // 2
+    swp_no_zorder = 0x0004
+    if not user32.SetWindowPos(parent, None, x, y, width, height, swp_no_zorder):
+        raise RuntimeError("调整 LeagueClientUx 主窗口失败，可能需要管理员权限")
+    if not user32.SetWindowPos(child, None, 0, 0, width, height, swp_no_zorder):
+        raise RuntimeError("调整 LeagueClientUx 内容窗口失败，可能需要管理员权限")
+    return {**_league_client_window_info(), "base_width": base_width, "base_height": base_height, "zoom": zoom}
+
+
 @router.get("/toolkit/game-settings-file")
 async def league_game_settings_file_status():
     try:
@@ -2639,6 +2691,28 @@ async def league_game_settings_file_update(body: GameSettingsFileModeUpdate):
     if mode != body.mode:
         raise HTTPException(status_code=409, detail="游戏设置文件属性未按预期生效")
     return {"mode": mode, "file_name": path.name, "applied": True}
+
+
+@router.get("/toolkit/client-window")
+async def league_client_window_status():
+    try:
+        info = await asyncio.to_thread(_league_client_window_info)
+        zoom = await league_lab_service.request("GET", "/riotclient/zoom-scale")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {**info, "zoom": float(zoom) if isinstance(zoom, (int, float)) else None}
+
+
+@router.put("/toolkit/client-window")
+async def league_client_window_resize(body: LeagueClientWindowResize):
+    try:
+        zoom = await league_lab_service.request("GET", "/riotclient/zoom-scale")
+        if not isinstance(zoom, (int, float)):
+            raise RuntimeError("LCU 未返回客户端缩放比例")
+        info = await asyncio.to_thread(_resize_league_client_window, body.base_width, body.base_height, float(zoom))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {**info, "applied": True}
 
 
 @router.put("/toolkit/chat-presence")

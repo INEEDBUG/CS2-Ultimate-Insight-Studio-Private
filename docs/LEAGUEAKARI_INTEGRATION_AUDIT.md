@@ -53,6 +53,7 @@ This document prevents the League integration from becoming a collection of unre
 - Visual rune and summoner-spell loadout editor backed by the current LCU catalog; perk selection no longer requires manually typing numeric IDs.
 - LeagueAkari-style streamer privacy mode across the main League lab, player center, Mini and independent ongoing-game window, with stable optional aliases, local-tag/PUUID masking and optional native capture protection.
 - Reversible `PersistedSettings.json` read-only/writable control using the LCU-reported install directory, including Tencent's separate `Game/Config` layout.
+- LeagueClientUx window repair parity: read the live zoom scale, resize both the native `RCLIENT` shell and `CefBrowserWindow`, then center the client; the action is manual and confirmed.
 
 ### Partially implemented; upstream behavior is richer
 
@@ -69,7 +70,7 @@ This document prevents the League integration from becoming a collection of unre
 - OP.GG and remaining specialized auxiliary overlay windows (an independent native real-time match window and Mini respawn timer now work).
 - Reward/mission/event claiming plus mutating loot and friend tools (the read-only overview works now; writes require separate safety review).
 - In-game preset messaging: explicit fixed-text presets plus generated recent-form, premade and jungle-path drafts for lobby/champion-select are implemented, along with manual chat availability and status-message tools. Native keyboard injection during an active match remains.
-- Client window sizing and global terminate shortcut remain. Explicit foreground-only League game-process termination, streamer text masking and native Windows capture exclusion are implemented.
+- A configurable global terminate shortcut remains. Explicit foreground-only League game-process termination, LeagueClientUx window sizing/centering, streamer text masking and native Windows capture exclusion are implemented.
 
 ## Porting decisions
 

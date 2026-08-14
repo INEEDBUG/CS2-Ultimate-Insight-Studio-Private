@@ -641,6 +641,42 @@ def test_toolkit_overview_is_read_only(monkeypatch):
     assert result["counts"] == {"missions": 1, "unclaimed_rewards": 1, "loot": 1, "friends": 1}
 
 
+def test_league_client_window_status_reads_native_bounds_and_lcu_zoom(monkeypatch):
+    async def request(method, path, *, json_body=None, params=None):
+        assert (method, path) == ("GET", "/riotclient/zoom-scale")
+        return 0.9
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    monkeypatch.setattr(
+        league_lab,
+        "_league_client_window_info",
+        lambda: {"width": 1152, "height": 648, "left": 10, "top": 20, "dpi": 96, "scale_factor": 1.0, "supported": True},
+    )
+
+    result = asyncio.run(league_lab.league_client_window_status())
+
+    assert result["zoom"] == 0.9
+    assert result["width"] == 1152
+
+
+def test_league_client_window_resize_uses_zoom_and_validated_base_size(monkeypatch):
+    async def request(method, path, *, json_body=None, params=None):
+        return 1.25
+
+    calls = []
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    monkeypatch.setattr(
+        league_lab,
+        "_resize_league_client_window",
+        lambda width, height, zoom: calls.append((width, height, zoom)) or {"width": 1600, "height": 900},
+    )
+
+    result = asyncio.run(league_lab.league_client_window_resize(league_lab.LeagueClientWindowResize(base_width=1280, base_height=720)))
+
+    assert calls == [(1280, 720, 1.25)]
+    assert result == {"width": 1600, "height": 900, "applied": True}
+
+
 def test_champion_icon_is_proxied_without_exposing_lcu_credentials(monkeypatch):
     async def request_bytes(path):
         assert path == "/lol-game-data/assets/v1/champion-icons/22.png"
