@@ -29,7 +29,7 @@ import httpx
 import aiosqlite
 import websockets
 from fastapi import APIRouter, HTTPException, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .env_utils import get_data_dir
 
@@ -137,16 +137,24 @@ class LeagueLabSettings(BaseModel):
     mini_enabled: bool = True
     mini_auto_show: bool = True
     mini_opacity: float = Field(default=1.0, ge=0.4, le=1.0)
+    mini_pinned: bool = True
     mini_show_skin_selector: bool = True
     match_history_refresh_after_game: bool = True
     match_history_load_count: int = Field(default=20, ge=1, le=100)
     ongoing_auto_route_when_game_starts: bool = False
     ongoing_match_history_load_count: int = Field(default=20, ge=1, le=100)
     ongoing_query_concurrency: int = Field(default=10, ge=1, le=20)
-    ongoing_premade_threshold: int = Field(default=3, ge=1, le=20)
+    ongoing_game_details_load_count: int = Field(default=20, ge=0, le=100)
+    ongoing_match_history_tag_preference: Literal["current", "all"] = "current"
+    ongoing_order_player_by: Literal["win-rate", "kda", "default", "akari-score", "position", "premade-team"] = "default"
+    ongoing_query_in_lobby_phase: bool = True
+    ongoing_premade_threshold: int = Field(default=5, ge=1, le=20)
     ongoing_jungle_analysis_count: int = Field(default=4, ge=1, le=20)
     ongoing_show_champion_usage: bool = True
+    ongoing_champion_usage_mode: Literal["recent", "mastery", "none"] = "recent"
+    ongoing_show_match_history_item_border: bool = False
     ongoing_show_jungle_pathing: bool = True
+    ongoing_show_jungle_pathing_for_all_players: bool = False
     ongoing_show_premade_tag: bool = True
     ongoing_show_local_tag: bool = True
     ongoing_show_streak_tags: bool = True
@@ -178,6 +186,17 @@ class LeagueLabSettings(BaseModel):
     ongoing_window_shortcut: str | None = Field(default=None, max_length=80)
     opgg_window_shortcut: str | None = Field(default=None, max_length=80)
     cooldown_window_shortcut: str | None = Field(default=None, max_length=80)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_ongoing_settings(cls, value):
+        if not isinstance(value, dict) or "ongoing_champion_usage_mode" in value:
+            return value
+        if value.get("ongoing_show_champion_usage") is False:
+            migrated = dict(value)
+            migrated["ongoing_champion_usage_mode"] = "none"
+            return migrated
+        return value
 
 
 class ChampionLoadout(BaseModel):
@@ -302,6 +321,10 @@ class EventRewardClaim(BaseModel):
 class FriendDeleteRequest(BaseModel):
     friend_ids: list[str] = Field(min_length=1, max_length=50)
     confirmation: Literal["我确认删除"]
+
+
+class SearchHistoryPinBody(BaseModel):
+    pinned: bool
 
 
 class QueueLobbyCreate(BaseModel):
@@ -2125,6 +2148,10 @@ def _recent_players_path() -> Path:
     return get_data_dir() / "league-recent-players.json"
 
 
+def _player_search_history_path() -> Path:
+    return get_data_dir() / "league-player-search-history.json"
+
+
 def _read_player_tags() -> dict[str, dict]:
     try:
         body = json.loads(_player_tags_path().read_text(encoding="utf-8"))
@@ -2185,6 +2212,55 @@ def _write_recent_players(rows: list[dict]) -> None:
     temp = path.with_suffix(".tmp")
     temp.write_text(json.dumps(rows[:200], ensure_ascii=False, indent=2), encoding="utf-8")
     temp.replace(path)
+
+
+def _read_player_search_history() -> list[dict]:
+    try:
+        body = json.loads(_player_search_history_path().read_text(encoding="utf-8"))
+        return [row for row in body if isinstance(row, dict)] if isinstance(body, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _write_player_search_history(rows: list[dict]) -> None:
+    path = _player_search_history_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(".tmp")
+    temp.write_text(json.dumps(rows[:300], ensure_ascii=False, indent=2), encoding="utf-8")
+    temp.replace(path)
+
+
+def _remember_player_search(bundle: dict) -> None:
+    summoner = bundle.get("summoner") if isinstance(bundle, dict) else None
+    if not isinstance(summoner, dict) or not summoner.get("puuid"):
+        return
+    owner_puuid = str(league_lab_service.current_summoner.get("puuid") or "")
+    puuid = str(summoner["puuid"])
+    server_id = str(bundle.get("server_id") or "")
+    rows = _read_player_search_history()
+    existing = next((row for row in rows if (
+        str(row.get("owner_puuid") or "") == owner_puuid
+        and str(row.get("puuid") or "") == puuid
+        and str(row.get("server_id") or "") == server_id
+    )), None)
+    record = {
+        "owner_puuid": owner_puuid,
+        "puuid": puuid,
+        "server_id": server_id,
+        "game_name": str(summoner.get("game_name") or ""),
+        "tag_line": str(summoner.get("tag_line") or ""),
+        "profile_icon_id": summoner.get("profile_icon_id"),
+        "pinned": bool((existing or {}).get("pinned")),
+        "visited_at": int(time.time() * 1000),
+    }
+    rows = [row for row in rows if not (
+        str(row.get("owner_puuid") or "") == owner_puuid
+        and str(row.get("puuid") or "") == puuid
+        and str(row.get("server_id") or "") == server_id
+    )]
+    rows.append(record)
+    rows.sort(key=lambda row: int(row.get("visited_at") or 0), reverse=True)
+    _write_player_search_history(rows)
 
 
 def _time_sort_value(value) -> int:
@@ -2707,6 +2783,73 @@ def _ongoing_performance_tags(matches: list[dict], *, show_streaks: bool = True,
     if sum(solo_kills) / sample >= 1:
         tags.append({"id": "solo-kills", "label": f"场均单杀 {sum(solo_kills) / sample:.1f}", "tone": "warning"})
     return tags[:5]
+
+
+def _ongoing_akari_score(matches: list[dict]) -> float:
+    """LeagueAkari MIT scoring model adapted for live-card ordering."""
+    if not matches:
+        return 0.0
+
+    def number(value) -> float:
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def clamp(value: float, minimum: float, maximum: float) -> float:
+        return max(minimum, min(maximum, value))
+
+    def linear(value: float, minimum: float, maximum: float, cap: float) -> float:
+        return (clamp(value, minimum, maximum) - minimum) / (maximum - minimum) * cap
+
+    part_rows = []
+    for match in matches:
+        team = [
+            row for row in (match.get("participants") or [])
+            if str(row.get("team_id")) == str(match.get("team_id"))
+        ]
+        count = len(team)
+        def total(key: str) -> float:
+            return sum(number(row.get(key)) for row in team)
+
+        def expected(value: float, team_value: float, full: float, cap: float) -> float:
+            if count <= 1 or team_value <= 0:
+                return 0.0
+            return linear(value / team_value / (1 / count), 1, full, cap)
+        duration_minutes = max(1.0, number(match.get("duration_seconds")) / 60)
+        team_taken = total("damage_taken")
+        part_rows.append({
+            "damage": expected(number(match.get("damage")), total("damage"), 2, 3),
+            "damage_taken": expected(number(match.get("damage_taken")), team_taken, 2, 2),
+            "healing": linear(
+                number(match.get("healing")) / max(1.0, team_taken / max(1, count)),
+                0.2,
+                1 if count == 1 else 1.4,
+                2,
+            ),
+            "cs": linear(number(match.get("cs")) / duration_minutes, 5, 10, 2),
+            "gold": expected(number(match.get("gold")), total("gold"), 1.5, 2),
+            "participation": linear(
+                (number(match.get("kills")) + number(match.get("assists"))) / max(1.0, total("kills")),
+                0.3,
+                1,
+                2,
+            ),
+            "vision": expected(number(match.get("vision_score")), total("vision_score"), 2, 2),
+        })
+    kills = sum(number(row.get("kills")) for row in matches)
+    deaths = sum(number(row.get("deaths")) for row in matches)
+    assists = sum(number(row.get("assists")) for row in matches)
+    kda = (kills + assists) / max(1.0, deaths)
+    win_rate = sum(1 for row in matches if row.get("win")) / len(matches)
+    def mean(key: str) -> float:
+        return sum(row[key] for row in part_rows) / len(part_rows)
+    score = (
+        clamp(max(kda - 2, 0) ** 0.5 * (3 / 7), 0, 1)
+        + linear(win_rate, 0.5, 1, 1)
+        + sum(mean(key) for key in ("damage", "damage_taken", "healing", "cs", "gold", "participation", "vision"))
+    )
+    return round(score, 2)
 
 
 _JUNGLE_ANALYSIS_MINUTES = 14
@@ -3233,12 +3376,15 @@ async def search_league_player(game_name: str, tag_line: str, server_id: str = "
         "tagLine": summoner.get("tagLine") or alias_name.get("tag_line") or tag_line.strip(),
     }
     if server_id.strip():
-        return await _load_player_bundle(
+        bundle = await _load_player_bundle(
             summoner,
             sgp_server_id=target_server_id or None,
             prefer_sgp=prefer_sgp,
         )
-    return await _load_player_bundle(summoner)
+    else:
+        bundle = await _load_player_bundle(summoner)
+    _remember_player_search(bundle)
+    return bundle
 
 
 @router.get("/players/search-servers")
@@ -3260,6 +3406,109 @@ async def recent_league_players(limit: int = 40):
     tags = _read_player_tags()
     public_rows = [{**{key: value for key, value in row.items() if key != "encounters"}, "tag": _find_player_tag(tags, str(row.get("puuid")))} for row in rows]
     return {"players": public_rows, "count": len(public_rows)}
+
+
+@router.get("/players/search-history")
+async def league_player_search_history(limit: int = 40):
+    owner_puuid = str(league_lab_service.current_summoner.get("puuid") or "")
+    rows = [
+        {key: value for key, value in row.items() if key != "owner_puuid"}
+        for row in _read_player_search_history()
+        if str(row.get("owner_puuid") or "") == owner_puuid
+    ]
+    rows.sort(key=lambda row: (bool(row.get("pinned")), int(row.get("visited_at") or 0)), reverse=True)
+    selected = rows[:max(1, min(limit, 100))]
+    return {"players": selected, "count": len(selected)}
+
+
+@router.put("/players/search-history/{puuid}/pin")
+async def pin_league_player_search_history(puuid: str, body: SearchHistoryPinBody, server_id: str = ""):
+    owner_puuid = str(league_lab_service.current_summoner.get("puuid") or "")
+    rows = _read_player_search_history()
+    found = False
+    for row in rows:
+        if (
+            str(row.get("owner_puuid") or "") == owner_puuid
+            and str(row.get("puuid") or "") == puuid
+            and str(row.get("server_id") or "") == str(server_id or "")
+        ):
+            row["pinned"] = body.pinned
+            found = True
+            break
+    if not found:
+        raise HTTPException(status_code=404, detail="最近访问记录不存在")
+    _write_player_search_history(rows)
+    return {"puuid": puuid, "server_id": server_id, "pinned": body.pinned}
+
+
+@router.delete("/players/search-history/{puuid}")
+async def delete_league_player_search_history(puuid: str, server_id: str = ""):
+    owner_puuid = str(league_lab_service.current_summoner.get("puuid") or "")
+    rows = _read_player_search_history()
+    remaining = [row for row in rows if not (
+        str(row.get("owner_puuid") or "") == owner_puuid
+        and str(row.get("puuid") or "") == puuid
+        and str(row.get("server_id") or "") == str(server_id or "")
+    )]
+    removed = len(remaining) != len(rows)
+    if removed:
+        _write_player_search_history(remaining)
+    return {"puuid": puuid, "server_id": server_id, "removed": removed}
+
+
+def _public_league_friend(friend: dict) -> dict:
+    lol = friend.get("lol") if isinstance(friend.get("lol"), dict) else {}
+    puuid = str(friend.get("puuid") or lol.get("puuid") or "")
+    availability = str(friend.get("availability") or "offline")
+    game_status = str(lol.get("gameStatus") or "")
+    return {
+        "puuid": puuid,
+        "game_name": str(friend.get("gameName") or friend.get("name") or ""),
+        "tag_line": str(friend.get("gameTag") or ""),
+        "profile_icon_id": friend.get("icon") or friend.get("profileIconId"),
+        "availability": availability,
+        "game_status": game_status,
+        "spectatable": bool(
+            availability == "dnd"
+            and game_status.casefold() == "ingame"
+            and puuid
+            and lol.get("spectatorKey")
+        ),
+    }
+
+
+@router.get("/players/friends")
+async def league_player_friends():
+    try:
+        payload = await league_lab_service.request("GET", "/lol-chat/v1/friends")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    priority = {"dnd": 3, "chat": 2, "away": 1, "offline": 0}
+    friends = [_public_league_friend(row) for row in (payload or []) if isinstance(row, dict)]
+    friends.sort(key=lambda row: (priority.get(row["availability"], 0), row["game_name"].casefold()), reverse=True)
+    return {"friends": friends, "count": len(friends)}
+
+
+@router.post("/players/friends/{puuid}/spectate")
+async def spectate_league_friend(puuid: str):
+    try:
+        payload = await league_lab_service.request("GET", "/lol-chat/v1/friends")
+        friend = next((row for row in (payload or []) if (
+            isinstance(row, dict) and _public_league_friend(row)["puuid"] == puuid
+        )), None)
+        public = _public_league_friend(friend or {})
+        if not friend or not public["spectatable"]:
+            raise HTTPException(status_code=409, detail="该好友当前不可观战")
+        await league_lab_service.request(
+            "POST",
+            "/lol-spectator/v1/spectate/launch",
+            json_body={"puuid": puuid, "spectatorKey": (friend.get("lol") or {}).get("spectatorKey")},
+        )
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"puuid": puuid, "launched": True}
 
 
 @router.get("/players/{puuid}/encounters")
@@ -3323,13 +3572,15 @@ async def league_player_bundle(puuid: str, match_limit: int = 20, beg_index: int
             summoner = await _sgp_summoner_by_puuid(puuid, target_server_id or None)
         except RuntimeError as sgp_exc:
             raise HTTPException(status_code=409, detail=f"{lcu_exc}; {sgp_exc}") from sgp_exc
-    return await _load_player_bundle(
+    bundle = await _load_player_bundle(
         summoner,
         match_limit=max(1, min(match_limit, 100)),
         beg_index=max(0, beg_index),
         sgp_server_id=target_server_id or None,
         prefer_sgp=prefer_sgp,
     )
+    _remember_player_search(bundle)
+    return bundle
 
 
 async def _load_player_bundle(
@@ -3719,6 +3970,13 @@ async def league_ongoing_game():
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     game_data = (gameflow or {}).get("gameData") or {}
+    live_phase = str((gameflow or {}).get("phase") or league_lab_service.phase or "")
+    lobby = None
+    if live_phase == "Lobby" and settings.ongoing_query_in_lobby_phase:
+        try:
+            lobby = await league_lab_service.request("GET", "/lol-lobby/v2/lobby")
+        except RuntimeError:
+            lobby = None
     team_metadata = {}
     for team_id, key in ((100, "teamOne"), (200, "teamTwo")):
         for member in game_data.get(key) or []:
@@ -3727,6 +3985,13 @@ async def league_ongoing_game():
             puuid = str(member.get("puuid") or member.get("playerPuuid") or "")
             if puuid:
                 team_metadata[puuid] = {**member, "team": member.get("team") or member.get("teamId") or team_id}
+    if isinstance(lobby, dict):
+        for member in lobby.get("members") or []:
+            if not isinstance(member, dict):
+                continue
+            puuid = str(member.get("puuid") or "")
+            if puuid:
+                team_metadata[puuid] = {**member, "team": "LOBBY", "selectedPosition": member.get("selectedPosition") or ""}
     selections, seen = [], set()
     for selection in game_data.get("playerChampionSelections") or []:
         if not isinstance(selection, dict):
@@ -3741,14 +4006,20 @@ async def league_ongoing_game():
     selections.extend(row for puuid, row in team_metadata.items() if puuid not in seen)
     cache_key = json.dumps(
         [
-            game_data.get("gameId"),
+            game_data.get("gameId") or (lobby or {}).get("partyId"),
             [
                 settings.ongoing_match_history_load_count,
                 settings.ongoing_query_concurrency,
+                settings.ongoing_match_history_tag_preference,
+                settings.ongoing_order_player_by,
+                settings.ongoing_query_in_lobby_phase,
                 settings.ongoing_premade_threshold,
                 settings.ongoing_jungle_analysis_count,
                 settings.ongoing_show_champion_usage,
+                settings.ongoing_champion_usage_mode,
+                settings.ongoing_show_match_history_item_border,
                 settings.ongoing_show_jungle_pathing,
+                settings.ongoing_show_jungle_pathing_for_all_players,
                 settings.ongoing_show_premade_tag,
                 settings.ongoing_show_local_tag,
                 settings.ongoing_show_streak_tags,
@@ -3769,7 +4040,7 @@ async def league_ongoing_game():
         if not isinstance(row, dict):
             return None, None
         puuid = str(row.get("puuid") or row.get("playerPuuid") or "")
-        summoner, ranked, history = None, None, None
+        summoner, ranked, history, mastery = None, None, None, None
         if puuid:
             try:
                 async with query_semaphore:
@@ -3781,20 +4052,41 @@ async def league_ongoing_game():
                             params={"begIndex": 0, "endIndex": settings.ongoing_match_history_load_count - 1},
                         ),
                     )
+                    if settings.ongoing_champion_usage_mode == "mastery":
+                        mastery = await league_lab_service.request(
+                            "GET", f"/lol-champion-mastery/v1/{puuid}/champion-mastery"
+                        )
             except RuntimeError:
                 pass
         champion_id = int(row.get("championId") or 0)
         matches = _normalize_match_rows(history or {}, names, puuid)
-        champion_matches = [match for match in matches if match.get("champion_id") == champion_id] if settings.ongoing_show_champion_usage else []
+        queue_data = game_data.get("queue") or ((lobby or {}).get("gameConfig") or {})
+        queue_id = int(queue_data.get("id") or queue_data.get("queueId") or 0)
+        if settings.ongoing_match_history_tag_preference == "current" and queue_id:
+            matches = [match for match in matches if int(match.get("queue_id") or 0) == queue_id]
+        detail_matches = matches[:settings.ongoing_game_details_load_count]
+        usage_mode = settings.ongoing_champion_usage_mode if settings.ongoing_show_champion_usage else "none"
+        champion_matches = [match for match in matches if match.get("champion_id") == champion_id] if usage_mode == "recent" else []
+        champion_mastery = next(
+            (item for item in mastery or [] if int(item.get("championId") or 0) == champion_id),
+            {},
+        ) if isinstance(mastery, list) and champion_id else {}
         selected_position = str(row.get("selectedPosition") or row.get("assignedPosition") or "").upper()
         jungle_analysis = None
-        if settings.ongoing_show_jungle_pathing and selected_position == "JUNGLE" and isinstance(history, dict):
+        if settings.ongoing_show_jungle_pathing and (
+            selected_position == "JUNGLE" or settings.ongoing_show_jungle_pathing_for_all_players
+        ) and isinstance(history, dict):
             jungle_analysis = await _load_jungle_analysis(puuid, history, limit=settings.ongoing_jungle_analysis_count)
+        recent_kda = round(sum(
+            (float(match.get("kills") or 0) + float(match.get("assists") or 0))
+            / max(1.0, float(match.get("deaths") or 0))
+            for match in matches
+        ) / max(1, len(matches)), 2)
         return ({
             "puuid": puuid,
             "team": row.get("team") or row.get("teamId"),
             "champion_id": champion_id,
-            "champion_name": names.get(champion_id, str(champion_id)),
+            "champion_name": names.get(champion_id, str(champion_id)) if champion_id else "",
             "position": selected_position,
             "summoner": summoner or {},
             "ranked": ranked or {},
@@ -3802,15 +4094,21 @@ async def league_ongoing_game():
             "recent": {
                 "matches": len(matches),
                 "wins": sum(1 for match in matches if match.get("win")),
+                "average_kda": recent_kda,
+                "akari_score": _ongoing_akari_score(detail_matches),
+                "details_analyzed": len(detail_matches),
             },
             "champion_usage": {
+                "mode": usage_mode,
                 "matches": len(champion_matches),
                 "wins": sum(1 for match in champion_matches if match.get("win")),
                 "average_kda": round(sum((match.get("kills", 0) + match.get("assists", 0)) / max(1, match.get("deaths", 0)) for match in champion_matches) / max(1, len(champion_matches)), 2),
+                "mastery_level": champion_mastery.get("championLevel", 0),
+                "mastery_points": champion_mastery.get("championPoints", 0),
             },
             "jungle_analysis": jungle_analysis,
             "performance_tags": _ongoing_performance_tags(
-                matches,
+                detail_matches,
                 show_streaks=settings.ongoing_show_streak_tags,
                 show_performance=settings.ongoing_show_performance_tags,
             ),
@@ -3825,14 +4123,28 @@ async def league_ongoing_game():
     ) if settings.ongoing_show_premade_tag else {}
     for player in players:
         player["premade_group"] = premade_groups.get(player.get("puuid"))
+    position_order = {"TOP": 0, "JUNGLE": 1, "MIDDLE": 2, "MID": 2, "BOTTOM": 3, "UTILITY": 4}
+    sorters = {
+        "win-rate": lambda player: -float(player["recent"]["wins"]) / max(1, int(player["recent"]["matches"])),
+        "kda": lambda player: -float(player["recent"]["average_kda"]),
+        "akari-score": lambda player: -float(player["recent"]["akari_score"]),
+        "position": lambda player: position_order.get(str(player.get("position") or "").upper(), 99),
+        "premade-team": lambda player: int(player.get("premade_group") or 999),
+    }
+    if settings.ongoing_order_player_by in sorters:
+        players.sort(key=sorters[settings.ongoing_order_player_by])
+    queue = game_data.get("queue") or ((lobby or {}).get("gameConfig") or {})
     result = {
-        "phase": league_lab_service.phase,
-        "queue": game_data.get("queue") or {},
-        "game_id": game_data.get("gameId"),
+        "phase": live_phase,
+        "query_stage": "lobby" if isinstance(lobby, dict) else ("champ-select" if live_phase == "ChampSelect" else "in-game"),
+        "queue": queue,
+        "game_id": game_data.get("gameId") or (lobby or {}).get("partyId"),
         "players": players,
         "available": bool(players),
+        "show_match_history_item_border": settings.ongoing_show_match_history_item_border,
+        "order_player_by": settings.ongoing_order_player_by,
     }
-    if players:
+    if players and not isinstance(lobby, dict):
         _remember_recent_players(players, game_data.get("gameId"))
     _ongoing_cache.update({"key": cache_key, "expires_at": time.monotonic() + 30.0, "payload": result})
     return result

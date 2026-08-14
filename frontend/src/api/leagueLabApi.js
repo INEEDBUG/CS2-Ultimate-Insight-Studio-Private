@@ -116,6 +116,31 @@ export async function fetchRecentLeaguePlayers(limit = 40) {
   return data;
 }
 
+export async function fetchLeaguePlayerSearchHistory(limit = 40) {
+  const { data } = await API.get("/league-lab/players/search-history", { params: { limit } });
+  return data;
+}
+
+export async function pinLeaguePlayerSearchHistory(puuid, pinned, serverId = "") {
+  const { data } = await API.put(`/league-lab/players/search-history/${encodeURIComponent(puuid)}/pin`, { pinned }, { params: { server_id: serverId || undefined } });
+  return data;
+}
+
+export async function deleteLeaguePlayerSearchHistory(puuid, serverId = "") {
+  const { data } = await API.delete(`/league-lab/players/search-history/${encodeURIComponent(puuid)}`, { params: { server_id: serverId || undefined } });
+  return data;
+}
+
+export async function fetchLeaguePlayerFriends() {
+  const { data } = await API.get("/league-lab/players/friends");
+  return data;
+}
+
+export async function spectateLeagueFriend(puuid) {
+  const { data } = await API.post(`/league-lab/players/friends/${encodeURIComponent(puuid)}/spectate`);
+  return data;
+}
+
 export async function fetchLeaguePlayerEncounters(puuid, page = 1, pageSize = 10) {
   const { data } = await API.get(`/league-lab/players/${encodeURIComponent(puuid)}/encounters`, { params: { page, page_size: pageSize } });
   return data;

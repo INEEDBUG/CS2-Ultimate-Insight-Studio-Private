@@ -56,6 +56,74 @@ def test_player_tag_import_uses_current_account_and_paginates(monkeypatch, tmp_p
     assert page["rows"][0]["puuid"] == "two"
 
 
+def test_player_search_history_is_account_scoped_and_manageable(monkeypatch, tmp_path):
+    monkeypatch.setattr(league_lab, "_player_search_history_path", lambda: tmp_path / "search-history.json")
+    monkeypatch.setattr(league_lab.league_lab_service, "current_summoner", {"puuid": "owner-a"})
+    league_lab._remember_player_search({
+        "server_id": "hn1",
+        "summoner": {"puuid": "target", "game_name": "Target", "tag_line": "CN1", "profile_icon_id": 12},
+    })
+
+    first = asyncio.run(league_lab.league_player_search_history())
+    assert first["count"] == 1
+    assert first["players"][0]["game_name"] == "Target"
+    assert "owner_puuid" not in first["players"][0]
+
+    pinned = asyncio.run(league_lab.pin_league_player_search_history(
+        "target", league_lab.SearchHistoryPinBody(pinned=True), server_id="hn1"
+    ))
+    assert pinned["pinned"] is True
+    assert asyncio.run(league_lab.league_player_search_history())["players"][0]["pinned"] is True
+
+    monkeypatch.setattr(league_lab.league_lab_service, "current_summoner", {"puuid": "owner-b"})
+    assert asyncio.run(league_lab.league_player_search_history())["count"] == 0
+    monkeypatch.setattr(league_lab.league_lab_service, "current_summoner", {"puuid": "owner-a"})
+    removed = asyncio.run(league_lab.delete_league_player_search_history("target", server_id="hn1"))
+    assert removed["removed"] is True
+    assert asyncio.run(league_lab.league_player_search_history())["count"] == 0
+
+
+def test_friend_search_surface_hides_spectator_key_and_revalidates_launch(monkeypatch):
+    friend_payload = [{
+        "puuid": "friend-1",
+        "gameName": "Friend",
+        "gameTag": "CN1",
+        "icon": 22,
+        "availability": "dnd",
+        "lol": {"gameStatus": "inGame", "spectatorKey": "private-spectator-key"},
+    }]
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, json_body))
+        if (method, path) == ("GET", "/lol-chat/v1/friends"):
+            return friend_payload
+        if (method, path) == ("POST", "/lol-spectator/v1/spectate/launch"):
+            return None
+        raise AssertionError(f"unexpected LCU request: {method} {path}")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    result = asyncio.run(league_lab.league_player_friends())
+    assert result == {"friends": [{
+        "puuid": "friend-1",
+        "game_name": "Friend",
+        "tag_line": "CN1",
+        "profile_icon_id": 22,
+        "availability": "dnd",
+        "game_status": "inGame",
+        "spectatable": True,
+    }], "count": 1}
+    assert "private-spectator-key" not in json.dumps(result)
+
+    launched = asyncio.run(league_lab.spectate_league_friend("friend-1"))
+    assert launched == {"puuid": "friend-1", "launched": True}
+    assert calls[-1] == (
+        "POST",
+        "/lol-spectator/v1/spectate/launch",
+        {"puuid": "friend-1", "spectatorKey": "private-spectator-key"},
+    )
+
+
 def test_parse_league_client_command_line_extracts_lcu_credentials():
     parsed = parse_league_client_command_line(
         '"LeagueClientUx.exe" --app-port=54321 --remoting-auth-token=secret_token '
@@ -1848,14 +1916,26 @@ def test_match_history_and_ongoing_navigation_defaults_are_safe():
     assert settings.ongoing_auto_route_when_game_starts is False
     assert settings.ongoing_match_history_load_count == 20
     assert settings.ongoing_query_concurrency == 10
-    assert settings.ongoing_premade_threshold == 3
+    assert settings.ongoing_game_details_load_count == 20
+    assert settings.ongoing_match_history_tag_preference == "current"
+    assert settings.ongoing_order_player_by == "default"
+    assert settings.ongoing_query_in_lobby_phase is True
+    assert settings.ongoing_premade_threshold == 5
     assert settings.ongoing_jungle_analysis_count == 4
     assert settings.ongoing_show_champion_usage is True
+    assert settings.ongoing_champion_usage_mode == "recent"
+    assert settings.ongoing_show_match_history_item_border is False
     assert settings.ongoing_show_jungle_pathing is True
+    assert settings.ongoing_show_jungle_pathing_for_all_players is False
     assert settings.ongoing_show_premade_tag is True
     assert settings.ongoing_show_local_tag is True
     assert settings.ongoing_show_streak_tags is True
     assert settings.ongoing_show_performance_tags is True
+
+
+def test_legacy_ongoing_champion_visibility_migrates_to_three_state_mode():
+    settings = LeagueLabSettings.model_validate({"ongoing_show_champion_usage": False})
+    assert settings.ongoing_champion_usage_mode == "none"
 
 
 def test_ongoing_performance_tags_cover_streaks_and_recent_form():
@@ -1880,6 +1960,143 @@ def test_ongoing_performance_tags_cover_streaks_and_recent_form():
 def test_ongoing_performance_tags_respect_visibility_settings():
     matches = [{"win": False, "kills": 0, "deaths": 8, "assists": 1} for _ in range(5)]
     assert league_lab._ongoing_performance_tags(matches, show_streaks=False, show_performance=False) == []
+
+
+def test_ongoing_akari_score_matches_the_upstream_weighting_shape():
+    teammates = [
+        {
+            "team_id": 100,
+            "kills": 4,
+            "damage": 10000,
+            "damage_taken": 9000,
+            "healing": 500,
+            "cs": 180,
+            "gold": 10000,
+            "vision_score": 20,
+        }
+        for _ in range(5)
+    ]
+    baseline = {
+        "team_id": 100,
+        "participants": teammates,
+        "win": False,
+        "kills": 4,
+        "deaths": 4,
+        "assists": 4,
+        "damage": 10000,
+        "damage_taken": 9000,
+        "healing": 500,
+        "cs": 180,
+        "gold": 10000,
+        "vision_score": 20,
+        "duration_seconds": 1800,
+    }
+    stronger = {
+        **baseline,
+        "win": True,
+        "kills": 12,
+        "deaths": 2,
+        "assists": 8,
+        "damage": 25000,
+        "cs": 300,
+    }
+
+    assert league_lab._ongoing_akari_score([]) == 0.0
+    assert 0 < league_lab._ongoing_akari_score([baseline]) < 18
+    assert league_lab._ongoing_akari_score([stronger]) > league_lab._ongoing_akari_score([baseline])
+
+
+def test_ongoing_game_reads_lobby_filters_current_queue_and_sorts(monkeypatch):
+    def history(puuid, rows):
+        games = []
+        for index, (queue_id, win) in enumerate(rows, start=1):
+            games.append({
+                "gameId": f"{puuid}-{index}",
+                "queueId": queue_id,
+                "gameDuration": 1800,
+                "participantIdentities": [{"participantId": 1, "player": {"puuid": puuid}}],
+                "participants": [{
+                    "participantId": 1,
+                    "teamId": 100,
+                    "championId": 1,
+                    "stats": {
+                        "win": win,
+                        "kills": 8 if win else 2,
+                        "deaths": 2 if win else 8,
+                        "assists": 6,
+                        "goldEarned": 10000,
+                        "totalMinionsKilled": 180,
+                        "totalDamageDealtToChampions": 15000,
+                        "totalDamageTaken": 10000,
+                        "visionScore": 20,
+                    },
+                }],
+            })
+        return {"games": {"games": games}}
+
+    histories = {
+        "high": history("high", [(420, True)]),
+        "low": history("low", [(450, True), (420, False)]),
+    }
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, params))
+        if path == "/lol-gameflow/v1/session":
+            return {"phase": "Lobby", "gameData": {}}
+        if path == "/lol-lobby/v2/lobby":
+            return {
+                "partyId": "party-1",
+                "gameConfig": {"queueId": 420},
+                "members": [
+                    {"puuid": "low", "selectedPosition": "TOP"},
+                    {"puuid": "high", "selectedPosition": "JUNGLE"},
+                ],
+            }
+        if path.startswith("/lol-summoner/v2/summoners/puuid/"):
+            puuid = path.rsplit("/", 1)[-1]
+            return {"puuid": puuid, "gameName": puuid.title(), "profileIconId": 10}
+        if path.startswith("/lol-ranked/v1/ranked-stats/"):
+            return {}
+        if "/matches" in path:
+            puuid = path.split("/lol/")[1].split("/matches")[0]
+            return histories[puuid]
+        raise AssertionError(f"unexpected LCU request: {method} {path}")
+
+    async def champion_names():
+        return {1: "Annie"}
+
+    settings = LeagueLabSettings(
+        ongoing_order_player_by="win-rate",
+        ongoing_match_history_tag_preference="current",
+        ongoing_show_jungle_pathing=False,
+        ongoing_show_premade_tag=False,
+    )
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", settings)
+    monkeypatch.setattr(league_lab.league_lab_service, "phase", "Lobby")
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    monkeypatch.setattr(league_lab, "_champion_names", champion_names)
+    monkeypatch.setattr(league_lab, "_read_player_tags", lambda: {})
+    remembered = []
+    monkeypatch.setattr(league_lab, "_remember_recent_players", lambda *args: remembered.append(args))
+    monkeypatch.setattr(league_lab, "_ongoing_cache", {"key": "", "expires_at": 0.0, "payload": None})
+
+    result = asyncio.run(league_lab.league_ongoing_game())
+
+    assert result["query_stage"] == "lobby"
+    assert result["game_id"] == "party-1"
+    assert result["queue"]["queueId"] == 420
+    assert [row["puuid"] for row in result["players"]] == ["high", "low"]
+    assert result["players"][0]["recent"]["matches"] == 1
+    assert result["players"][0]["recent"]["wins"] == 1
+    assert result["players"][0]["recent"]["average_kda"] == 7.0
+    assert result["players"][0]["recent"]["details_analyzed"] == 1
+    assert result["players"][1]["recent"]["matches"] == 1
+    assert result["players"][1]["recent"]["wins"] == 0
+    assert all(player["team"] == "LOBBY" for player in result["players"])
+    assert all(player["champion_name"] == "" for player in result["players"])
+    assert remembered == []
+    assert any(path == "/lol-lobby/v2/lobby" for _, path, _ in calls)
 
 
 def test_opgg_proxy_uses_fixed_origin_and_cache(monkeypatch):

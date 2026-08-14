@@ -1,13 +1,14 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LeagueAutomationLabPage from "./LeagueAutomationLabPage";
-import { fetchLeagueClientInstallations, fetchLeagueClients, fetchLeagueLabStatus, fetchLeagueMatches, fetchLeagueReplay, saveLeagueLabSettings } from "../api/leagueLabApi";
+import { fetchLeagueClientInstallations, fetchLeagueClients, fetchLeagueLabStatus, fetchLeagueMatches, fetchLeagueOngoingGame, fetchLeagueReplay, saveLeagueLabSettings } from "../api/leagueLabApi";
 
 vi.mock("../api/leagueLabApi", () => ({
   fetchLeagueLabStatus: vi.fn(),
   fetchLeagueClients: vi.fn(),
   fetchLeagueClientInstallations: vi.fn(),
   fetchLeagueMatches: vi.fn(),
+  fetchLeagueOngoingGame: vi.fn(),
   fetchLeagueReplay: vi.fn(),
   fetchLeagueLoadoutCatalog: vi.fn(),
   fetchLeagueMatchDetails: vi.fn(),
@@ -15,6 +16,10 @@ vi.mock("../api/leagueLabApi", () => ({
   launchLeagueClient: vi.fn(),
   saveLeagueLabSettings: vi.fn(),
   runLeagueLabAction: vi.fn(),
+}));
+
+vi.mock("../components/league/LeagueOngoingGame", () => ({
+  default: () => <div>实时对局内容</div>,
 }));
 
 const status = {
@@ -39,6 +44,7 @@ describe("LeagueAutomationLabPage", () => {
     fetchLeagueClients.mockResolvedValue({ clients: [], selected_pid: 0 });
     fetchLeagueClientInstallations.mockResolvedValue({ installations: [] });
     fetchLeagueMatches.mockResolvedValue({ matches: [{ game_id: 1001, champion_id: 1, champion_name: "安妮", participant_puuid: "self", team_id: 100, win: true, participants: [] }] });
+    fetchLeagueOngoingGame.mockResolvedValue({ available: false, players: [] });
     fetchLeagueReplay.mockResolvedValue({ enabled: false });
     saveLeagueLabSettings.mockResolvedValue({ ...status, settings: { ...status.settings, automation_enabled: true } });
   });
@@ -67,13 +73,19 @@ describe("LeagueAutomationLabPage", () => {
     render(<LeagueAutomationLabPage />);
     await screen.findByText("已连接：Tester");
     fireEvent.click(screen.getByRole("button", { name: "实时对局" }));
-    expect(screen.getByRole("switch", { name: "显示当前英雄近期表现" })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "在房间阶段分析队友" })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "所有玩家都分析打野路线" })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "战绩条目强调边框" })).toBeTruthy();
+    expect(screen.getByLabelText("实时玩家排序").value).toBe("default");
+    expect(screen.getByLabelText("实时英雄数据来源").value).toBe("recent");
+    expect(screen.getByLabelText("实时战绩样本范围").value).toBe("current");
+    expect(screen.getByLabelText("实时详情时间线数量").value).toBe("20");
     expect(screen.getByRole("switch", { name: "显示打野路线画像" })).toBeTruthy();
     expect(screen.getByLabelText("实时对局战绩读取数").value).toBe("20");
     expect(screen.getByLabelText("打野画像分析场数").value).toBe("4");
     expect(screen.getByRole("switch", { name: "显示连胜 / 连败标签" })).toBeTruthy();
     expect(screen.getByRole("switch", { name: "显示表现画像标签" })).toBeTruthy();
     expect(screen.getByLabelText("实时对局并发查询数").value).toBe("10");
-    expect(screen.getByLabelText("组排推断阈值").value).toBe("3");
+    expect(screen.getByLabelText("组排推断阈值").value).toBe("5");
   });
 });

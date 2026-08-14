@@ -73,6 +73,8 @@ This document prevents the League integration from becoming a collection of unre
 - Champion-analysis parity: the player center aggregates every loaded sample by champion, exposes win/loss, KDA line, the MIT-licensed upstream Akari Score model, damage/CS per minute, vision, team damage/taken/gold shares and a position-distribution chart, with a low-sample warning and direct switching among the twelve most-played champions.
 - Player-summary parity: the same upstream scoring model is also applied to the complete loaded sample alongside aggregate KDA, win/loss and streak, active-session results, kill participation, CS per minute, team damage/taken/gold shares and blue/red-side counts.
 - Ongoing-game settings parity: per-player query concurrency and premade co-play threshold are configurable; live cards can independently show streak and recent-form tags derived from win rate, KDA, CS, vision and solo kills. Team headers expose the sampled average win rate.
+- Ongoing-game query parity: Lobby rosters are analyzed before ChampSelect, queue filtering accepts either queue ID or queue type, detail enrichment can be capped independently from displayed history, players support six deterministic sort modes, champion usage can be sourced from recent games, mastery or hidden, and the host can show all-player jungle samples plus match borders.
+- Player-search pane parity: searches create account-scoped recent visits with local filtering, pinning and deletion; the same pane lists current LCU friends and their presence state, and exposes a deliberate one-click spectate action only when live LCU state says the friend is spectatable. Spectator keys never leave the backend.
 - Auxiliary-window settings parity: Mini and OP.GG opacity, Mini skin-selector visibility and explicit position reset actions are persisted and exposed in the host settings. Position reset recenters the existing native Tauri window without recreating it. Mini now renders an immediate dark bootstrap/error surface, exposes pin/minimize/close controls, and automatic phase display no longer steals foreground focus.
 
 ### Implemented with deliberate React/Tauri presentation differences
@@ -95,7 +97,7 @@ This table is stricter than the shard matrix below: a backend capability is not 
 | Upstream user surface | Local surface | Current evidence | Status |
 | --- | --- | --- | --- |
 | Startup and client connection | League lab connection/startup cards | multi-client discovery, exact-PID binding and Riot/WeGame/TCLS launch cards | Equivalent |
-| Player tabs and summoner search | integrated player center | current/cross-region Riot ID lookup, recent tabs, ranked, mastery, challenges, account-scoped tags with full management/import/export, pagination, collection, whole-sample summary/Akari Score and per-champion aggregate/position analysis | Equivalent with host layout |
+| Player tabs and summoner search | integrated player center | current/cross-region Riot ID lookup, account-scoped recent visits with pin/delete, friend presence and explicit spectate, recent tabs, ranked, mastery, challenges, account-scoped tags with full management/import/export, pagination, collection, whole-sample summary/Akari Score and per-champion aggregate/position analysis | Equivalent with host layout; real friend-spectate acceptance pending |
 | Match-history overview | current-account history and player-center detailed cards | configurable load count, post-game refresh, collapsed result/performance row, ten-player roster, replay action and expandable tabs | Equivalent foundation |
 | Match summary | `双方总览` | both teams, clickable players, K/D/A, KP, damage share, CS/gold and loadouts | Equivalent foundation |
 | Raw match details | `详细属性` | searchable horizontal ten-player scalar-stat matrix with sticky headers, game/source/version/map metadata, common Chinese labels, click-open ten-player comparison charts, upstream-compatible grouped taxonomy and internal-field hiding | Equivalent with host layout |
@@ -104,11 +106,19 @@ This table is stricter than the shard matrix below: a backend capability is not 
 | Builds | `出装过程` | per-player navigator, numbered skill/evolution order, timestamped purchase/sell/undo operations, 30-second purchase-stage spacers and anvil counts | Equivalent with host layout |
 | Timeline | `时间线` | team-gold lines, economic-difference line, selectable per-player gold/level/XP/CS/damage series, native hover values, frame slider, map position and SGP champion-stat panel | Equivalent with host layout |
 | Encountered games | integrated encounter history | account-isolated shared games, pagination and local single-row removal | Equivalent with host layout |
-| Ongoing game | main and independent ongoing views | ten-player cards, configurable recent-match depth/concurrency, champion usage, configurable premade threshold, local tags, streak/performance labels, team recent win-rate and jungle-analysis visibility, configurable jungle sample depth, plus optional automatic routing at game start | Equivalent foundation; visual parity still needs real-window review |
+| Ongoing game | main and independent ongoing views | Lobby/ChampSelect/InProgress rosters, queue filter, six sort modes, separate detail-sample cap, recent/mastery/hidden champion usage, configurable premade threshold, match borders, local tags, streak/performance labels, team recent win-rate and configurable all-player jungle analysis, plus optional automatic routing at game start | Equivalent foundation; live Tencent Lobby/ChampSelect window acceptance still pending |
 | Automation | League automation sections | gameflow, selection/ban, champion config and miscellaneous behavior | Equivalent; real Tencent state-machine acceptance pending |
 | Toolkit | League toolkit sections | lobby/client/profile/rewards/friends/in-game-send and preview actions | Equivalent except deliberately excluded unfinished loot crafting |
 | Mini and auxiliary windows | Mini, ongoing, OP.GG and cooldown windows | phase lifecycle, pinning, close suppression, ARAM actions, opacity/skin visibility settings, native position reset and auxiliary tools | Equivalent; real-window lifecycle acceptance pending |
 | Settings and shell | integrated settings plus Tauri shell | theme/privacy/capture/shortcuts/tray/updater, persisted League settings and safe JSON export/import | Host equivalent |
+
+### Explicit remaining gaps
+
+- Real Tencent/WeGame acceptance is still required for ReadyCheck, ChampSelect, EndOfGame, Lobby roster analysis, friend spectating and every auxiliary-window lifecycle. Mocked LCU tests are not counted as that acceptance.
+- League Mini does not yet expose LeagueAkari's full ARAM activity/event log; it currently covers bench state, rerolls, swaps, skin selection and phase timers.
+- Ongoing player cards still use a consolidated recent-form label set rather than every granular LeagueAkari tag and tooltip variant.
+- Friend and recent-visit quick actions are functionally present, but their compact auxiliary-window presentation and window-size/position persistence still need real-window review.
+- Loot crafting/redeeming remains deliberately excluded because the reviewed upstream handler is incomplete.
 
 ## Shard-to-host traceability matrix
 
