@@ -258,6 +258,13 @@ class LeagueClientLaunch(BaseModel):
     kind: Literal["tcls", "wegame-lol", "wegame", "riot"]
 
 
+class LeagueReplayPrepare(BaseModel):
+    game_version: str = Field(default="", max_length=80)
+    game_type: str = Field(default="", max_length=80)
+    queue_id: int = Field(default=0, ge=0, le=100000)
+    game_end: int = Field(default=0, ge=0)
+
+
 class MissionRewardClaim(BaseModel):
     mission_id: str = Field(min_length=1, max_length=160)
     reward_group_ids: list[str] = Field(min_length=1, max_length=20)
@@ -2176,6 +2183,7 @@ def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "")
                 "duration_seconds": game.get("gameDuration"),
                 "game_mode": game.get("gameMode"),
                 "game_type": game.get("gameType"),
+                "game_version": game.get("gameVersion"),
                 "queue_id": game.get("queueId"),
                 "participant_puuid": (identity.get("player") or {}).get("puuid") if identity else None,
                 "team_id": participant.get("teamId"),
@@ -2247,6 +2255,7 @@ def _normalize_sgp_match_rows(payload: dict, names: dict[int, str], puuid: str) 
                 "duration_seconds": game.get("gameDuration"),
                 "game_mode": game.get("gameMode"),
                 "game_type": game.get("gameType"),
+                "game_version": game.get("gameVersion"),
                 "queue_id": game.get("queueId"),
                 "participant_puuid": participant.get("puuid"),
                 "team_id": participant.get("teamId"),
@@ -2856,6 +2865,80 @@ async def league_match_history(limit: int = 20):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     normalized = _normalize_match_rows(payload, names)
     return {"matches": normalized, "count": len(normalized)}
+
+
+@router.get("/replays/{game_id}")
+async def league_replay_metadata(game_id: int):
+    if game_id <= 0:
+        raise HTTPException(status_code=422, detail="无效的游戏 ID")
+    try:
+        configuration = await league_lab_service.request("GET", "/lol-replays/v1/configuration")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    enabled = bool((configuration or {}).get("isReplaysEnabled")) if isinstance(configuration, dict) else False
+    metadata = None
+    if enabled:
+        try:
+            metadata = await league_lab_service.request("GET", f"/lol-replays/v1/metadata/{game_id}")
+        except RuntimeError:
+            metadata = None
+    return {
+        "enabled": enabled,
+        "metadata": metadata if isinstance(metadata, dict) else {"gameId": game_id, "state": "download", "downloadProgress": 0},
+        "configuration": {
+            "game_version": (configuration or {}).get("gameVersion") if isinstance(configuration, dict) else "",
+            "is_playing_game": bool((configuration or {}).get("isPlayingGame")) if isinstance(configuration, dict) else False,
+            "is_playing_replay": bool((configuration or {}).get("isPlayingReplay")) if isinstance(configuration, dict) else False,
+        },
+    }
+
+
+async def _prepare_league_replay(game_id: int, body: LeagueReplayPrepare) -> None:
+    configuration = await league_lab_service.request("GET", "/lol-replays/v1/configuration")
+    if not isinstance(configuration, dict) or not configuration.get("isReplaysEnabled"):
+        raise RuntimeError("当前 League 客户端未启用比赛回放")
+    game_version = body.game_version or str(configuration.get("gameVersion") or "")
+    await league_lab_service.request(
+        "POST",
+        f"/lol-replays/v2/metadata/{game_id}/create",
+        json_body={
+            "gameVersion": game_version,
+            "gameType": body.game_type,
+            "queueId": body.queue_id,
+            "gameEnd": body.game_end,
+        },
+    )
+
+
+@router.post("/replays/{game_id}/download")
+async def download_league_replay(game_id: int, body: LeagueReplayPrepare):
+    if game_id <= 0:
+        raise HTTPException(status_code=422, detail="无效的游戏 ID")
+    try:
+        await _prepare_league_replay(game_id, body)
+        await league_lab_service.request(
+            "POST",
+            f"/lol-replays/v1/rofls/{game_id}/download",
+            json_body={"componentType": "replay-button_match-history"},
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"game_id": game_id, "state": "downloading"}
+
+
+@router.post("/replays/{game_id}/watch")
+async def watch_league_replay(game_id: int):
+    if game_id <= 0:
+        raise HTTPException(status_code=422, detail="无效的游戏 ID")
+    try:
+        await league_lab_service.request(
+            "POST",
+            f"/lol-replays/v1/rofls/{game_id}/watch",
+            json_body={"componentType": "replay-button_match-history"},
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"game_id": game_id, "state": "watching"}
 
 
 @router.get("/players/current")

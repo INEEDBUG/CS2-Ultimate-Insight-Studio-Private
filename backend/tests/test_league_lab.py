@@ -219,6 +219,53 @@ def test_detected_client_launcher_uses_argument_array_without_shell(tmp_path, mo
     assert "shell" not in captured["kwargs"]
 
 
+def test_replay_download_prepares_metadata_then_starts_rofl_download(monkeypatch):
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, json_body))
+        if path == "/lol-replays/v1/configuration":
+            return {"isReplaysEnabled": True, "gameVersion": "15.16.1"}
+        return None
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    result = asyncio.run(league_lab.download_league_replay(
+        123456,
+        league_lab.LeagueReplayPrepare(game_type="MATCHED_GAME", queue_id=420, game_end=999999),
+    ))
+
+    assert result == {"game_id": 123456, "state": "downloading"}
+    assert calls == [
+        ("GET", "/lol-replays/v1/configuration", None),
+        (
+            "POST",
+            "/lol-replays/v2/metadata/123456/create",
+            {"gameVersion": "15.16.1", "gameType": "MATCHED_GAME", "queueId": 420, "gameEnd": 999999},
+        ),
+        (
+            "POST",
+            "/lol-replays/v1/rofls/123456/download",
+            {"componentType": "replay-button_match-history"},
+        ),
+    ]
+
+
+def test_replay_watch_is_manual_and_uses_league_replay_endpoint(monkeypatch):
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, json_body))
+        return None
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    result = asyncio.run(league_lab.watch_league_replay(123456))
+
+    assert result == {"game_id": 123456, "state": "watching"}
+    assert calls == [
+        ("POST", "/lol-replays/v1/rofls/123456/watch", {"componentType": "replay-button_match-history"}),
+    ]
+
+
 def test_settings_are_persisted_without_lcu_credentials(tmp_path, monkeypatch):
     monkeypatch.setattr(LeagueLabService, "_settings_path", staticmethod(lambda: tmp_path / "league-lab.json"))
     service = LeagueLabService()

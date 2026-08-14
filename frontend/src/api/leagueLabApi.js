@@ -40,6 +40,32 @@ export async function fetchLeagueMatches(limit = 20) {
   return data;
 }
 
+export async function fetchLeagueReplay(gameId) {
+  const { data } = await API.get(`/league-lab/replays/${encodeURIComponent(gameId)}`);
+  return data;
+}
+
+export async function downloadLeagueReplay(gameId, match) {
+  const playedAtValue = match?.played_at;
+  const numericPlayedAt = Number(playedAtValue || 0);
+  const playedAt = Number.isFinite(numericPlayedAt) && numericPlayedAt > 0
+    ? numericPlayedAt
+    : (Date.parse(String(playedAtValue || "")) || 0);
+  const durationMs = Number(match?.duration_seconds || 0) * 1000;
+  const { data } = await API.post(`/league-lab/replays/${encodeURIComponent(gameId)}/download`, {
+    game_version: match?.game_version || "",
+    game_type: match?.game_type || "",
+    queue_id: Number(match?.queue_id || 0),
+    game_end: playedAt > 0 ? playedAt + durationMs : 0,
+  });
+  return data;
+}
+
+export async function watchLeagueReplay(gameId) {
+  const { data } = await API.post(`/league-lab/replays/${encodeURIComponent(gameId)}/watch`);
+  return data;
+}
+
 export async function fetchLeagueChampions() {
   const { data } = await API.get("/league-lab/champions");
   return data;
