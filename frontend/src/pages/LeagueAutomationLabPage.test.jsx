@@ -59,4 +59,14 @@ describe("LeagueAutomationLabPage", () => {
     expect(await screen.findByRole("button", { name: "展开战绩详情" })).toBeTruthy();
     expect(screen.getByRole("switch", { name: "结算后自动刷新战绩" })).toBeTruthy();
   });
+
+  it("exposes configurable ongoing-game analysis controls", async () => {
+    render(<LeagueAutomationLabPage />);
+    await screen.findByText("已连接：Tester");
+    fireEvent.click(screen.getByRole("button", { name: "实时对局" }));
+    expect(screen.getByRole("switch", { name: "显示当前英雄近期表现" })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "显示打野路线画像" })).toBeTruthy();
+    expect(screen.getByLabelText("实时对局战绩读取数").value).toBe("20");
+    expect(screen.getByLabelText("打野画像分析场数").value).toBe("4");
+  });
 });

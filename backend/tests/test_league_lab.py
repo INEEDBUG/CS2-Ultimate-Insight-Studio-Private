@@ -1772,6 +1772,12 @@ def test_match_history_and_ongoing_navigation_defaults_are_safe():
     assert settings.match_history_refresh_after_game is True
     assert settings.match_history_load_count == 20
     assert settings.ongoing_auto_route_when_game_starts is False
+    assert settings.ongoing_match_history_load_count == 20
+    assert settings.ongoing_jungle_analysis_count == 4
+    assert settings.ongoing_show_champion_usage is True
+    assert settings.ongoing_show_jungle_pathing is True
+    assert settings.ongoing_show_premade_tag is True
+    assert settings.ongoing_show_local_tag is True
 
 
 def test_opgg_proxy_uses_fixed_origin_and_cache(monkeypatch):

@@ -139,6 +139,12 @@ class LeagueLabSettings(BaseModel):
     match_history_refresh_after_game: bool = True
     match_history_load_count: int = Field(default=20, ge=1, le=100)
     ongoing_auto_route_when_game_starts: bool = False
+    ongoing_match_history_load_count: int = Field(default=20, ge=1, le=100)
+    ongoing_jungle_analysis_count: int = Field(default=4, ge=1, le=20)
+    ongoing_show_champion_usage: bool = True
+    ongoing_show_jungle_pathing: bool = True
+    ongoing_show_premade_tag: bool = True
+    ongoing_show_local_tag: bool = True
     respawn_timer_enabled: bool = False
     cooldown_timer_enabled: bool = False
     cooldown_timer_type: Literal["countdown", "countup"] = "countdown"
@@ -3458,6 +3464,7 @@ _ongoing_cache: dict = {"key": "", "expires_at": 0.0, "payload": None}
 
 @router.get("/ongoing-game")
 async def league_ongoing_game():
+    settings = league_lab_service.settings
     try:
         gameflow = await league_lab_service.request("GET", "/lol-gameflow/v1/session")
         names = await _champion_names()
@@ -3488,6 +3495,14 @@ async def league_ongoing_game():
         [
             game_data.get("gameId"),
             [
+                settings.ongoing_match_history_load_count,
+                settings.ongoing_jungle_analysis_count,
+                settings.ongoing_show_champion_usage,
+                settings.ongoing_show_jungle_pathing,
+                settings.ongoing_show_premade_tag,
+                settings.ongoing_show_local_tag,
+            ],
+            [
                 [row.get("puuid") or row.get("playerPuuid"), row.get("championId"), row.get("team") or row.get("teamId"), row.get("selectedPosition")]
                 for row in selections if isinstance(row, dict)
             ],
@@ -3508,18 +3523,18 @@ async def league_ongoing_game():
                     league_lab_service.request("GET", f"/lol-ranked/v1/ranked-stats/{puuid}"),
                     league_lab_service.request(
                         "GET", f"/lol-match-history/v1/products/lol/{puuid}/matches",
-                        params={"begIndex": 0, "endIndex": 19},
+                        params={"begIndex": 0, "endIndex": settings.ongoing_match_history_load_count - 1},
                     ),
                 )
             except RuntimeError:
                 pass
         champion_id = int(row.get("championId") or 0)
         matches = _normalize_match_rows(history or {}, names, puuid)
-        champion_matches = [match for match in matches if match.get("champion_id") == champion_id]
+        champion_matches = [match for match in matches if match.get("champion_id") == champion_id] if settings.ongoing_show_champion_usage else []
         selected_position = str(row.get("selectedPosition") or row.get("assignedPosition") or "").upper()
         jungle_analysis = None
-        if selected_position == "JUNGLE" and isinstance(history, dict):
-            jungle_analysis = await _load_jungle_analysis(puuid, history, limit=4)
+        if settings.ongoing_show_jungle_pathing and selected_position == "JUNGLE" and isinstance(history, dict):
+            jungle_analysis = await _load_jungle_analysis(puuid, history, limit=settings.ongoing_jungle_analysis_count)
         return ({
             "puuid": puuid,
             "team": row.get("team") or row.get("teamId"),
@@ -3528,7 +3543,7 @@ async def league_ongoing_game():
             "position": selected_position,
             "summoner": summoner or {},
             "ranked": ranked or {},
-            "tag": _read_player_tags().get(puuid) or {},
+            "tag": (_read_player_tags().get(puuid) or {}) if settings.ongoing_show_local_tag else {},
             "recent": {
                 "matches": len(matches),
                 "wins": sum(1 for match in matches if match.get("win")),
@@ -3543,7 +3558,7 @@ async def league_ongoing_game():
     enriched = await asyncio.gather(*(enrich(row) for row in selections))
     players = [result[0] for result in enriched if result[0]]
     histories = {result[0]["puuid"]: result[1] for result in enriched if result[0] and result[0].get("puuid")}
-    premade_groups = _infer_premade_groups(histories, set(histories))
+    premade_groups = _infer_premade_groups(histories, set(histories)) if settings.ongoing_show_premade_tag else {}
     for player in players:
         player["premade_group"] = premade_groups.get(player.get("puuid"))
     result = {

@@ -98,7 +98,7 @@ This table is stricter than the shard matrix below: a backend capability is not 
 | Builds | `出装过程` | per-player navigator, skill/evolution order and timestamped purchase/sell/undo operations | Equivalent foundation; richer SGP spacer/anvil grouping remains |
 | Timeline | `时间线` | team-gold lines, economic-difference line and selectable per-player gold/level/XP/CS/damage series | Equivalent foundation; upstream hover labels and richer SGP stat groups remain |
 | Encountered games | integrated encounter history | account-isolated shared games, pagination and local single-row removal | Equivalent with host layout |
-| Ongoing game | main and independent ongoing views | ten-player cards, recent form, premade and jungle analysis plus optional automatic routing at game start | Equivalent foundation; visual parity still needs real-window review |
+| Ongoing game | main and independent ongoing views | ten-player cards, configurable recent-match depth, champion usage, premade/local-tag and jungle-analysis visibility, configurable jungle sample depth, plus optional automatic routing at game start | Equivalent foundation; visual parity still needs real-window review |
 | Automation | League automation sections | gameflow, selection/ban, champion config and miscellaneous behavior | Equivalent; real Tencent state-machine acceptance pending |
 | Toolkit | League toolkit sections | lobby/client/profile/rewards/friends/in-game-send and preview actions | Equivalent except deliberately excluded unfinished loot crafting |
 | Mini and auxiliary windows | Mini, ongoing, OP.GG and cooldown windows | phase lifecycle, pinning, close suppression, ARAM actions and auxiliary tools | Equivalent; real-window lifecycle acceptance pending |
