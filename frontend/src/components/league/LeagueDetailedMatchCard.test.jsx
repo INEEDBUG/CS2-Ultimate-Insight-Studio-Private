@@ -43,13 +43,18 @@ describe("LeagueDetailedMatchCard", () => {
     vi.clearAllMocks();
     fetchLeagueReplay.mockResolvedValue({ enabled: false });
     fetchLeagueMatchDetails.mockResolvedValue({
-      source: "lcu", frame_count: 2, event_count: 1,
+      source: "lcu", frame_count: 2, event_count: 4,
       participants: [{ participant_id: 1, team_id: 100, game_name: "自己" }, { participant_id: 6, team_id: 200, game_name: "对手" }],
       frames: [
         { timestamp: 0, participant_frames: { "1": { totalGold: 500 }, "6": { totalGold: 500 } }, events: [] },
         { timestamp: 60000, participant_frames: { "1": { totalGold: 1200 }, "6": { totalGold: 900 } }, events: [] },
       ],
-      events: [{ type: "CHAMPION_KILL", timestamp: 45000, killerId: 1, victimId: 6, position: { x: 7000, y: 7000 } }],
+      events: [
+        { type: "CHAMPION_KILL", timestamp: 45000, killerId: 1, victimId: 6, position: { x: 7000, y: 7000 } },
+        { type: "ITEM_PURCHASED", timestamp: 30000, participantId: 1, itemId: 1001 },
+        { type: "ITEM_SOLD", timestamp: 90000, participantId: 1, itemId: 1001 },
+        { type: "SKILL_LEVEL_UP", timestamp: 60000, participantId: 1, skillSlot: 1, levelUpType: "EVOLVE" },
+      ],
     });
     fetchLeagueLoadoutCatalog.mockResolvedValue({ perks: [{ id: 8010, name: "征服者", long_description: "攻击英雄时提供适应之力。" }] });
   });
@@ -97,5 +102,15 @@ describe("LeagueDetailedMatchCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "时间线" }));
     fireEvent.click(await screen.findByRole("button", { name: "玩家属性" }));
     expect(screen.getByRole("img", { name: "玩家属性时间线" })).toBeTruthy();
+  });
+
+  it("shows purchase, sale and evolved-skill build events with a player navigator", async () => {
+    render(<LeagueDetailedMatchCard match={match} />);
+    fireEvent.click(screen.getByRole("button", { name: "展开战绩详情" }));
+    fireEvent.click(screen.getByRole("button", { name: "出装过程" }));
+    expect(await screen.findByText(/出售 1:30/)).toBeTruthy();
+    expect(screen.getByTitle("1:00 · EVOLVE")).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: /队友/ }).at(-1));
+    expect(screen.getAllByText("无数据")).toHaveLength(2);
   });
 });
