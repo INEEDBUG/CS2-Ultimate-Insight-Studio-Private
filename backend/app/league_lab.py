@@ -136,6 +136,8 @@ class LeagueLabSettings(BaseModel):
     streamer_mode_use_aliases: bool = False
     streamer_content_protection_enabled: bool = False
     toolkit_account_actions_enabled: bool = False
+    terminate_game_shortcut_enabled: bool = False
+    terminate_game_shortcut: str = Field(default="Ctrl+Alt+End", min_length=3, max_length=80)
 
 
 class ChampionLoadout(BaseModel):
@@ -231,6 +233,45 @@ class EventRewardClaim(BaseModel):
 class FriendDeleteRequest(BaseModel):
     friend_ids: list[str] = Field(min_length=1, max_length=50)
     confirmation: Literal["我确认删除"]
+
+
+class QueueLobbyCreate(BaseModel):
+    queue_id: int = Field(gt=0, le=100000)
+    confirmation: Literal["我确认创建"]
+
+
+class LeaveLobbyRequest(BaseModel):
+    confirmation: Literal["我确认离开"]
+
+
+class StrawberryPlayerUpdate(BaseModel):
+    champion_id: int = Field(gt=0)
+    map_item_id: int = Field(default=1, gt=0)
+    difficulty: int = Field(default=1, ge=1, le=3)
+    confirmation: Literal["我确认修改"]
+
+
+class StrawberryMapUpdate(BaseModel):
+    content_id: str = Field(min_length=1, max_length=200)
+    item_id: int = Field(gt=0)
+    confirmation: Literal["我确认修改"]
+
+
+class StrawberryDifficultyUpdate(BaseModel):
+    difficulty: int = Field(ge=1, le=3)
+    confirmation: Literal["我确认修改"]
+
+
+class ProfileBackgroundUpdate(BaseModel):
+    champion_id: int = Field(gt=0)
+    skin_id: int = Field(gt=0)
+    augment_id: str | None = Field(default=None, max_length=200)
+    confirmation: Literal["我确认修改"]
+
+
+class ProfileUtilityAction(BaseModel):
+    action: Literal["banner-accent", "remove-prestige-crest", "clear-challenge-tokens", "clear-emotes"]
+    confirmation: Literal["我确认修改"]
 
 
 LeagueLabSettings.model_rebuild()
@@ -1656,6 +1697,31 @@ async def _sgp_game_details(game_id: int, server_id: str | None = None) -> dict:
     return body
 
 
+async def _sgp_game_summary(game_id: int, server_id: str | None = None) -> dict:
+    credentials = league_lab_service.credentials
+    server_id = _normalize_sgp_server_id(server_id) if server_id else _sgp_server_id(credentials)
+    host = _SGP_MATCH_HISTORY_HOSTS.get(server_id)
+    if not host:
+        raise RuntimeError(f"当前区服不支持 SGP 对局源: {server_id or '未知区服'}")
+    token_payload = await league_lab_service.request("GET", "/entitlements/v1/token")
+    token = token_payload.get("accessToken") if isinstance(token_payload, dict) else None
+    if not token:
+        raise RuntimeError("LCU 未返回 SGP 授权令牌")
+    region_path = _sgp_region_path(credentials, server_id)
+    url = f"{host}/match-history-query/v1/products/lol/{region_path}_{int(game_id)}/SUMMARY"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise RuntimeError(f"SGP 对局请求失败: {type(exc).__name__}") from exc
+    body = payload.get("json") if isinstance(payload, dict) and isinstance(payload.get("json"), dict) else payload
+    if not isinstance(body, dict) or not isinstance(body.get("participants"), list):
+        raise RuntimeError("SGP 对局返回格式无效")
+    return body
+
+
 async def _sgp_common_request(method: str, path: str, *, json_body=None, server_id: str | None = None):
     """Call an SGP common service with an on-demand, memory-only League session token."""
     credentials = league_lab_service.credentials
@@ -1937,6 +2003,137 @@ def _normalize_sgp_match_rows(payload: dict, names: dict[int, str], puuid: str) 
             }
         )
     return normalized
+
+
+def _preview_win(value) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    normalized = str(value or "").strip().lower()
+    if normalized in {"win", "won", "true", "1"}:
+        return True
+    if normalized in {"fail", "failed", "loss", "lose", "lost", "false", "0"}:
+        return False
+    return None
+
+
+def _normalize_game_preview(game: dict, names: dict[int, str], source: str, timeline: dict | None = None) -> dict:
+    identities: dict[int, dict] = {}
+    for row in game.get("participantIdentities") or []:
+        if not isinstance(row, dict):
+            continue
+        participant_id = int(row.get("participantId") or 0)
+        if participant_id:
+            identities[participant_id] = row.get("player") if isinstance(row.get("player"), dict) else row
+    team_wins: dict[int, bool | None] = {}
+    for team in game.get("teams") or []:
+        if not isinstance(team, dict):
+            continue
+        team_id = int(team.get("teamId") or 0)
+        if team_id:
+            team_wins[team_id] = _preview_win(team.get("win"))
+    tags = _read_player_tags()
+    players = []
+    for index, participant in enumerate(game.get("participants") or []):
+        if not isinstance(participant, dict):
+            continue
+        participant_id = int(participant.get("participantId") or index + 1)
+        identity = identities.get(participant_id) or {}
+        stats = participant.get("stats") if isinstance(participant.get("stats"), dict) else participant
+        champion_id = int(participant.get("championId") or stats.get("championId") or 0)
+        team_id = int(participant.get("teamId") or stats.get("teamId") or 0)
+        puuid = str(
+            participant.get("puuid")
+            or identity.get("puuid")
+            or identity.get("playerPuuid")
+            or ""
+        )
+        game_name = str(
+            participant.get("riotIdGameName")
+            or participant.get("gameName")
+            or identity.get("gameName")
+            or identity.get("displayName")
+            or identity.get("summonerName")
+            or participant.get("summonerName")
+            or f"玩家 {participant_id}"
+        )
+        tag_line = str(participant.get("riotIdTagline") or participant.get("tagLine") or identity.get("tagLine") or "")
+        win = _preview_win(stats.get("win"))
+        if win is None:
+            win = team_wins.get(team_id)
+        kills = int(stats.get("kills") or 0)
+        deaths = int(stats.get("deaths") or 0)
+        assists = int(stats.get("assists") or 0)
+        cs = int(stats.get("totalMinionsKilled") or 0) + int(stats.get("neutralMinionsKilled") or 0)
+        players.append(
+            {
+                "participant_id": participant_id,
+                "puuid": puuid,
+                "team": team_id,
+                "champion_id": champion_id,
+                "champion_name": names.get(champion_id, participant.get("championName") or str(champion_id)),
+                "position": participant.get("teamPosition") or participant.get("individualPosition") or (participant.get("timeline") or {}).get("lane") or "",
+                "summoner": {
+                    "gameName": game_name,
+                    "tagLine": tag_line,
+                    "profileIconId": participant.get("profileIcon") or participant.get("profileIconId") or identity.get("profileIcon") or identity.get("profileIconId"),
+                },
+                "tag": tags.get(puuid) or {},
+                "premade_group": None,
+                "recent": {"matches": 0, "wins": 0},
+                "champion_usage": {"matches": 0, "wins": 0, "average_kda": 0},
+                "match_stats": {
+                    "kills": kills,
+                    "deaths": deaths,
+                    "assists": assists,
+                    "kda": round((kills + assists) / max(1, deaths), 2),
+                    "damage": int(stats.get("totalDamageDealtToChampions") or 0),
+                    "gold": int(stats.get("goldEarned") or 0),
+                    "cs": cs,
+                    "items": [int(stats.get(f"item{i}")) for i in range(7) if stats.get(f"item{i}")],
+                    "win": win,
+                },
+            }
+        )
+    frames = timeline.get("frames") if isinstance(timeline, dict) else []
+    frames = frames if isinstance(frames, list) else []
+    timeline_summary = {
+        "loaded": isinstance(timeline, dict),
+        "frame_count": len(frames),
+        "event_count": sum(len(frame.get("events") or []) for frame in frames if isinstance(frame, dict)),
+    }
+    teams = []
+    for team_id in sorted({int(player.get("team") or 0) for player in players}):
+        if not team_id:
+            continue
+        team_players = [player for player in players if int(player.get("team") or 0) == team_id]
+        team_win = next((player["match_stats"]["win"] for player in team_players if player["match_stats"]["win"] is not None), team_wins.get(team_id))
+        teams.append({"team_id": team_id, "win": team_win, "players": team_players})
+    metadata = {
+        "game_id": game.get("gameId"),
+        "played_at": game.get("gameCreationDate") or game.get("gameCreation") or game.get("gameStartTimestamp"),
+        "duration_seconds": game.get("gameDuration"),
+        "game_mode": game.get("gameMode"),
+        "game_type": game.get("gameType"),
+        "queue_id": game.get("queueId"),
+        "platform_id": game.get("platformId") or game.get("platformID"),
+    }
+    ongoing_preview = {
+        "phase": "HistoricalPreview",
+        "queue": {"id": metadata["queue_id"], "gameMode": metadata["game_mode"]},
+        "game_id": metadata["game_id"],
+        "players": players,
+        "available": bool(players),
+        "historical_preview": True,
+        "source": source,
+        "metadata": metadata,
+    }
+    return {
+        "source": source,
+        "metadata": metadata,
+        "teams": teams,
+        "timeline": timeline_summary,
+        "ongoing_preview": ongoing_preview,
+    }
 
 
 def _infer_premade_groups(histories: dict[str, dict], active_puuids: set[str], threshold: int = 3) -> dict[str, int]:
@@ -3289,6 +3486,332 @@ async def league_delete_friends(body: FriendDeleteRequest):
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"deleted": deleted, "count": len(deleted)}
+
+
+@router.get("/toolkit/lobby-options")
+async def league_lobby_options():
+    async def optional(method: str, path: str):
+        try:
+            return await league_lab_service.request(method, path)
+        except RuntimeError:
+            return None
+
+    queues, party, self_eligibility, lobby, strawberry, loadouts = await asyncio.gather(
+        optional("GET", "/lol-game-data/assets/v1/queues.json"),
+        optional("POST", "/lol-lobby/v2/eligibility/party"),
+        optional("POST", "/lol-lobby/v2/eligibility/self"),
+        optional("GET", "/lol-lobby/v2/lobby"),
+        optional("GET", "/lol-game-data/assets/v1/strawberry-hub.json"),
+        optional("GET", "/lol-loadouts/v4/loadouts/scope/account"),
+    )
+    if not isinstance(queues, (list, dict)):
+        raise HTTPException(status_code=409, detail="客户端没有返回可用队列目录")
+    queue_rows = queues if isinstance(queues, list) else list(queues.values()) if isinstance(queues, dict) else []
+    party_ids = {int(row.get("queueId")) for row in (party or []) if isinstance(row, dict) and row.get("queueId")}
+    self_ids = {
+        int(row.get("queueId")) for row in (self_eligibility or []) if isinstance(row, dict) and row.get("queueId")
+    }
+    normalized_queues = [
+        {
+            "id": int(row["id"]),
+            "name": str(row.get("name") or row["id"]),
+            "description": str(row.get("description") or ""),
+            "eligible": int(row["id"]) in party_ids and int(row["id"]) in self_ids,
+        }
+        for row in queue_rows
+        if isinstance(row, dict) and row.get("id")
+    ]
+    maps = []
+    if isinstance(strawberry, list) and strawberry:
+        for row in strawberry[0].get("MapDisplayInfoList") or []:
+            value = row.get("value") or {}
+            map_value = value.get("Map") or {}
+            if map_value.get("ContentId") and map_value.get("ItemId"):
+                maps.append(
+                    {
+                        "name": str(value.get("Name") or map_value["ItemId"]),
+                        "content_id": str(map_value["ContentId"]),
+                        "item_id": int(map_value["ItemId"]),
+                    }
+                )
+    return {
+        "queues": sorted(normalized_queues, key=lambda row: (not row["eligible"], row["name"])),
+        "lobby": lobby if isinstance(lobby, dict) else None,
+        "strawberry": {
+            "active": str((((lobby or {}).get("gameConfig") or {}).get("gameMode") or "")).upper() == "STRAWBERRY",
+            "maps": maps,
+            "difficulties": [1, 2, 3],
+            "loadout_available": bool(loadouts),
+        },
+    }
+
+
+@router.post("/toolkit/lobby/create")
+async def league_create_queue_lobby(body: QueueLobbyCreate):
+    _require_toolkit_account_actions()
+    try:
+        party, self_eligibility = await asyncio.gather(
+            league_lab_service.request("POST", "/lol-lobby/v2/eligibility/party"),
+            league_lab_service.request("POST", "/lol-lobby/v2/eligibility/self"),
+        )
+        party_ids = {int(row.get("queueId")) for row in (party or []) if isinstance(row, dict) and row.get("queueId")}
+        self_ids = {
+            int(row.get("queueId"))
+            for row in (self_eligibility or [])
+            if isinstance(row, dict) and row.get("queueId")
+        }
+        if body.queue_id not in party_ids or body.queue_id not in self_ids:
+            raise HTTPException(status_code=409, detail="当前账号或队伍不满足该队列的创建条件")
+        await league_lab_service.request("POST", "/lol-lobby/v2/lobby", json_body={"queueId": body.queue_id})
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"created": True, "queue_id": body.queue_id}
+
+
+@router.post("/toolkit/lobby/leave")
+async def league_leave_lobby(body: LeaveLobbyRequest):
+    _require_toolkit_account_actions()
+    try:
+        lobby = await league_lab_service.request("GET", "/lol-lobby/v2/lobby")
+        if not isinstance(lobby, dict) or not lobby:
+            raise HTTPException(status_code=409, detail="当前不在房间中")
+        await league_lab_service.request("DELETE", "/lol-lobby/v2/lobby")
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"left": True}
+
+
+async def _require_strawberry_lobby() -> dict:
+    lobby = await league_lab_service.request("GET", "/lol-lobby/v2/lobby")
+    mode = str((((lobby or {}).get("gameConfig") or {}).get("gameMode") or "")).upper()
+    if mode != "STRAWBERRY":
+        raise HTTPException(status_code=409, detail="当前房间不是无尽狂潮模式")
+    return lobby
+
+
+@router.put("/toolkit/strawberry/player")
+async def league_update_strawberry_player(body: StrawberryPlayerUpdate):
+    _require_toolkit_account_actions()
+    try:
+        await _require_strawberry_lobby()
+        champions = await league_lab_service.request("GET", "/lol-game-data/assets/v1/champion-summary.json")
+        available = {int(row.get("id")) for row in (champions or []) if isinstance(row, dict) and row.get("id")}
+        if body.champion_id not in available:
+            raise HTTPException(status_code=422, detail="英雄 ID 不在当前客户端目录中")
+        payload = [{
+            "championId": body.champion_id,
+            "positionPreference": "UNSELECTED",
+            "spell1": body.map_item_id,
+            "spell2": body.difficulty,
+        }]
+        await league_lab_service.request(
+            "PUT", "/lol-lobby/v1/lobby/members/localMember/player-slots", json_body=payload
+        )
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"applied": True, "champion_id": body.champion_id, "map_item_id": body.map_item_id, "difficulty": body.difficulty}
+
+
+@router.put("/toolkit/strawberry/map")
+async def league_update_strawberry_map(body: StrawberryMapUpdate):
+    _require_toolkit_account_actions()
+    try:
+        await _require_strawberry_lobby()
+        strawberry = await league_lab_service.request("GET", "/lol-game-data/assets/v1/strawberry-hub.json")
+        available = set()
+        if isinstance(strawberry, list) and strawberry:
+            for row in strawberry[0].get("MapDisplayInfoList") or []:
+                map_value = ((row.get("value") or {}).get("Map") or {})
+                if map_value.get("ContentId") and map_value.get("ItemId"):
+                    available.add((str(map_value["ContentId"]), int(map_value["ItemId"])))
+        if (body.content_id, body.item_id) not in available:
+            raise HTTPException(status_code=422, detail="所选地图不在当前客户端无尽狂潮目录中")
+        await league_lab_service.request(
+            "PUT", "/lol-lobby/v2/lobby/strawberryMapId",
+            json_body={"contentId": body.content_id, "itemId": body.item_id},
+        )
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"applied": True, "content_id": body.content_id, "item_id": body.item_id}
+
+
+@router.put("/toolkit/strawberry/difficulty")
+async def league_update_strawberry_difficulty(body: StrawberryDifficultyUpdate):
+    _require_toolkit_account_actions()
+    try:
+        await _require_strawberry_lobby()
+        loadouts = await league_lab_service.request("GET", "/lol-loadouts/v4/loadouts/scope/account")
+        content_id = str((loadouts or [{}])[0].get("id") or "")
+        if not content_id:
+            raise HTTPException(status_code=409, detail="客户端没有返回账号级配装")
+        await league_lab_service.request(
+            "PATCH",
+            f"/lol-loadouts/v4/loadouts/{quote(content_id, safe='')}",
+            json_body={"loadout": {"STRAWBERRY_DIFFICULTY": {
+                "inventoryType": "STRAWBERRY_LOADOUT_ITEM", "itemId": body.difficulty
+            }}},
+        )
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"applied": True, "difficulty": body.difficulty}
+
+
+@router.get("/toolkit/profile/skins/{champion_id}")
+async def league_profile_skin_catalog(champion_id: int):
+    if champion_id <= 0:
+        raise HTTPException(status_code=422, detail="英雄 ID 无效")
+    try:
+        details = await league_lab_service.request(
+            "GET", f"/lol-game-data/assets/v1/champions/{champion_id}.json"
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    skins = []
+    seen = set()
+    for skin in (details or {}).get("skins") or []:
+        candidates = [skin, *((skin.get("questSkinInfo") or {}).get("tiers") or [])]
+        for candidate in candidates:
+            skin_id = int(candidate.get("id") or 0)
+            if not skin_id or skin_id in seen:
+                continue
+            seen.add(skin_id)
+            augments = []
+            for augment in ((candidate.get("skinAugments") or {}).get("augments") or []):
+                if augment.get("contentId") is not None and augment.get("overlays"):
+                    augments.append({"content_id": str(augment["contentId"]), "overlays": augment.get("overlays") or []})
+            skins.append({
+                "id": skin_id,
+                "name": str(candidate.get("name") or skin_id),
+                "splash_path": candidate.get("uncenteredSplashPath") or "",
+                "augments": augments,
+            })
+    return {"champion_id": champion_id, "skins": skins}
+
+
+@router.post("/toolkit/profile/background")
+async def league_update_profile_background(body: ProfileBackgroundUpdate):
+    _require_toolkit_account_actions()
+    catalog = await league_profile_skin_catalog(body.champion_id)
+    skin = next((row for row in catalog["skins"] if row["id"] == body.skin_id), None)
+    if not skin:
+        raise HTTPException(status_code=422, detail="所选皮肤不属于该英雄的当前客户端目录")
+    available_augments = {row["content_id"] for row in skin["augments"]}
+    if body.augment_id is not None and body.augment_id not in available_augments:
+        raise HTTPException(status_code=422, detail="所选皮肤挂件不属于该皮肤")
+    try:
+        await league_lab_service.request(
+            "POST", "/lol-summoner/v1/current-summoner/summoner-profile",
+            json_body={"key": "backgroundSkinId", "value": body.skin_id},
+        )
+        if body.augment_id is not None:
+            await league_lab_service.request(
+                "POST", "/lol-summoner/v1/current-summoner/summoner-profile",
+                json_body={"key": "backgroundSkinAugments", "value": body.augment_id},
+            )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"applied": True, "skin_id": body.skin_id, "augment_id": body.augment_id}
+
+
+@router.post("/toolkit/profile/action")
+async def league_profile_utility_action(body: ProfileUtilityAction):
+    _require_toolkit_account_actions()
+    try:
+        if body.action == "banner-accent":
+            await league_lab_service.request(
+                "POST", "/lol-challenges/v1/update-player-preferences/", json_body={"bannerAccent": "2"}
+            )
+        elif body.action == "remove-prestige-crest":
+            current = await league_lab_service.request("GET", "/lol-regalia/v2/current-summoner/regalia")
+            await league_lab_service.request(
+                "PUT", "/lol-regalia/v2/current-summoner/regalia",
+                json_body={
+                    "preferredCrestType": "prestige",
+                    "preferredBannerType": (current or {}).get("bannerType"),
+                    "selectedPrestigeCrest": 22,
+                },
+            )
+        elif body.action == "clear-challenge-tokens":
+            chat_me = await league_lab_service.request("GET", "/lol-chat/v1/me")
+            await league_lab_service.request(
+                "POST", "/lol-challenges/v1/update-player-preferences/",
+                json_body={"challengeIds": [], "bannerAccent": ((chat_me or {}).get("lol") or {}).get("bannerIdSelected")},
+            )
+        else:
+            loadouts = await league_lab_service.request("GET", "/lol-loadouts/v4/loadouts/scope/account")
+            content_id = str((loadouts or [{}])[0].get("id") or "")
+            if not content_id:
+                raise HTTPException(status_code=409, detail="客户端没有返回账号级配装")
+            emote_keys = (
+                "EMOTES_ACE", "EMOTES_FIRST_BLOOD", "EMOTES_VICTORY", "EMOTES_WHEEL_CENTER",
+                "EMOTES_WHEEL_UPPER", "EMOTES_WHEEL_RIGHT", "EMOTES_WHEEL_UPPER_RIGHT",
+                "EMOTES_WHEEL_UPPER_LEFT", "EMOTES_WHEEL_LOWER", "EMOTES_START", "EMOTES_WHEEL_LEFT",
+                "EMOTES_WHEEL_LOWER_RIGHT", "EMOTES_WHEEL_LOWER_LEFT",
+            )
+            await league_lab_service.request(
+                "PATCH", f"/lol-loadouts/v4/loadouts/{quote(content_id, safe='')}",
+                json_body={"loadout": {key: {"inventoryType": "EMOTE", "itemId": -1} for key in emote_keys}},
+            )
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"applied": True, "action": body.action}
+
+
+@router.get("/toolkit/game-preview/{game_id}")
+async def league_game_preview(
+    game_id: int,
+    source: Literal["auto", "lcu", "sgp"] = "auto",
+    include_timeline: bool = True,
+):
+    if game_id <= 0:
+        raise HTTPException(status_code=422, detail="Game ID 必须是正整数")
+    errors: list[str] = []
+    game = None
+    active_source = ""
+    if source in {"auto", "lcu"}:
+        try:
+            candidate = await league_lab_service.request("GET", f"/lol-match-history/v1/games/{game_id}")
+            candidate = candidate.get("json") if isinstance(candidate, dict) and isinstance(candidate.get("json"), dict) else candidate
+            if not isinstance(candidate, dict) or not isinstance(candidate.get("participants"), list):
+                raise RuntimeError("LCU 对局返回格式无效")
+            game, active_source = candidate, "lcu"
+        except RuntimeError as exc:
+            errors.append(str(exc))
+    if game is None and source in {"auto", "sgp"}:
+        try:
+            game, active_source = await _sgp_game_summary(game_id), "sgp"
+        except RuntimeError as exc:
+            errors.append(str(exc))
+    if game is None:
+        raise HTTPException(status_code=404, detail="；".join(errors) or "未找到该 Game ID")
+    timeline = None
+    if include_timeline:
+        try:
+            timeline = (
+                await league_lab_service.request("GET", f"/lol-match-history/v1/game-timelines/{game_id}")
+                if active_source == "lcu"
+                else await _sgp_game_details(game_id)
+            )
+            if isinstance(timeline, dict) and isinstance(timeline.get("json"), dict):
+                timeline = timeline["json"]
+        except RuntimeError as exc:
+            errors.append(str(exc))
+    names = await _champion_names()
+    result = _normalize_game_preview(game, names, active_source, timeline)
+    result["warnings"] = errors
+    return result
 
 
 async def _league_game_settings_path() -> Path:

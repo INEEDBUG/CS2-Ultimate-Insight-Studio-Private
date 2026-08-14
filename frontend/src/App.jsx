@@ -60,6 +60,7 @@ import DesktopCloseDialog from "./components/DesktopCloseDialog";
 import FirstRunWelcome, { shouldShowFirstRunWelcome } from "./components/FirstRunWelcome";
 import DemoDownloadActivityCenter from "./components/DemoDownloadActivityCenter";
 import LeagueMiniAutoManager from "./components/LeagueMiniAutoManager";
+import LeagueGlobalShortcutManager from "./components/LeagueGlobalShortcutManager";
 
 const GuidePage = lazy(() => import("./pages/GuidePage"));
 const DemoLibraryPage = lazy(() => import("./pages/DemoLibraryPage"));
@@ -3309,6 +3310,7 @@ export default function App() {
     <AppShellProvider value={shell}>
       <div className="app-shell relative flex h-screen flex-col overflow-hidden bg-cs2-bg-page text-cs2-text-primary">
         <LeagueMiniAutoManager />
+        <LeagueGlobalShortcutManager />
         <CustomTitleBar />
         <DemoDownloadActivityCenter />
         <DesktopCloseDialog

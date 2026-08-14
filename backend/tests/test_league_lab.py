@@ -690,6 +690,8 @@ def test_toolkit_overview_is_read_only(monkeypatch):
 
 def test_toolkit_account_writes_are_disabled_by_default(monkeypatch):
     assert LeagueLabSettings().toolkit_account_actions_enabled is False
+    assert LeagueLabSettings().terminate_game_shortcut_enabled is False
+    assert LeagueLabSettings().terminate_game_shortcut == "Ctrl+Alt+End"
     monkeypatch.setattr(league_lab.league_lab_service, "settings", LeagueLabSettings())
     body = league_lab.EventRewardClaim(event_id="event-1", confirmation="我确认领取")
     with pytest.raises(league_lab.HTTPException) as caught:
@@ -781,6 +783,147 @@ def test_event_claim_and_friend_delete_revalidate_current_lcu_state(monkeypatch)
         ("DELETE", "/lol-chat/v1/friends/friend%2Fone", None, None),
         ("DELETE", "/lol-chat/v1/friends/friend-two", None, None),
     ]
+
+
+def test_lobby_options_preserve_upstream_eligibility_and_strawberry_catalog(monkeypatch):
+    async def request(method, path, *, json_body=None, params=None):
+        payloads = {
+            ("GET", "/lol-game-data/assets/v1/queues.json"): [
+                {"id": 420, "name": "单双排"}, {"id": 450, "name": "大乱斗"}
+            ],
+            ("POST", "/lol-lobby/v2/eligibility/party"): [{"queueId": 420}, {"queueId": 450}],
+            ("POST", "/lol-lobby/v2/eligibility/self"): [{"queueId": 420}],
+            ("GET", "/lol-lobby/v2/lobby"): {"gameConfig": {"gameMode": "STRAWBERRY"}},
+            ("GET", "/lol-game-data/assets/v1/strawberry-hub.json"): [{"MapDisplayInfoList": [{
+                "value": {"Name": "仓库区", "Map": {"ContentId": "map/content", "ItemId": 7}}
+            }]}],
+            ("GET", "/lol-loadouts/v4/loadouts/scope/account"): [{"id": "loadout-1"}],
+        }
+        return payloads[(method, path)]
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    result = asyncio.run(league_lab.league_lobby_options())
+
+    assert result["queues"][0] == {"id": 420, "name": "单双排", "description": "", "eligible": True}
+    assert result["queues"][1]["eligible"] is False
+    assert result["strawberry"] == {
+        "active": True,
+        "maps": [{"name": "仓库区", "content_id": "map/content", "item_id": 7}],
+        "difficulties": [1, 2, 3],
+        "loadout_available": True,
+    }
+
+
+def test_create_and_leave_lobby_revalidate_live_state(monkeypatch):
+    monkeypatch.setattr(
+        league_lab.league_lab_service, "settings", LeagueLabSettings(toolkit_account_actions_enabled=True)
+    )
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if path in {"/lol-lobby/v2/eligibility/party", "/lol-lobby/v2/eligibility/self"}:
+            return [{"queueId": 420}]
+        if (method, path) == ("GET", "/lol-lobby/v2/lobby"):
+            return {"gameConfig": {"queueId": 420}}
+        calls.append((method, path, json_body))
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    created = asyncio.run(league_lab.league_create_queue_lobby(
+        league_lab.QueueLobbyCreate(queue_id=420, confirmation="我确认创建")
+    ))
+    left = asyncio.run(league_lab.league_leave_lobby(
+        league_lab.LeaveLobbyRequest(confirmation="我确认离开")
+    ))
+
+    assert created == {"created": True, "queue_id": 420}
+    assert left == {"left": True}
+    assert calls == [
+        ("POST", "/lol-lobby/v2/lobby", {"queueId": 420}),
+        ("DELETE", "/lol-lobby/v2/lobby", None),
+    ]
+
+
+def test_strawberry_tools_validate_mode_catalog_and_write_exact_payloads(monkeypatch):
+    monkeypatch.setattr(
+        league_lab.league_lab_service, "settings", LeagueLabSettings(toolkit_account_actions_enabled=True)
+    )
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if (method, path) == ("GET", "/lol-lobby/v2/lobby"):
+            return {"gameConfig": {"gameMode": "STRAWBERRY"}}
+        if path.endswith("champion-summary.json"):
+            return [{"id": 22}, {"id": 55}]
+        if path.endswith("strawberry-hub.json"):
+            return [{"MapDisplayInfoList": [{"value": {
+                "Name": "仓库区", "Map": {"ContentId": "map/content", "ItemId": 7}
+            }}]}]
+        if path.endswith("scope/account"):
+            return [{"id": "account/loadout"}]
+        calls.append((method, path, json_body))
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    asyncio.run(league_lab.league_update_strawberry_player(league_lab.StrawberryPlayerUpdate(
+        champion_id=55, map_item_id=7, difficulty=3, confirmation="我确认修改"
+    )))
+    asyncio.run(league_lab.league_update_strawberry_map(league_lab.StrawberryMapUpdate(
+        content_id="map/content", item_id=7, confirmation="我确认修改"
+    )))
+    asyncio.run(league_lab.league_update_strawberry_difficulty(league_lab.StrawberryDifficultyUpdate(
+        difficulty=3, confirmation="我确认修改"
+    )))
+
+    assert calls == [
+        ("PUT", "/lol-lobby/v1/lobby/members/localMember/player-slots", [{
+            "championId": 55, "positionPreference": "UNSELECTED", "spell1": 7, "spell2": 3
+        }]),
+        ("PUT", "/lol-lobby/v2/lobby/strawberryMapId", {"contentId": "map/content", "itemId": 7}),
+        ("PATCH", "/lol-loadouts/v4/loadouts/account%2Floadout", {"loadout": {
+            "STRAWBERRY_DIFFICULTY": {"inventoryType": "STRAWBERRY_LOADOUT_ITEM", "itemId": 3}
+        }}),
+    ]
+
+
+def test_profile_background_and_utility_actions_match_upstream_lcu_contract(monkeypatch):
+    monkeypatch.setattr(
+        league_lab.league_lab_service, "settings", LeagueLabSettings(toolkit_account_actions_enabled=True)
+    )
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if path.endswith("/champions/22.json"):
+            return {"skins": [{"id": 22001, "name": "默认", "skinAugments": {"augments": [{
+                "contentId": "augment-1", "overlays": [{"path": "overlay"}]
+            }]}}]}
+        if (method, path) == ("GET", "/lol-regalia/v2/current-summoner/regalia"):
+            return {"bannerType": "last-season"}
+        if (method, path) == ("GET", "/lol-chat/v1/me"):
+            return {"lol": {"bannerIdSelected": "9"}}
+        if path.endswith("scope/account"):
+            return [{"id": "account/loadout"}]
+        calls.append((method, path, json_body))
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    result = asyncio.run(league_lab.league_update_profile_background(league_lab.ProfileBackgroundUpdate(
+        champion_id=22, skin_id=22001, augment_id="augment-1", confirmation="我确认修改"
+    )))
+    for action in ("banner-accent", "remove-prestige-crest", "clear-challenge-tokens", "clear-emotes"):
+        asyncio.run(league_lab.league_profile_utility_action(
+            league_lab.ProfileUtilityAction(action=action, confirmation="我确认修改")
+        ))
+
+    assert result == {"applied": True, "skin_id": 22001, "augment_id": "augment-1"}
+    assert calls[0:2] == [
+        ("POST", "/lol-summoner/v1/current-summoner/summoner-profile", {"key": "backgroundSkinId", "value": 22001}),
+        ("POST", "/lol-summoner/v1/current-summoner/summoner-profile", {"key": "backgroundSkinAugments", "value": "augment-1"}),
+    ]
+    assert ("POST", "/lol-challenges/v1/update-player-preferences/", {"bannerAccent": "2"}) in calls
+    assert ("PUT", "/lol-regalia/v2/current-summoner/regalia", {
+        "preferredCrestType": "prestige", "preferredBannerType": "last-season", "selectedPrestigeCrest": 22
+    }) in calls
+    clear_emotes = next(row for row in calls if row[0:2] == ("PATCH", "/lol-loadouts/v4/loadouts/account%2Floadout"))
+    assert len(clear_emotes[2]["loadout"]) == 13
+    assert all(value == {"inventoryType": "EMOTE", "itemId": -1} for value in clear_emotes[2]["loadout"].values())
 
 
 def test_league_client_window_status_reads_native_bounds_and_lcu_zoom(monkeypatch):
@@ -1419,3 +1562,66 @@ def test_opgg_cleanup_removes_only_owned_item_sets(tmp_path, monkeypatch):
     assert result["removed"] == [owned.name]
     assert not owned.exists()
     assert unrelated.exists()
+
+
+def test_arbitrary_game_preview_normalizes_lcu_scoreboard_and_timeline(monkeypatch):
+    game = {
+        "gameId": 987654,
+        "gameMode": "CLASSIC",
+        "queueId": 420,
+        "gameDuration": 1800,
+        "participantIdentities": [
+            {"participantId": 1, "player": {"puuid": "p1", "gameName": "Alpha", "tagLine": "CN1", "profileIcon": 12}},
+            {"participantId": 2, "player": {"puuid": "p2", "gameName": "Bravo", "tagLine": "CN1"}},
+        ],
+        "participants": [
+            {"participantId": 1, "teamId": 100, "championId": 86, "stats": {"win": True, "kills": 9, "deaths": 2, "assists": 5, "totalDamageDealtToChampions": 22000}},
+            {"participantId": 2, "teamId": 200, "championId": 22, "stats": {"win": False, "kills": 2, "deaths": 9, "assists": 1}},
+        ],
+    }
+
+    async def request(method, path, *, json_body=None, params=None):
+        if path == "/lol-match-history/v1/games/987654":
+            return game
+        if path == "/lol-match-history/v1/game-timelines/987654":
+            return {"frames": [{"events": [{"type": "CHAMPION_KILL"}]}, {"events": []}]}
+        raise RuntimeError(path)
+
+    async def champion_names():
+        return {86: "盖伦", 22: "艾希"}
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    monkeypatch.setattr(league_lab, "_champion_names", champion_names)
+    result = asyncio.run(league_lab.league_game_preview(987654, "auto", True))
+
+    assert result["source"] == "lcu"
+    assert result["timeline"] == {"loaded": True, "frame_count": 2, "event_count": 1}
+    assert result["teams"][0]["players"][0]["summoner"]["gameName"] == "Alpha"
+    assert result["teams"][0]["players"][0]["match_stats"]["kda"] == 7.0
+    assert result["ongoing_preview"]["historical_preview"] is True
+    assert result["ongoing_preview"]["available"] is True
+
+
+def test_arbitrary_game_preview_falls_back_to_sgp(monkeypatch):
+    async def request(method, path, *, json_body=None, params=None):
+        raise RuntimeError("LCU unavailable")
+
+    async def summary(game_id, server_id=None):
+        return {"gameId": game_id, "participants": [{"participantId": 1, "puuid": "sgp-p1", "teamId": 100, "championId": 1, "riotIdGameName": "SGP", "kills": 1, "deaths": 0, "assists": 2, "win": True}]}
+
+    async def details(game_id, server_id=None):
+        return {"frames": []}
+
+    async def champion_names():
+        return {1: "黑暗之女"}
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    monkeypatch.setattr(league_lab, "_sgp_game_summary", summary)
+    monkeypatch.setattr(league_lab, "_sgp_game_details", details)
+    monkeypatch.setattr(league_lab, "_champion_names", champion_names)
+    result = asyncio.run(league_lab.league_game_preview(123, "auto", True))
+
+    assert result["source"] == "sgp"
+    assert result["metadata"]["game_id"] == 123
+    assert result["ongoing_preview"]["players"][0]["champion_name"] == "黑暗之女"
+    assert result["warnings"] == ["LCU unavailable"]

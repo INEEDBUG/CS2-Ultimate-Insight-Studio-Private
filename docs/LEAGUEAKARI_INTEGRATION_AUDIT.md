@@ -42,6 +42,7 @@ This document prevents the League integration from becoming a collection of unre
 - Riot ID (`game name#tag`) cross-player lookup through the local LCU alias endpoint, paginated match history and durable recently encountered player indexing.
 - Live-game recent-form and current-champion usage summaries, plus LeagueAkari-style premade inference from repeated same-team match history.
 - Client toolkit overview plus LeagueAkari-equivalent mission (`SELECT_REWARDS`), reward-grant (`PENDING_SELECTION`) and Event Hub claim flows, and selected-friend deletion. The implementation re-reads live LCU state immediately before every write, never preselects or randomly chooses a reward, requires a default-off account-write master switch and exact confirmation phrase, and deletes only explicitly selected friend IDs.
+- LeagueAkari client/lobby/profile toolkit parity: eligible/unavailable queue discovery, revalidated queue-lobby creation, explicit lobby leave, Strawberry champion slot/map/difficulty controls, profile background skin/augment selection, banner accent, prestige-crest removal, challenge-token clearing and account-scope emote clearing. Every account write shares the default-off toolkit gate, exact confirmation phrase and live catalog/lobby revalidation.
 - Opt-in local respawn countdown in League Mini through the in-game Live Client Data endpoint; disabled by default.
 - Thirty-second enriched live-game cache so frequent UI refreshes do not repeatedly request every player's history.
 - League Mini ARAM bench card with current champion, bench choices, reroll count, manual swap and reroll actions.
@@ -58,6 +59,8 @@ This document prevents the League integration from becoming a collection of unre
 - Login automation parity for chat-ready state: after `/lol-chat/v1/me` remains available for two seconds, the app can restore the saved status message and displayed ranked queue/tier/division once per client connection. Manual application interrupts that login pass, apex tiers omit division, disconnects reset the state, and every write remains disabled by default behind the master automation switch.
 - LeagueAkari-style enemy summoner-spell timer: an independent transparent, always-on-top and non-focusable Tauri overlay follows supported `InProgress` modes, orders the enemy team by position, applies mode ability haste, supports countdown/countup and reversible wheel correction, and can send a generated game-clock callout only after an explicit double-right-click while `League of Legends.exe` is the foreground process. The feature and native input remain disabled by default.
 - OP.GG auxiliary-window parity: a separately managed, resizable and pinned window proxies only the fixed `lol-api-champion.op.gg` origin, supports mode/region/tier/position/version filters, a searchable tier table and champion build details for spells, runes, skill order, items, counters, synergies and Arena augments. ChampSelect follows the current champion/mode/position and can explicitly or automatically apply the leading spell/rune/item recommendations. Every automatic write defaults off; existing integrated champion loadouts win conflicts, item-set writes are atomic, and EndOfGame cleanup removes only `insight-opgg-*` files.
+- Arbitrary Game ID preview and dry-run parity: the toolkit resolves a completed match through LCU with current-region SGP fallback, normalizes both team scoreboards, optionally loads the timeline summary, and can route the historical roster into the existing ongoing-game panel without writing any client state.
+- Configurable global game-termination shortcut parity: the Tauri global-shortcut plugin is scoped to the main window, registration is driven by persisted League settings, the feature defaults off, and every trigger still passes the backend foreground-process guard before `League of Legends.exe` can be terminated.
 
 ### Partially implemented; upstream behavior is richer
 
@@ -71,10 +74,8 @@ This document prevents the League integration from becoming a collection of unre
 ### Not implemented yet
 
 - Saved named filter presets and a local AND/OR composable rule builder are implemented; predicates requiring richer timeline/team payloads remain (the durable SQLite collection workspace works now).
-- Remaining specialized auxiliary cards beyond upstream Mini, ongoing-game, OP.GG and summon-spell timer windows.
 - Loot crafting/redeeming is intentionally not exposed: the reviewed upstream `LootTools.vue` labels itself under development and leaves its `craft` handler empty. Read-only inventory parity is retained until upstream itself has a working, auditable user flow.
 - In-game preset messaging: explicit fixed-text presets plus generated recent-form, premade and jungle-path drafts for lobby/champion-select are implemented, along with manual chat availability/status-message/ranked-display tools and one-shot login restoration. The spell-timer overlay can inject its generated callout only into a verified foreground League game; broader preset injection remains.
-- A configurable global terminate shortcut remains. Explicit foreground-only League game-process termination, LeagueClientUx window sizing/centering, streamer text masking and native Windows capture exclusion are implemented.
 
 ## Porting decisions
 

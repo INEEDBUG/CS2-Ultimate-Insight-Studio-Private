@@ -160,6 +160,64 @@ export async function deleteLeagueFriends(friendIds, confirmation) {
   return data;
 }
 
+export async function fetchLeagueLobbyOptions() {
+  const { data } = await API.get("/league-lab/toolkit/lobby-options");
+  return data;
+}
+
+export async function createLeagueQueueLobby(queueId, confirmation) {
+  const { data } = await API.post("/league-lab/toolkit/lobby/create", { queue_id: queueId, confirmation });
+  return data;
+}
+
+export async function leaveLeagueLobby(confirmation) {
+  const { data } = await API.post("/league-lab/toolkit/lobby/leave", { confirmation });
+  return data;
+}
+
+export async function updateLeagueStrawberryPlayer(championId, mapItemId, difficulty, confirmation) {
+  const { data } = await API.put("/league-lab/toolkit/strawberry/player", {
+    champion_id: championId, map_item_id: mapItemId, difficulty, confirmation,
+  });
+  return data;
+}
+
+export async function updateLeagueStrawberryMap(contentId, itemId, confirmation) {
+  const { data } = await API.put("/league-lab/toolkit/strawberry/map", {
+    content_id: contentId, item_id: itemId, confirmation,
+  });
+  return data;
+}
+
+export async function updateLeagueStrawberryDifficulty(difficulty, confirmation) {
+  const { data } = await API.put("/league-lab/toolkit/strawberry/difficulty", { difficulty, confirmation });
+  return data;
+}
+
+export async function fetchLeagueProfileSkins(championId) {
+  const { data } = await API.get(`/league-lab/toolkit/profile/skins/${championId}`);
+  return data;
+}
+
+export async function updateLeagueProfileBackground(championId, skinId, augmentId, confirmation) {
+  const { data } = await API.post("/league-lab/toolkit/profile/background", {
+    champion_id: championId, skin_id: skinId, augment_id: augmentId || null, confirmation,
+  });
+  return data;
+}
+
+export async function runLeagueProfileUtilityAction(action, confirmation) {
+  const { data } = await API.post("/league-lab/toolkit/profile/action", { action, confirmation });
+  return data;
+}
+
+export async function fetchLeagueGamePreview(gameId, source = "auto", includeTimeline = true) {
+  const { data } = await API.get(`/league-lab/toolkit/game-preview/${encodeURIComponent(gameId)}`, {
+    params: { source, include_timeline: includeTimeline },
+  });
+  return data;
+}
+
 export async function updateLeagueChatPresence(payload) {
   const { data } = await API.put("/league-lab/toolkit/chat-presence", payload);
   return data;
