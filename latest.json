@@ -1,12 +1,12 @@
 {
-  "version": "2.5.12",
+  "version": "2.5.13",
   "notes": "本版本已经发布，可在客户端内点击立即更新。完整更新说明请查看 GitHub Release。",
-  "pub_date": "2026-08-14T11:50:47.716Z",
+  "pub_date": "2026-08-14T20:00:53.616Z",
   "update_mode": "normal",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSSXZ3UmJxZ1luT3Z1WGxJeWxvZmRKcmt4SUl1ZENtQk44ckpPbXpEc2daUjM1VkNTWkFiMUs3ZEV5STBYYklFVEt6WFZlVnM0eHJHNCs1cHA5NVFKSUdYUjFYejhFOVFzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NzA4MjQyCWZpbGU6Q1MyIFVsdGltYXRlIEluc2lnaHQgU3R1ZGlvXzIuNS4xMl94NjQtc2V0dXAuZXhlCkJPQVM3N2l4bnRjYzRxT0FZUzIrR1pkNFlaZkZmcUF3eEF1SEp1c2dxalNZaDBZRkRCQ3EzdWRvVUdWK0d3UU40dllIVFlaUFhZOHQ0SlozKzNmbkN3PT0K",
-      "url": "https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases/download/v2.5.12/CS2.Ultimate.Insight.Studio_2.5.12_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSSXZ3UmJxZ1luT2l6QzNUQ0pua0FWY2pSMkJ5cnd4bHVLOFZlQ25lTFN4MDF0NGNyNFNFcFlqazk4ZEtpdlY4cGNGd1J5Mzlwc1lJTWdMNU9TRklOUEhzSHhXRlA5amdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg2NzM3NjQ3CWZpbGU6Q1MyIFVsdGltYXRlIEluc2lnaHQgU3R1ZGlvXzIuNS4xM194NjQtc2V0dXAuZXhlClpiZlBMNnllRXRZcWF4OEREQUhuN2xSM3RzYUt5RllqVXlhdDBHeHdFZzgyMXJKbzEzNGdtUGpLMGh4Q2NXZWhMMTJDWmZCWE1LbDM0UElhOWhla0F3PT0K",
+      "url": "https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases/download/v2.5.13/CS2.Ultimate.Insight.Studio_2.5.13_x64-setup.exe"
     }
   }
 }
