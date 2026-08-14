@@ -5,6 +5,7 @@ import subprocess
 import time
 
 import httpx
+import pytest
 
 from app import league_lab
 from app.league_lab import LeagueLabService, LeagueLabSettings, parse_league_client_command_line
@@ -673,6 +674,8 @@ def test_toolkit_overview_is_read_only(monkeypatch):
             "/lol-rewards/v1/grants": [{"id": "reward", "viewed": False}],
             "/lol-loot/v1/player-loot-map": {"loot": {"lootId": "loot"}},
             "/lol-chat/v1/friends": [{"puuid": "friend"}],
+            "/lol-chat/v1/friend-groups": [{"id": 1, "name": "General"}],
+            "/lol-event-hub/v1/events": [],
             "/lol-chat/v1/me": {"availability": "chat", "statusMessage": ""},
         }
         return payloads[path]
@@ -681,7 +684,103 @@ def test_toolkit_overview_is_read_only(monkeypatch):
     result = asyncio.run(league_lab.league_toolkit_overview())
 
     assert result["read_only"] is True
+    assert result["account_actions_enabled"] is False
     assert result["counts"] == {"missions": 1, "unclaimed_rewards": 1, "loot": 1, "friends": 1}
+
+
+def test_toolkit_account_writes_are_disabled_by_default(monkeypatch):
+    assert LeagueLabSettings().toolkit_account_actions_enabled is False
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", LeagueLabSettings())
+    body = league_lab.EventRewardClaim(event_id="event-1", confirmation="我确认领取")
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.league_claim_event_rewards(body))
+    assert caught.value.status_code == 403
+
+
+def test_mission_claim_revalidates_status_selection_and_exact_write(monkeypatch):
+    monkeypatch.setattr(
+        league_lab.league_lab_service, "settings", LeagueLabSettings(toolkit_account_actions_enabled=True)
+    )
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if method == "GET":
+            return [{
+                "id": "mission/choice",
+                "status": "SELECT_REWARDS",
+                "rewardStrategy": {"selectMinGroupCount": 1, "selectMaxGroupCount": 1},
+                "rewards": [{"rewardGroup": "group-a"}, {"rewardGroup": "group-b"}],
+            }]
+        calls.append((method, path, json_body, params))
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    result = asyncio.run(league_lab.league_claim_mission_reward(league_lab.MissionRewardClaim(
+        mission_id="mission/choice", reward_group_ids=["group-b"], confirmation="我确认领取"
+    )))
+
+    assert result["reward_group_ids"] == ["group-b"]
+    assert calls == [("PUT", "/lol-missions/v1/player/mission%2Fchoice", {"rewardGroups": ["group-b"]}, None)]
+
+
+def test_reward_grant_claim_uses_explicit_user_selection(monkeypatch):
+    monkeypatch.setattr(
+        league_lab.league_lab_service, "settings", LeagueLabSettings(toolkit_account_actions_enabled=True)
+    )
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if method == "GET":
+            assert params == {"status": "PENDING_SELECTION"}
+            return [{
+                "info": {"id": "grant-1", "status": "PENDING_SELECTION"},
+                "rewardGroup": {
+                    "id": "reward-group",
+                    "selectionStrategyConfig": {"minSelectionsAllowed": 1, "maxSelectionsAllowed": 2},
+                    "rewards": [{"id": "skin-a"}, {"id": "skin-b"}, {"id": "skin-c"}],
+                },
+            }]
+        calls.append((method, path, json_body, params))
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    result = asyncio.run(league_lab.league_claim_reward_grant(league_lab.RewardGrantClaim(
+        grant_id="grant-1", reward_group_id="reward-group", selection_ids=["skin-a", "skin-c"],
+        confirmation="我确认领取",
+    )))
+
+    assert result["selections"] == ["skin-a", "skin-c"]
+    assert calls == [("POST", "/lol-rewards/v1/grants/grant-1/select", {
+        "grantId": "grant-1", "rewardGroupId": "reward-group", "selections": ["skin-a", "skin-c"]
+    }, None)]
+
+
+def test_event_claim_and_friend_delete_revalidate_current_lcu_state(monkeypatch):
+    monkeypatch.setattr(
+        league_lab.league_lab_service, "settings", LeagueLabSettings(toolkit_account_actions_enabled=True)
+    )
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if (method, path) == ("GET", "/lol-event-hub/v1/events"):
+            return [{"eventId": "summer/event", "eventInfo": {"unclaimedRewardCount": 2}}]
+        if (method, path) == ("GET", "/lol-chat/v1/friends"):
+            return [{"id": "friend/one"}, {"id": "friend-two"}]
+        calls.append((method, path, json_body, params))
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    event = asyncio.run(league_lab.league_claim_event_rewards(
+        league_lab.EventRewardClaim(event_id="summer/event", confirmation="我确认领取")
+    ))
+    friends = asyncio.run(league_lab.league_delete_friends(
+        league_lab.FriendDeleteRequest(friend_ids=["friend/one", "friend-two"], confirmation="我确认删除")
+    ))
+
+    assert event == {"claimed": True, "event_id": "summer/event"}
+    assert friends == {"deleted": ["friend/one", "friend-two"], "count": 2}
+    assert calls == [
+        ("POST", "/lol-event-hub/v1/events/summer%2Fevent/reward-track/claim-all", None, None),
+        ("DELETE", "/lol-chat/v1/friends/friend%2Fone", None, None),
+        ("DELETE", "/lol-chat/v1/friends/friend-two", None, None),
+    ]
 
 
 def test_league_client_window_status_reads_native_bounds_and_lcu_zoom(monkeypatch):
@@ -1030,6 +1129,9 @@ def test_skin_change_rejects_skin_outside_owned_snapshot(monkeypatch):
 
 def test_chat_presence_update_is_explicit_and_uses_lcu(monkeypatch):
     calls = []
+    monkeypatch.setattr(
+        league_lab.league_lab_service, "settings", LeagueLabSettings(toolkit_account_actions_enabled=True)
+    )
 
     async def request(method, path, *, json_body=None, params=None):
         calls.append((method, path, json_body))
@@ -1099,6 +1201,9 @@ def test_chat_ready_automation_never_writes_when_master_switch_is_off(monkeypatc
 
 def test_manual_ranked_status_applies_division_and_interrupts_login_automation(monkeypatch):
     calls = []
+    monkeypatch.setattr(
+        league_lab.league_lab_service, "settings", LeagueLabSettings(toolkit_account_actions_enabled=True)
+    )
 
     async def request(method, path, *, json_body=None, params=None):
         calls.append((method, path, json_body))
@@ -1121,6 +1226,9 @@ def test_manual_ranked_status_applies_division_and_interrupts_login_automation(m
 
 def test_manual_chat_preset_sends_to_champion_select(monkeypatch):
     calls = []
+    monkeypatch.setattr(
+        league_lab.league_lab_service, "settings", LeagueLabSettings(toolkit_account_actions_enabled=True)
+    )
 
     async def request(method, path, *, json_body=None, params=None):
         calls.append((method, path, json_body))

@@ -125,6 +125,41 @@ export async function fetchLeagueToolkitOverview() {
   return data;
 }
 
+export async function claimLeagueMissionReward(missionId, rewardGroupIds, confirmation) {
+  const { data } = await API.post("/league-lab/toolkit/claims/mission", {
+    mission_id: missionId,
+    reward_group_ids: rewardGroupIds,
+    confirmation,
+  });
+  return data;
+}
+
+export async function claimLeagueRewardGrant(grantId, rewardGroupId, selectionIds, confirmation) {
+  const { data } = await API.post("/league-lab/toolkit/claims/reward", {
+    grant_id: grantId,
+    reward_group_id: rewardGroupId,
+    selection_ids: selectionIds,
+    confirmation,
+  });
+  return data;
+}
+
+export async function claimLeagueEventRewards(eventId, confirmation) {
+  const { data } = await API.post("/league-lab/toolkit/claims/event", {
+    event_id: eventId,
+    confirmation,
+  });
+  return data;
+}
+
+export async function deleteLeagueFriends(friendIds, confirmation) {
+  const { data } = await API.post("/league-lab/toolkit/friends/delete", {
+    friend_ids: friendIds,
+    confirmation,
+  });
+  return data;
+}
+
 export async function updateLeagueChatPresence(payload) {
   const { data } = await API.put("/league-lab/toolkit/chat-presence", payload);
   return data;

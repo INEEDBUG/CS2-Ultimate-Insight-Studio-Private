@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote
 
 import httpx
 import aiosqlite
@@ -134,6 +135,7 @@ class LeagueLabSettings(BaseModel):
     streamer_mode_enabled: bool = False
     streamer_mode_use_aliases: bool = False
     streamer_content_protection_enabled: bool = False
+    toolkit_account_actions_enabled: bool = False
 
 
 class ChampionLoadout(BaseModel):
@@ -206,6 +208,29 @@ class GameSettingsFileModeUpdate(BaseModel):
 class LeagueClientWindowResize(BaseModel):
     base_width: int = Field(default=1280, ge=640, le=3840)
     base_height: int = Field(default=720, ge=360, le=2160)
+
+
+class MissionRewardClaim(BaseModel):
+    mission_id: str = Field(min_length=1, max_length=160)
+    reward_group_ids: list[str] = Field(min_length=1, max_length=20)
+    confirmation: Literal["我确认领取"]
+
+
+class RewardGrantClaim(BaseModel):
+    grant_id: str = Field(min_length=1, max_length=160)
+    reward_group_id: str = Field(min_length=1, max_length=160)
+    selection_ids: list[str] = Field(min_length=1, max_length=20)
+    confirmation: Literal["我确认领取"]
+
+
+class EventRewardClaim(BaseModel):
+    event_id: str = Field(min_length=1, max_length=160)
+    confirmation: Literal["我确认领取"]
+
+
+class FriendDeleteRequest(BaseModel):
+    friend_ids: list[str] = Field(min_length=1, max_length=50)
+    confirmation: Literal["我确认删除"]
 
 
 LeagueLabSettings.model_rebuild()
@@ -3065,33 +3090,205 @@ async def league_toolkit_overview():
         except RuntimeError:
             return None
 
-    missions, mission_series, rewards, loot, friends, chat_me = await asyncio.gather(
+    missions, mission_series, rewards, loot, friends, friend_groups, events, chat_me = await asyncio.gather(
         optional("/lol-missions/v1/missions"),
         optional("/lol-missions/v1/series"),
         optional("/lol-rewards/v1/grants"),
         optional("/lol-loot/v1/player-loot-map"),
         optional("/lol-chat/v1/friends"),
+        optional("/lol-chat/v1/friend-groups"),
+        optional("/lol-event-hub/v1/events"),
         optional("/lol-chat/v1/me"),
     )
     mission_rows = missions if isinstance(missions, list) else []
     reward_rows = rewards if isinstance(rewards, list) else []
     loot_rows = list(loot.values()) if isinstance(loot, dict) else loot if isinstance(loot, list) else []
     friend_rows = friends if isinstance(friends, list) else []
+    event_rows = [row for row in events if isinstance(row, dict)] if isinstance(events, list) else []
+    claimable_events = [
+        row
+        for row in event_rows
+        if int(((row.get("eventInfo") or {}).get("unclaimedRewardCount") or 0)) > 0
+    ]
+
+    async def event_reward_options(event: dict) -> dict:
+        event_id = str(event.get("eventId") or "")
+        if not event_id:
+            return {**event, "reward_options": []}
+        safe_id = quote(event_id, safe="")
+        regular, bonus = await asyncio.gather(
+            optional(f"/lol-event-hub/v1/events/{safe_id}/reward-track/items"),
+            optional(f"/lol-event-hub/v1/events/{safe_id}/reward-track/bonus-items"),
+        )
+        options = []
+        for item in [*(regular if isinstance(regular, list) else []), *(bonus if isinstance(bonus, list) else [])]:
+            for reward in item.get("rewardOptions") or []:
+                if isinstance(reward, dict) and reward.get("state") == "Unselected":
+                    options.append(reward)
+        return {**event, "reward_options": options}
+
+    claimable_events = list(await asyncio.gather(*(event_reward_options(row) for row in claimable_events)))
+    claimable_missions = [row for row in mission_rows if row.get("status") == "SELECT_REWARDS"]
+    claimable_rewards = [
+        row for row in reward_rows if isinstance(row.get("info"), dict) and row["info"].get("status") == "PENDING_SELECTION"
+    ]
+    unclaimed_rewards = [row for row in reward_rows if not row.get("viewed") or not row.get("selected")]
     return {
         "missions": mission_rows,
+        "claimable_missions": claimable_missions,
         "mission_series": mission_series if isinstance(mission_series, list) else [],
-        "unclaimed_rewards": [row for row in reward_rows if not row.get("viewed") or not row.get("selected")],
+        "unclaimed_rewards": unclaimed_rewards,
+        "claimable_rewards": claimable_rewards,
+        "claimable_events": claimable_events,
         "loot": loot_rows,
         "friends": friend_rows,
+        "friend_groups": friend_groups if isinstance(friend_groups, list) else [],
         "chat_presence": chat_me if isinstance(chat_me, dict) else None,
         "counts": {
             "missions": len(mission_rows),
-            "unclaimed_rewards": len([row for row in reward_rows if not row.get("viewed") or not row.get("selected")]),
+            "unclaimed_rewards": len(unclaimed_rewards),
             "loot": len(loot_rows),
             "friends": len(friend_rows),
         },
-        "read_only": True,
+        "read_only": not league_lab_service.settings.toolkit_account_actions_enabled,
+        "account_actions_enabled": league_lab_service.settings.toolkit_account_actions_enabled,
     }
+
+
+def _require_toolkit_account_actions() -> None:
+    if not league_lab_service.settings.toolkit_account_actions_enabled:
+        raise HTTPException(status_code=403, detail="账号写入工具默认关闭，请先在工具箱中明确启用")
+
+
+def _unique_nonempty(values: list[str], label: str) -> list[str]:
+    normalized = [str(value).strip() for value in values]
+    if any(not value for value in normalized):
+        raise HTTPException(status_code=422, detail=f"{label}包含空 ID")
+    if len(set(normalized)) != len(normalized):
+        raise HTTPException(status_code=422, detail=f"{label}包含重复 ID")
+    return normalized
+
+
+@router.post("/toolkit/claims/mission")
+async def league_claim_mission_reward(body: MissionRewardClaim):
+    _require_toolkit_account_actions()
+    reward_group_ids = _unique_nonempty(body.reward_group_ids, "任务奖励")
+    try:
+        missions = await league_lab_service.request("GET", "/lol-missions/v1/missions")
+        mission = next(
+            (row for row in (missions or []) if isinstance(row, dict) and str(row.get("id")) == body.mission_id),
+            None,
+        )
+        if not mission or mission.get("status") != "SELECT_REWARDS":
+            raise HTTPException(status_code=409, detail="任务当前不可领取或状态已经变化")
+        available = {str(row.get("rewardGroup")) for row in (mission.get("rewards") or []) if row.get("rewardGroup")}
+        if not set(reward_group_ids).issubset(available):
+            raise HTTPException(status_code=422, detail="所选任务奖励不属于当前任务")
+        strategy = mission.get("rewardStrategy") or {}
+        minimum = max(1, int(strategy.get("selectMinGroupCount") or 1))
+        maximum = max(minimum, int(strategy.get("selectMaxGroupCount") or 1))
+        if not minimum <= len(reward_group_ids) <= maximum:
+            raise HTTPException(status_code=422, detail=f"该任务必须选择 {minimum}–{maximum} 个奖励组")
+        await league_lab_service.request(
+            "PUT",
+            f"/lol-missions/v1/player/{quote(body.mission_id, safe='')}",
+            json_body={"rewardGroups": reward_group_ids},
+        )
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"claimed": True, "mission_id": body.mission_id, "reward_group_ids": reward_group_ids}
+
+
+@router.post("/toolkit/claims/reward")
+async def league_claim_reward_grant(body: RewardGrantClaim):
+    _require_toolkit_account_actions()
+    selection_ids = _unique_nonempty(body.selection_ids, "普通奖励")
+    try:
+        grants = await league_lab_service.request(
+            "GET", "/lol-rewards/v1/grants", params={"status": "PENDING_SELECTION"}
+        )
+        grant = next(
+            (
+                row
+                for row in (grants or [])
+                if isinstance(row, dict) and str((row.get("info") or {}).get("id")) == body.grant_id
+            ),
+            None,
+        )
+        info = (grant or {}).get("info") or {}
+        group = (grant or {}).get("rewardGroup") or {}
+        if not grant or info.get("status") != "PENDING_SELECTION":
+            raise HTTPException(status_code=409, detail="奖励当前不可领取或状态已经变化")
+        if str(group.get("id")) != body.reward_group_id:
+            raise HTTPException(status_code=422, detail="奖励组与当前待领取奖励不匹配")
+        available = {str(row.get("id")) for row in (group.get("rewards") or []) if row.get("id")}
+        if not set(selection_ids).issubset(available):
+            raise HTTPException(status_code=422, detail="所选奖励不属于当前奖励组")
+        strategy = group.get("selectionStrategyConfig") or {}
+        minimum = max(1, int(strategy.get("minSelectionsAllowed") or 1))
+        maximum = max(minimum, int(strategy.get("maxSelectionsAllowed") or 1))
+        if not minimum <= len(selection_ids) <= maximum:
+            raise HTTPException(status_code=422, detail=f"该奖励必须选择 {minimum}–{maximum} 项")
+        payload = {
+            "grantId": body.grant_id,
+            "rewardGroupId": body.reward_group_id,
+            "selections": selection_ids,
+        }
+        await league_lab_service.request(
+            "POST",
+            f"/lol-rewards/v1/grants/{quote(body.grant_id, safe='')}/select",
+            json_body=payload,
+        )
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"claimed": True, **payload}
+
+
+@router.post("/toolkit/claims/event")
+async def league_claim_event_rewards(body: EventRewardClaim):
+    _require_toolkit_account_actions()
+    try:
+        events = await league_lab_service.request("GET", "/lol-event-hub/v1/events")
+        event = next(
+            (row for row in (events or []) if isinstance(row, dict) and str(row.get("eventId")) == body.event_id),
+            None,
+        )
+        if not event or int(((event.get("eventInfo") or {}).get("unclaimedRewardCount") or 0)) <= 0:
+            raise HTTPException(status_code=409, detail="活动当前没有可领取奖励或状态已经变化")
+        await league_lab_service.request(
+            "POST",
+            f"/lol-event-hub/v1/events/{quote(body.event_id, safe='')}/reward-track/claim-all",
+        )
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"claimed": True, "event_id": body.event_id}
+
+
+@router.post("/toolkit/friends/delete")
+async def league_delete_friends(body: FriendDeleteRequest):
+    _require_toolkit_account_actions()
+    friend_ids = _unique_nonempty(body.friend_ids, "好友列表")
+    try:
+        friends = await league_lab_service.request("GET", "/lol-chat/v1/friends")
+        current = {str(row.get("id")) for row in (friends or []) if isinstance(row, dict) and row.get("id")}
+        missing = [friend_id for friend_id in friend_ids if friend_id not in current]
+        if missing:
+            raise HTTPException(status_code=409, detail="部分好友已不存在或列表已经变化，请刷新后重试")
+        deleted = []
+        for friend_id in friend_ids:
+            await league_lab_service.request("DELETE", f"/lol-chat/v1/friends/{quote(friend_id, safe='')}")
+            deleted.append(friend_id)
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"deleted": deleted, "count": len(deleted)}
 
 
 async def _league_game_settings_path() -> Path:
@@ -3270,6 +3467,7 @@ async def league_client_window_resize(body: LeagueClientWindowResize):
 
 @router.put("/toolkit/chat-presence")
 async def league_update_chat_presence(body: ChatPresenceUpdate):
+    _require_toolkit_account_actions()
     patch: dict[str, str] = {}
     if body.availability is not None:
         patch["availability"] = body.availability
@@ -3289,6 +3487,7 @@ async def league_update_chat_presence(body: ChatPresenceUpdate):
 
 @router.put("/toolkit/ranked-status")
 async def league_update_ranked_status(body: RankedStatusUpdate):
+    _require_toolkit_account_actions()
     try:
         await league_lab_service.apply_ranked_status(body)
     except RuntimeError as exc:
@@ -3307,6 +3506,7 @@ async def league_terminate_game_client():
 
 @router.post("/toolkit/chat-message")
 async def league_send_chat_message(body: ChatMessageSend):
+    _require_toolkit_account_actions()
     lines = [line.strip() for line in body.lines if line.strip()]
     if not lines:
         raise HTTPException(status_code=422, detail="消息内容不能为空")

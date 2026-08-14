@@ -41,7 +41,7 @@ This document prevents the League integration from becoming a collection of unre
 - Event-driven friend auto-invitation queue: waits for an opted-in friend to become online, checks lobby permissions/membership, invites once and removes the completed target.
 - Riot ID (`game name#tag`) cross-player lookup through the local LCU alias endpoint, paginated match history and durable recently encountered player indexing.
 - Live-game recent-form and current-champion usage summaries, plus LeagueAkari-style premade inference from repeated same-team match history.
-- Read-only client toolkit overview for missions, reward grants, loot inventory and friends; no claim, craft, redeem or delete action is exposed.
+- Client toolkit overview plus LeagueAkari-equivalent mission (`SELECT_REWARDS`), reward-grant (`PENDING_SELECTION`) and Event Hub claim flows, and selected-friend deletion. The implementation re-reads live LCU state immediately before every write, never preselects or randomly chooses a reward, requires a default-off account-write master switch and exact confirmation phrase, and deletes only explicitly selected friend IDs.
 - Opt-in local respawn countdown in League Mini through the in-game Live Client Data endpoint; disabled by default.
 - Thirty-second enriched live-game cache so frequent UI refreshes do not repeatedly request every player's history.
 - League Mini ARAM bench card with current champion, bench choices, reroll count, manual swap and reroll actions.
@@ -72,7 +72,7 @@ This document prevents the League integration from becoming a collection of unre
 
 - Saved named filter presets and a local AND/OR composable rule builder are implemented; predicates requiring richer timeline/team payloads remain (the durable SQLite collection workspace works now).
 - Remaining specialized auxiliary cards beyond upstream Mini, ongoing-game, OP.GG and summon-spell timer windows.
-- Reward/mission/event claiming plus mutating loot and friend tools (the read-only overview works now; writes require separate safety review).
+- Loot crafting/redeeming is intentionally not exposed: the reviewed upstream `LootTools.vue` labels itself under development and leaves its `craft` handler empty. Read-only inventory parity is retained until upstream itself has a working, auditable user flow.
 - In-game preset messaging: explicit fixed-text presets plus generated recent-form, premade and jungle-path drafts for lobby/champion-select are implemented, along with manual chat availability/status-message/ranked-display tools and one-shot login restoration. The spell-timer overlay can inject its generated callout only into a verified foreground League game; broader preset injection remains.
 - A configurable global terminate shortcut remains. Explicit foreground-only League game-process termination, LeagueClientUx window sizing/centering, streamer text masking and native Windows capture exclusion are implemented.
 
