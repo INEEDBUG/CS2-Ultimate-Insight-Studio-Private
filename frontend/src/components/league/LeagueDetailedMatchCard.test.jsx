@@ -83,9 +83,11 @@ describe("LeagueDetailedMatchCard", () => {
     render(<LeagueDetailedMatchCard match={match} />);
     fireEvent.click(screen.getByRole("button", { name: "展开战绩详情" }));
     fireEvent.click(screen.getByRole("button", { name: "详细属性" }));
-    expect(screen.getByText("对英雄伤害")).toBeTruthy();
+    expect(screen.getAllByText("对英雄伤害").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByTitle("totalDamageDealtToChampions · 点击比较十名玩家"));
+    expect(screen.getAllByText("20,000").length).toBeGreaterThan(1);
     fireEvent.change(screen.getByPlaceholderText("筛选属性名称…"), { target: { value: "击杀" } });
-    expect(screen.getByText("击杀")).toBeTruthy();
+    expect(screen.getAllByText("击杀").length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole("button", { name: "符文" }));
     await waitFor(() => expect(fetchLeagueLoadoutCatalog).toHaveBeenCalledTimes(1));

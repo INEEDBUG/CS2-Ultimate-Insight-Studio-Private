@@ -109,6 +109,36 @@ function rawValue(value) {
   return value == null || value === "" ? "—" : String(value);
 }
 
+function RawStatHeader({ statKey, participants, streamerMode, useAliases }) {
+  const cells = participants.map((player, index) => ({
+    index,
+    player,
+    value: player.raw_stats?.[statKey],
+  }));
+  const numeric = cells.filter((cell) => typeof cell.value === "number" && Number.isFinite(cell.value));
+  const label = RAW_STAT_LABELS[statKey] || statKey;
+  if (!numeric.length) return <span className="block truncate" title={statKey}>{label}</span>;
+  const values = numeric.map((cell) => Number(cell.value));
+  const min = Math.min(0, ...values);
+  const max = Math.max(0, ...values);
+  const span = Math.max(1, max - min);
+  return <details className="group relative">
+    <summary className="cursor-pointer list-none truncate text-cyan-100" title={`${statKey} · 点击比较十名玩家`}>{label}</summary>
+    <div className="absolute left-full top-0 z-50 ml-2 w-64 rounded-xl border border-cyan-400/25 bg-cs2-bg-elevated p-3 text-left shadow-2xl">
+      <b className="block truncate text-[11px] text-cs2-text-primary">{label}</b>
+      <small className="mb-2 block truncate font-normal text-cs2-text-muted">{statKey}</small>
+      <div className="space-y-1.5">{numeric.map(({ player, index, value }) => {
+        const width = Math.max(3, ((Number(value) - min) / span) * 100);
+        return <div key={player.puuid || player.participant_id || index} className="grid grid-cols-[72px_1fr_auto] items-center gap-2 font-normal">
+          <span className="truncate text-[9px] text-cs2-text-muted">{participantDisplay(player, index, streamerMode, useAliases)}</span>
+          <span className="h-1.5 overflow-hidden rounded-full bg-white/5"><i className="block h-full rounded-full bg-cyan-400" style={{ width: `${width}%` }}/></span>
+          <span className="font-mono text-[9px] text-cs2-text-primary">{rawValue(value)}</span>
+        </div>;
+      })}</div>
+    </div>
+  </details>;
+}
+
 function RawDetailsTab({ match, participants, streamerMode, useAliases }) {
   const [filter, setFilter] = useState("");
   const keys = useMemo(() => {
@@ -126,7 +156,7 @@ function RawDetailsTab({ match, participants, streamerMode, useAliases }) {
       <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="筛选属性名称…" className="ml-auto min-w-52 rounded-lg border border-cs2-border bg-cs2-bg-input px-2.5 py-1.5 text-xs text-cs2-text-primary outline-none focus:border-cyan-400/60"/>
     </div>
     <div className="max-h-[430px] overflow-auto rounded-xl border border-cs2-border-subtle">
-      {keys.length ? <table className="min-w-max border-collapse text-[10px]"><thead className="sticky top-0 z-20 bg-cs2-bg-elevated"><tr><th className="sticky left-0 z-30 min-w-40 border-b border-r border-cs2-border-subtle bg-cs2-bg-elevated p-2 text-left">属性</th>{participants.map((player, index) => <th key={player.puuid || player.participant_id || index} className="min-w-24 border-b border-cs2-border-subtle p-2"><Icon src={getLeagueChampionIconUrl(player.champion_id)} title={player.champion_name} className="mx-auto h-7 w-7"/><span className="mt-1 block max-w-24 truncate">{participantDisplay(player, index, streamerMode, useAliases)}</span></th>)}</tr></thead><tbody>{keys.map((key) => <tr key={key} className="odd:bg-white/[.018]"><th title={key} className="sticky left-0 z-10 max-w-48 border-r border-t border-cs2-border-subtle bg-cs2-bg-elevated p-2 text-left"><span className="block truncate">{RAW_STAT_LABELS[key] || key}</span>{RAW_STAT_LABELS[key] ? <small className="block truncate font-normal text-cs2-text-muted">{key}</small> : null}</th>{participants.map((player, index) => <td key={player.puuid || player.participant_id || index} className="max-w-32 truncate border-t border-cs2-border-subtle p-2 text-center font-mono" title={rawValue(player.raw_stats?.[key])}>{rawValue(player.raw_stats?.[key])}</td>)}</tr>)}</tbody></table> : <p className="py-12 text-center text-xs text-cs2-text-muted">没有匹配的属性</p>}
+      {keys.length ? <table className="min-w-max border-collapse text-[10px]"><thead className="sticky top-0 z-20 bg-cs2-bg-elevated"><tr><th className="sticky left-0 z-30 min-w-40 border-b border-r border-cs2-border-subtle bg-cs2-bg-elevated p-2 text-left">属性</th>{participants.map((player, index) => <th key={player.puuid || player.participant_id || index} className="min-w-24 border-b border-cs2-border-subtle p-2"><Icon src={getLeagueChampionIconUrl(player.champion_id)} title={player.champion_name} className="mx-auto h-7 w-7"/><span className="mt-1 block max-w-24 truncate">{participantDisplay(player, index, streamerMode, useAliases)}</span></th>)}</tr></thead><tbody>{keys.map((key) => <tr key={key} className="odd:bg-white/[.018]"><th className="sticky left-0 z-10 max-w-48 border-r border-t border-cs2-border-subtle bg-cs2-bg-elevated p-2 text-left"><RawStatHeader statKey={key} participants={participants} streamerMode={streamerMode} useAliases={useAliases}/>{RAW_STAT_LABELS[key] ? <small className="block truncate font-normal text-cs2-text-muted">{key}</small> : null}</th>{participants.map((player, index) => <td key={player.puuid || player.participant_id || index} className="max-w-32 truncate border-t border-cs2-border-subtle p-2 text-center font-mono" title={rawValue(player.raw_stats?.[key])}>{rawValue(player.raw_stats?.[key])}</td>)}</tr>)}</tbody></table> : <p className="py-12 text-center text-xs text-cs2-text-muted">没有匹配的属性</p>}
     </div>
   </section>;
 }

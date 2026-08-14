@@ -92,7 +92,7 @@ This table is stricter than the shard matrix below: a backend capability is not 
 | Player tabs and summoner search | integrated player center | current/cross-region Riot ID lookup, recent tabs, ranked, mastery, challenges, tags, pagination and collection | Equivalent with host layout |
 | Match-history overview | detailed match cards | collapsed result/performance row, ten-player roster, replay action and expandable tabs | Equivalent foundation |
 | Match summary | `双方总览` | both teams, clickable players, K/D/A, KP, damage share, CS/gold and loadouts | Equivalent foundation |
-| Raw match details | `详细属性` | searchable horizontal ten-player scalar-stat matrix with sticky headers, game/source/version/map metadata and common Chinese labels | Equivalent foundation; per-stat chart popovers remain |
+| Raw match details | `详细属性` | searchable horizontal ten-player scalar-stat matrix with sticky headers, game/source/version/map metadata, common Chinese labels and click-open ten-player comparison charts | Equivalent foundation; upstream chart styling and grouped stat taxonomy still differ |
 | Runes | `符文` | all participants, official spell/perk artwork, catalog names/descriptions and augment IDs | Equivalent foundation; post-game computed description fidelity still needs real SGP fixtures |
 | Events | `事件` | chronological major-event and champion filters, actor/victim context, plate totals and coordinate previews | Equivalent foundation; official Riot map backgrounds remain license-gated |
 | Builds | `出装过程` | per-player navigator, skill/evolution order and timestamped purchase/sell/undo operations | Equivalent foundation; richer SGP spacer/anvil grouping remains |
