@@ -233,6 +233,20 @@ export async function sendLeagueChatMessage(lines) {
   return data;
 }
 
+export async function sendLeagueInGamePreset(presetId, trigger = "manual", confirmation = "") {
+  const { data } = await API.post("/league-lab/toolkit/in-game-presets/send", {
+    preset_id: presetId,
+    trigger,
+    confirmation,
+  });
+  return data;
+}
+
+export async function sendLeagueInGameLines(lines, confirmation) {
+  const { data } = await API.post("/league-lab/toolkit/in-game-presets/send-lines", { lines, confirmation });
+  return data;
+}
+
 export async function terminateLeagueGameClient() {
   const { data } = await API.post("/league-lab/toolkit/terminate-game-client");
   return data;

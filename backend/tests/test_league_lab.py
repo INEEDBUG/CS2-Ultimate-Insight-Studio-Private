@@ -692,6 +692,8 @@ def test_toolkit_account_writes_are_disabled_by_default(monkeypatch):
     assert LeagueLabSettings().toolkit_account_actions_enabled is False
     assert LeagueLabSettings().terminate_game_shortcut_enabled is False
     assert LeagueLabSettings().terminate_game_shortcut == "Ctrl+Alt+End"
+    assert LeagueLabSettings().in_game_send_enabled is False
+    assert LeagueLabSettings().in_game_fixed_presets == []
     monkeypatch.setattr(league_lab.league_lab_service, "settings", LeagueLabSettings())
     body = league_lab.EventRewardClaim(event_id="event-1", confirmation="我确认领取")
     with pytest.raises(league_lab.HTTPException) as caught:
@@ -1625,3 +1627,101 @@ def test_arbitrary_game_preview_falls_back_to_sgp(monkeypatch):
     assert result["metadata"]["game_id"] == 123
     assert result["ongoing_preview"]["players"][0]["champion_name"] == "黑暗之女"
     assert result["warnings"] == ["LCU unavailable"]
+
+
+def test_fixed_text_preset_uses_lcu_chat_in_champion_select(monkeypatch):
+    calls = []
+    settings = LeagueLabSettings(
+        toolkit_account_actions_enabled=True,
+        in_game_send_enabled=True,
+        in_game_fixed_presets=[{"id": "hello", "title": "问候", "content": "第一行\n第二行"}],
+    )
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, json_body))
+        if path == "/lol-gameflow/v1/gameflow-phase":
+            return "ChampSelect"
+        if path == "/lol-chat/v1/conversations":
+            return [{"id": "champ-chat", "type": "championSelect"}]
+        return None
+
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", settings)
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    result = asyncio.run(league_lab.league_send_in_game_preset(
+        league_lab.InGamePresetSend(preset_id="hello", confirmation="我确认发送")
+    ))
+
+    assert result["transport"] == "lcu"
+    assert calls[-1] == (
+        "POST",
+        "/lol-chat/v1/conversations/champ-chat/messages",
+        {"body": "第一行\n第二行", "type": "chat"},
+    )
+
+
+def test_fixed_text_preset_shortcut_requires_configured_shortcut(monkeypatch):
+    settings = LeagueLabSettings(
+        toolkit_account_actions_enabled=True,
+        in_game_send_enabled=True,
+        in_game_fixed_presets=[{"id": "hello", "title": "问候", "content": "你好"}],
+    )
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", settings)
+
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.league_send_in_game_preset(
+            league_lab.InGamePresetSend(preset_id="hello", trigger="shortcut")
+        ))
+    assert caught.value.status_code == 409
+
+
+def test_fixed_text_preset_uses_guarded_native_input_in_game(monkeypatch):
+    settings = LeagueLabSettings(
+        toolkit_account_actions_enabled=True,
+        in_game_send_enabled=True,
+        in_game_fixed_presets=[{"id": "hello", "title": "问候", "shortcut": "Ctrl+Alt+H", "content": "只发这一行"}],
+    )
+
+    async def request(method, path, *, json_body=None, params=None):
+        if path == "/lol-gameflow/v1/gameflow-phase":
+            return "InProgress"
+        raise RuntimeError(path)
+
+    sent = []
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", settings)
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    monkeypatch.setattr(league_lab, "_send_text_to_foreground_league_game", lambda text: sent.append(text) or 4321)
+    result = asyncio.run(league_lab.league_send_in_game_preset(
+        league_lab.InGamePresetSend(preset_id="hello", trigger="shortcut")
+    ))
+
+    assert sent == ["只发这一行"]
+    assert result["transport"] == "native"
+    assert result["pid"] == 4321
+
+
+def test_ad_hoc_in_game_lines_require_exact_confirmation(monkeypatch):
+    settings = LeagueLabSettings(
+        toolkit_account_actions_enabled=True,
+        in_game_send_enabled=True,
+    )
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", settings)
+
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.league_send_in_game_lines(
+            league_lab.InGameAdHocSend(lines=["友方近况：状态稳定"], confirmation="确认")
+        ))
+    assert caught.value.status_code == 422
+
+    sent = []
+
+    async def send_lines(lines):
+        sent.extend(lines)
+        return {"sent": True, "transport": "lcu", "line_count": len(lines)}
+
+    monkeypatch.setattr(league_lab, "_send_league_preset_lines", send_lines)
+    result = asyncio.run(league_lab.league_send_in_game_lines(
+        league_lab.InGameAdHocSend(lines=["友方近况：状态稳定"], confirmation="我确认发送")
+    ))
+
+    assert sent == ["友方近况：状态稳定"]
+    assert result == {"sent": True, "transport": "lcu", "line_count": 1}

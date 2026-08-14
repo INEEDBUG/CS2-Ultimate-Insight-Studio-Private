@@ -61,6 +61,7 @@ import FirstRunWelcome, { shouldShowFirstRunWelcome } from "./components/FirstRu
 import DemoDownloadActivityCenter from "./components/DemoDownloadActivityCenter";
 import LeagueMiniAutoManager from "./components/LeagueMiniAutoManager";
 import LeagueGlobalShortcutManager from "./components/LeagueGlobalShortcutManager";
+import LeaguePresetShortcutManager from "./components/LeaguePresetShortcutManager";
 
 const GuidePage = lazy(() => import("./pages/GuidePage"));
 const DemoLibraryPage = lazy(() => import("./pages/DemoLibraryPage"));
@@ -3311,6 +3312,7 @@ export default function App() {
       <div className="app-shell relative flex h-screen flex-col overflow-hidden bg-cs2-bg-page text-cs2-text-primary">
         <LeagueMiniAutoManager />
         <LeagueGlobalShortcutManager />
+        <LeaguePresetShortcutManager />
         <CustomTitleBar />
         <DemoDownloadActivityCenter />
         <DesktopCloseDialog

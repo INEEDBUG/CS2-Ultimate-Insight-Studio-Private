@@ -80,6 +80,13 @@ def _default_auto_select_profiles() -> dict[str, AutoSelectProfile]:
     return {key: AutoSelectProfile() for key in ("ranked", "aram", "arena", "urf", "clash", "doom-bots", "custom", "default")}
 
 
+class InGameFixedTextPreset(BaseModel):
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")
+    title: str = Field(default="未命名预设", max_length=64)
+    shortcut: str | None = Field(default=None, max_length=80)
+    content: str = Field(default="", max_length=65536)
+
+
 class LeagueLabSettings(BaseModel):
     automation_enabled: bool = False
     auto_accept_enabled: bool = False
@@ -138,6 +145,9 @@ class LeagueLabSettings(BaseModel):
     toolkit_account_actions_enabled: bool = False
     terminate_game_shortcut_enabled: bool = False
     terminate_game_shortcut: str = Field(default="Ctrl+Alt+End", min_length=3, max_length=80)
+    in_game_send_enabled: bool = False
+    in_game_send_interval_ms: int = Field(default=250, ge=100, le=5000)
+    in_game_fixed_presets: list[InGameFixedTextPreset] = Field(default_factory=list, max_length=100)
 
 
 class ChampionLoadout(BaseModel):
@@ -169,6 +179,17 @@ class ChatMessageSend(BaseModel):
 
 class InGameTextSend(BaseModel):
     text: str = Field(min_length=1, max_length=300)
+
+
+class InGamePresetSend(BaseModel):
+    preset_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")
+    trigger: Literal["manual", "shortcut"] = "manual"
+    confirmation: str = Field(default="", max_length=20)
+
+
+class InGameAdHocSend(BaseModel):
+    lines: list[str] = Field(min_length=1, max_length=10)
+    confirmation: str = Field(default="", max_length=20)
 
 
 class OpggRuneApply(BaseModel):
@@ -4025,6 +4046,85 @@ async def league_terminate_game_client():
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"terminated": True, "pid": pid}
+
+
+_in_game_send_lock = asyncio.Lock()
+
+
+async def _send_league_preset_lines(lines: list[str]) -> dict:
+    normalized = [line.strip() for line in lines if line.strip()]
+    if not normalized:
+        raise HTTPException(status_code=422, detail="预设内容不能为空")
+    if len(normalized) > 10 or any(len(line) > 300 for line in normalized):
+        raise HTTPException(status_code=422, detail="每次最多发送 10 行，单行不能超过 300 字")
+    try:
+        live_phase = await league_lab_service.request("GET", "/lol-gameflow/v1/gameflow-phase")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    live_phase = str(live_phase or league_lab_service.phase)
+    if live_phase in {"Lobby", "ChampSelect"}:
+        try:
+            conversations = await league_lab_service.request("GET", "/lol-chat/v1/conversations")
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        wanted = {"ChampSelect": {"championselect", "champion-select"}, "Lobby": {"customgame", "custom-game"}}[live_phase]
+        conversation = next(
+            (
+                row for row in conversations
+                if isinstance(row, dict) and str(row.get("type") or "").lower() in wanted and row.get("id")
+            ),
+            None,
+        ) if isinstance(conversations, list) else None
+        if not conversation:
+            raise HTTPException(status_code=409, detail="当前阶段没有可用的 LCU 对话")
+        try:
+            await league_lab_service.request(
+                "POST", f"/lol-chat/v1/conversations/{conversation['id']}/messages",
+                json_body={"body": "\n".join(normalized), "type": "chat"},
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"sent": True, "phase": live_phase, "line_count": len(normalized), "transport": "lcu"}
+    if live_phase != "InProgress":
+        raise HTTPException(status_code=409, detail="当前不在房间、英雄选择或游戏进行阶段")
+    async with _in_game_send_lock:
+        pid = None
+        for index, line in enumerate(normalized):
+            try:
+                pid = await asyncio.to_thread(_send_text_to_foreground_league_game, line)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            if index < len(normalized) - 1:
+                await asyncio.sleep(league_lab_service.settings.in_game_send_interval_ms / 1000)
+    return {"sent": True, "phase": live_phase, "line_count": len(normalized), "transport": "native", "pid": pid}
+
+
+@router.post("/toolkit/in-game-presets/send")
+async def league_send_in_game_preset(body: InGamePresetSend):
+    _require_toolkit_account_actions()
+    settings = league_lab_service.settings
+    if not settings.in_game_send_enabled:
+        raise HTTPException(status_code=403, detail="请先启用游戏内预设发送")
+    preset = next((row for row in settings.in_game_fixed_presets if row.id == body.preset_id), None)
+    if not preset:
+        raise HTTPException(status_code=404, detail="未找到该固定文字预设")
+    if body.trigger == "manual":
+        if body.confirmation != "我确认发送":
+            raise HTTPException(status_code=422, detail="确认短语不正确")
+    elif not preset.shortcut:
+        raise HTTPException(status_code=409, detail="该预设没有启用快捷键")
+    result = await _send_league_preset_lines(preset.content.splitlines())
+    return {**result, "preset_id": preset.id, "trigger": body.trigger}
+
+
+@router.post("/toolkit/in-game-presets/send-lines")
+async def league_send_in_game_lines(body: InGameAdHocSend):
+    _require_toolkit_account_actions()
+    if not league_lab_service.settings.in_game_send_enabled:
+        raise HTTPException(status_code=403, detail="请先启用游戏内预设发送")
+    if body.confirmation != "我确认发送":
+        raise HTTPException(status_code=422, detail="确认短语不正确")
+    return await _send_league_preset_lines(body.lines)
 
 
 @router.post("/toolkit/chat-message")

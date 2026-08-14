@@ -61,6 +61,7 @@ This document prevents the League integration from becoming a collection of unre
 - OP.GG auxiliary-window parity: a separately managed, resizable and pinned window proxies only the fixed `lol-api-champion.op.gg` origin, supports mode/region/tier/position/version filters, a searchable tier table and champion build details for spells, runes, skill order, items, counters, synergies and Arena augments. ChampSelect follows the current champion/mode/position and can explicitly or automatically apply the leading spell/rune/item recommendations. Every automatic write defaults off; existing integrated champion loadouts win conflicts, item-set writes are atomic, and EndOfGame cleanup removes only `insight-opgg-*` files.
 - Arbitrary Game ID preview and dry-run parity: the toolkit resolves a completed match through LCU with current-region SGP fallback, normalizes both team scoreboards, optionally loads the timeline summary, and can route the historical roster into the existing ongoing-game panel without writing any client state.
 - Configurable global game-termination shortcut parity: the Tauri global-shortcut plugin is scoped to the main window, registration is driven by persisted League settings, the feature defaults off, and every trigger still passes the backend foreground-process guard before `League of Legends.exe` can be terminated.
+- In-game-send parity: fixed-text presets support ordered multiline content and optional global shortcuts, while recent-form, premade and jungle-analysis drafts support friendly/enemy/all targeting. Lobby and ChampSelect use the matching LCU conversation; InProgress sends one line at a time only after re-reading the live phase and verifying `League of Legends.exe` remains foreground. The account-write gate, feature switch and every preset shortcut all default off, while manual sends require the exact confirmation phrase.
 
 ### Partially implemented; upstream behavior is richer
 
@@ -75,7 +76,6 @@ This document prevents the League integration from becoming a collection of unre
 
 - Saved named filter presets and a local AND/OR composable rule builder are implemented; predicates requiring richer timeline/team payloads remain (the durable SQLite collection workspace works now).
 - Loot crafting/redeeming is intentionally not exposed: the reviewed upstream `LootTools.vue` labels itself under development and leaves its `craft` handler empty. Read-only inventory parity is retained until upstream itself has a working, auditable user flow.
-- In-game preset messaging: explicit fixed-text presets plus generated recent-form, premade and jungle-path drafts for lobby/champion-select are implemented, along with manual chat availability/status-message/ranked-display tools and one-shot login restoration. The spell-timer overlay can inject its generated callout only into a verified foreground League game; broader preset injection remains.
 
 ## Porting decisions
 

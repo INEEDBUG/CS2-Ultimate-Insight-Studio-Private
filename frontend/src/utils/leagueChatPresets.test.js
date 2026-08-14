@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildLeagueFormPreset, buildLeaguePremadePreset } from "./leagueChatPresets";
+import { buildLeagueFormPreset, buildLeagueJunglePreset, buildLeaguePremadePreset } from "./leagueChatPresets";
 
 const players = [
   { summoner:{gameName:"Alpha"}, champion_name:"阿狸", recent:{matches:10,wins:6}, champion_usage:{matches:4,average_kda:3.125}, premade_group:1 },
@@ -13,5 +13,10 @@ describe("League chat preset generators", () => {
 
   it("groups inferred premades", () => {
     expect(buildLeaguePremadePreset(players)).toEqual(["组排 A：Alpha、Beta"]);
+  });
+
+  it("only includes players with an analyzed jungle draft", () => {
+    const enriched=[...players,{summoner:{gameName:"Jungle"},jungle_analysis:{games_analyzed:4,draft:"红开后偏向下路"}}];
+    expect(buildLeagueJunglePreset(enriched)).toEqual(["Jungle：红开后偏向下路"]);
   });
 });

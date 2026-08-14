@@ -25,3 +25,13 @@ export function buildLeaguePremadePreset(players = []) {
     .filter(([, names]) => names.length > 1)
     .map(([group, names]) => `组排 ${String.fromCharCode(64 + group)}：${names.join("、")}`);
 }
+
+export function buildLeagueJunglePreset(players = []) {
+  return players
+    .map((player, index) => {
+      const analysis = player?.jungle_analysis || {};
+      if (!analysis.games_analyzed || !analysis.draft) return null;
+      return `${displayName(player, index)}：${analysis.draft}`;
+    })
+    .filter(Boolean);
+}
