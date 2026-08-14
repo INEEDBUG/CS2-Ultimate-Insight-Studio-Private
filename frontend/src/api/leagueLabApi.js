@@ -131,6 +131,31 @@ export async function saveLeaguePlayerTag(puuid, tag) {
   return data;
 }
 
+export async function fetchLeaguePlayerTags({ page = 1, pageSize = 20, query = "", currentAccountOnly = true } = {}) {
+  const { data } = await API.get("/league-lab/player-tags", { params: {
+    page,
+    page_size: pageSize,
+    query,
+    current_account_only: currentAccountOnly,
+  } });
+  return data;
+}
+
+export async function updateLeaguePlayerTag(tagKey, tag) {
+  const { data } = await API.put(`/league-lab/player-tags/${encodeURIComponent(tagKey)}`, tag);
+  return data;
+}
+
+export async function deleteLeaguePlayerTag(tagKey) {
+  const { data } = await API.delete(`/league-lab/player-tags/${encodeURIComponent(tagKey)}`);
+  return data;
+}
+
+export async function importLeaguePlayerTags(rows) {
+  const { data } = await API.post("/league-lab/player-tags/import", { rows });
+  return data;
+}
+
 export async function fetchLeagueOngoingGame() {
   const { data } = await API.get("/league-lab/ongoing-game");
   return data;

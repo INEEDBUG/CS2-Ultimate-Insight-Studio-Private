@@ -69,6 +69,7 @@ This document prevents the League integration from becoming a collection of unre
 - Configurable global game-termination shortcut parity: the Tauri global-shortcut plugin is scoped to the main window, registration is driven by persisted League settings, the feature defaults off, and every trigger still passes the backend foreground-process guard before `League of Legends.exe` can be terminated.
 - In-game-send parity: fixed-text presets support ordered multiline content, optional global shortcuts and an independent cancel shortcut, while recent-form, premade and jungle-analysis drafts support friendly/enemy/all targeting with nine independent target shortcuts. Lobby and ChampSelect use the matching LCU conversation; InProgress sends one line at a time only after re-reading the live phase and verifying `League of Legends.exe` remains foreground. The account-write gate, feature switch and every preset shortcut all default off, while manual sends require the exact confirmation phrase. Global show shortcuts are also available for the stateful ongoing-game window, OP.GG and cooldown timer.
 - League settings export/import parity: the client exports a versioned local JSON document, recursively excludes credential-like fields, accepts only settings known by the installed version and rejects future schemas. Import never restores the automation, account-write, in-game-send, process-termination or OP.GG auto-apply master switches; the user must explicitly enable them again after reviewing the restored configuration.
+- Tagged-player storage parity: tags are keyed by the active local account plus target PUUID while retaining a legacy global fallback, and the toolkit provides search, current-account filtering, pagination, player-center routing, inline editing, selected deletion and versioned JSON import/export. Streamer mode defers loading and masks the manager until the user explicitly reveals it for the current session.
 
 ### Implemented with deliberate React/Tauri presentation differences
 
@@ -90,7 +91,7 @@ This table is stricter than the shard matrix below: a backend capability is not 
 | Upstream user surface | Local surface | Current evidence | Status |
 | --- | --- | --- | --- |
 | Startup and client connection | League lab connection/startup cards | multi-client discovery, exact-PID binding and Riot/WeGame/TCLS launch cards | Equivalent |
-| Player tabs and summoner search | integrated player center | current/cross-region Riot ID lookup, recent tabs, ranked, mastery, challenges, tags, pagination and collection | Equivalent with host layout |
+| Player tabs and summoner search | integrated player center | current/cross-region Riot ID lookup, recent tabs, ranked, mastery, challenges, account-scoped tags with full management/import/export, pagination and collection | Equivalent with host layout |
 | Match-history overview | current-account history and player-center detailed cards | configurable load count, post-game refresh, collapsed result/performance row, ten-player roster, replay action and expandable tabs | Equivalent foundation |
 | Match summary | `双方总览` | both teams, clickable players, K/D/A, KP, damage share, CS/gold and loadouts | Equivalent foundation |
 | Raw match details | `详细属性` | searchable horizontal ten-player scalar-stat matrix with sticky headers, game/source/version/map metadata, common Chinese labels and click-open ten-player comparison charts | Equivalent foundation; upstream chart styling and grouped stat taxonomy still differ |
@@ -131,7 +132,7 @@ This is the completion checklist against the authoritative registration list in 
 | `in-game-send` | fixed/form/premade/jungle presets, target shortcuts and foreground guard | Equivalent |
 | `ongoing-game` | enriched ten-player view, premade inference, champion usage and jungle timelines | Equivalent |
 | `respawn-timer` | opt-in Live Client Data timer in Mini | Equivalent |
-| `saved-player` | durable tags, recent encounters and player-center routing | Equivalent |
+| `saved-player` | account-scoped durable tags, tag management/import/export, recent encounters and player-center routing | Equivalent |
 | `sgp` | Tencent/global SGP routing with in-memory entitlements token and LCU fallback | Equivalent |
 | `statistics` | upstream version telemetry is not transmitted | Deliberately excluded for privacy |
 | `extra-assets` | LCU-backed champion/rune/spell/skin image proxy and bundled map metadata | Host equivalent |

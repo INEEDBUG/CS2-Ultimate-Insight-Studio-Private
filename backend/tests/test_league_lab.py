@@ -11,6 +11,51 @@ from app import league_lab
 from app.league_lab import LeagueLabService, LeagueLabSettings, parse_league_client_command_line
 
 
+def test_player_tags_are_account_scoped_and_manageable(monkeypatch, tmp_path):
+    monkeypatch.setattr(league_lab, "_player_tags_path", lambda: tmp_path / "league-player-tags.json")
+    monkeypatch.setattr(league_lab.league_lab_service, "current_summoner", {"puuid": "owner-a"})
+
+    asyncio.run(league_lab.save_league_player_tag("target", league_lab.PlayerTagBody(label="队友", note="稳定")))
+    assert league_lab._find_player_tag(league_lab._read_player_tags(), "target") == {
+        "label": "队友",
+        "note": "稳定",
+        "color": "emerald",
+    }
+
+    monkeypatch.setattr(league_lab.league_lab_service, "current_summoner", {"puuid": "owner-b"})
+    assert league_lab._find_player_tag(league_lab._read_player_tags(), "target") == {}
+    asyncio.run(league_lab.save_league_player_tag("target", league_lab.PlayerTagBody(label="对手")))
+
+    current = asyncio.run(league_lab.list_league_player_tags(current_account_only=True))
+    assert current["total"] == 1
+    assert current["rows"][0]["owner_puuid"] == "owner-b"
+    assert current["rows"][0]["tag"]["label"] == "对手"
+    assert asyncio.run(league_lab.list_league_player_tags(current_account_only=False))["total"] == 2
+
+    updated = asyncio.run(league_lab.update_managed_league_player_tag(
+        "owner-b::target", league_lab.PlayerTagBody(label="宿敌", color="rose")
+    ))
+    assert updated["tag"] == {"label": "宿敌", "note": "", "color": "rose"}
+
+    deleted = asyncio.run(league_lab.delete_league_player_tag("owner-b::target"))
+    assert deleted == {"deleted": True, "key": "owner-b::target"}
+    assert asyncio.run(league_lab.list_league_player_tags(current_account_only=True))["total"] == 0
+
+
+def test_player_tag_import_uses_current_account_and_paginates(monkeypatch, tmp_path):
+    monkeypatch.setattr(league_lab, "_player_tags_path", lambda: tmp_path / "league-player-tags.json")
+    monkeypatch.setattr(league_lab.league_lab_service, "current_summoner", {"puuid": "owner"})
+    body = league_lab.PlayerTagsImportBody(rows=[
+        league_lab.PlayerTagImportRow(puuid="one", label="Alpha"),
+        league_lab.PlayerTagImportRow(puuid="two", label="Beta"),
+    ])
+    result = asyncio.run(league_lab.import_league_player_tags(body))
+    assert result == {"imported": 2, "total": 2}
+    page = asyncio.run(league_lab.list_league_player_tags(page=1, page_size=1, query="beta"))
+    assert page["total"] == 1
+    assert page["rows"][0]["puuid"] == "two"
+
+
 def test_parse_league_client_command_line_extracts_lcu_credentials():
     parsed = parse_league_client_command_line(
         '"LeagueClientUx.exe" --app-port=54321 --remoting-auth-token=secret_token '

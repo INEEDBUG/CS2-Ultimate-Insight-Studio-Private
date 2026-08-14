@@ -2099,6 +2099,36 @@ def _write_player_tags(body: dict[str, dict]) -> None:
     temp.replace(path)
 
 
+def _player_tag_key(owner_puuid: str, puuid: str) -> str:
+    owner = str(owner_puuid or "").strip()
+    target = str(puuid or "").strip()
+    return f"{owner}::{target}" if owner else target
+
+
+def _split_player_tag_key(key: str, record: dict | None = None) -> tuple[str, str]:
+    raw = str(key or "")
+    if "::" in raw:
+        owner, puuid = raw.split("::", 1)
+        return owner, puuid
+    body = record if isinstance(record, dict) else {}
+    return str(body.get("_owner_puuid") or ""), raw
+
+
+def _public_player_tag(record: dict | None) -> dict:
+    body = record if isinstance(record, dict) else {}
+    return {
+        "label": str(body.get("label") or ""),
+        "note": str(body.get("note") or ""),
+        "color": str(body.get("color") or "emerald"),
+    }
+
+
+def _find_player_tag(tags: dict[str, dict], puuid: str, owner_puuid: str | None = None) -> dict:
+    owner = str(owner_puuid if owner_puuid is not None else league_lab_service.current_summoner.get("puuid") or "")
+    record = tags.get(_player_tag_key(owner, puuid)) or tags.get(str(puuid))
+    return _public_player_tag(record) if record else {}
+
+
 def _read_recent_players() -> list[dict]:
     try:
         body = json.loads(_recent_players_path().read_text(encoding="utf-8"))
@@ -2473,7 +2503,7 @@ def _normalize_game_preview(game: dict, names: dict[int, str], source: str, time
                     "tagLine": tag_line,
                     "profileIconId": participant.get("profileIcon") or participant.get("profileIconId") or identity.get("profileIcon") or identity.get("profileIconId"),
                 },
-                "tag": tags.get(puuid) or {},
+                "tag": _find_player_tag(tags, puuid),
                 "premade_group": None,
                 "recent": {"matches": 0, "wins": 0},
                 "champion_usage": {"matches": 0, "wins": 0, "average_kda": 0},
@@ -3130,7 +3160,7 @@ async def league_player_search_servers():
 async def recent_league_players(limit: int = 40):
     rows = _read_recent_players()[: max(1, min(limit, 200))]
     tags = _read_player_tags()
-    public_rows = [{**{key: value for key, value in row.items() if key != "encounters"}, "tag": tags.get(str(row.get("puuid"))) or {}} for row in rows]
+    public_rows = [{**{key: value for key, value in row.items() if key != "encounters"}, "tag": _find_player_tag(tags, str(row.get("puuid")))} for row in rows]
     return {"players": public_rows, "count": len(public_rows)}
 
 
@@ -3267,7 +3297,7 @@ async def _load_player_bundle(
     current_puuid = str(league_lab_service.current_summoner.get("puuid") or "")
     if puuid == current_puuid:
         _index_match_encounters(matches, current_puuid)
-    tags = _read_player_tags().get(puuid) or {}
+    tags = _find_player_tag(_read_player_tags(), puuid)
     if match_limit >= 100 and beg_index == 0 and matches:
         await _store_match_collection(puuid, matches)
     collection_count = await _match_collection_count(puuid)
@@ -3448,15 +3478,135 @@ class PlayerTagBody(BaseModel):
     color: str = Field(default="emerald", max_length=24)
 
 
+class PlayerTagImportRow(PlayerTagBody):
+    puuid: str = Field(min_length=1, max_length=200)
+    owner_puuid: str = Field(default="", max_length=200)
+
+
+class PlayerTagsImportBody(BaseModel):
+    rows: list[PlayerTagImportRow] = Field(default_factory=list, max_length=1000)
+
+
+@router.get("/player-tags")
+async def list_league_player_tags(page: int = 1, page_size: int = 20, query: str = "", current_account_only: bool = True):
+    current_owner = str(league_lab_service.current_summoner.get("puuid") or "")
+    needle = str(query or "").strip().casefold()
+    known_players = {
+        str(row.get("puuid")): row
+        for row in _read_recent_players()
+        if isinstance(row, dict) and row.get("puuid")
+    }
+    rows = []
+    for key, record in _read_player_tags().items():
+        if not isinstance(record, dict):
+            continue
+        owner_puuid, puuid = _split_player_tag_key(key, record)
+        if not puuid or (current_account_only and owner_puuid and owner_puuid != current_owner):
+            continue
+        tag = _public_player_tag(record)
+        player = known_players.get(puuid) or {}
+        searchable = " ".join((
+            puuid,
+            owner_puuid,
+            tag["label"],
+            tag["note"],
+            str(player.get("game_name") or ""),
+            str(player.get("tag_line") or ""),
+        )).casefold()
+        if needle and needle not in searchable:
+            continue
+        rows.append({
+            "key": key,
+            "owner_puuid": owner_puuid,
+            "puuid": puuid,
+            "tag": tag,
+            "player": {
+                "game_name": str(player.get("game_name") or ""),
+                "tag_line": str(player.get("tag_line") or ""),
+                "profile_icon_id": player.get("profile_icon_id"),
+            },
+            "updated_at": float(record.get("_updated_at") or 0),
+        })
+    rows.sort(key=lambda row: (row["updated_at"], row["tag"]["label"], row["puuid"]), reverse=True)
+    safe_page_size = max(1, min(page_size, 100))
+    safe_page = max(1, page)
+    start = (safe_page - 1) * safe_page_size
+    return {
+        "rows": rows[start:start + safe_page_size],
+        "total": len(rows),
+        "page": safe_page,
+        "page_size": safe_page_size,
+        "current_owner_puuid": current_owner,
+    }
+
+
+@router.post("/player-tags/import")
+async def import_league_player_tags(body: PlayerTagsImportBody):
+    current_owner = str(league_lab_service.current_summoner.get("puuid") or "")
+    tags = _read_player_tags()
+    imported = 0
+    for row in body.rows:
+        owner_puuid = row.owner_puuid or current_owner
+        key = _player_tag_key(owner_puuid, row.puuid)
+        tags[key] = {
+            **row.model_dump(exclude={"puuid", "owner_puuid"}),
+            "_owner_puuid": owner_puuid,
+            "_updated_at": time.time(),
+        }
+        imported += 1
+    if imported:
+        _write_player_tags(tags)
+    return {"imported": imported, "total": len(tags)}
+
+
+@router.delete("/player-tags/{tag_key}")
+async def delete_league_player_tag(tag_key: str):
+    tags = _read_player_tags()
+    if tag_key not in tags:
+        raise HTTPException(status_code=404, detail="玩家标签不存在")
+    tags.pop(tag_key, None)
+    _write_player_tags(tags)
+    return {"deleted": True, "key": tag_key}
+
+
+@router.put("/player-tags/{tag_key}")
+async def update_managed_league_player_tag(tag_key: str, body: PlayerTagBody):
+    tags = _read_player_tags()
+    existing = tags.get(tag_key)
+    if not isinstance(existing, dict):
+        raise HTTPException(status_code=404, detail="玩家标签不存在")
+    owner_puuid, puuid = _split_player_tag_key(tag_key, existing)
+    if body.label or body.note:
+        tags[tag_key] = {
+            **body.model_dump(),
+            "_owner_puuid": owner_puuid,
+            "_updated_at": time.time(),
+        }
+        result = _public_player_tag(tags[tag_key])
+    else:
+        tags.pop(tag_key, None)
+        result = None
+    _write_player_tags(tags)
+    return {"key": tag_key, "owner_puuid": owner_puuid, "puuid": puuid, "tag": result}
+
+
 @router.put("/players/{puuid}/tag")
 async def save_league_player_tag(puuid: str, body: PlayerTagBody):
     tags = _read_player_tags()
+    owner_puuid = str(league_lab_service.current_summoner.get("puuid") or "")
+    key = _player_tag_key(owner_puuid, puuid)
     if body.label or body.note:
-        tags[puuid] = body.model_dump()
+        tags[key] = {
+            **body.model_dump(),
+            "_owner_puuid": owner_puuid,
+            "_updated_at": time.time(),
+        }
     else:
-        tags.pop(puuid, None)
+        tags.pop(key, None)
+        if not owner_puuid:
+            tags.pop(puuid, None)
     _write_player_tags(tags)
-    return {"puuid": puuid, "tag": tags.get(puuid)}
+    return {"puuid": puuid, "tag": _public_player_tag(tags.get(key)) if key in tags else None}
 
 
 _ongoing_cache: dict = {"key": "", "expires_at": 0.0, "payload": None}
@@ -3543,7 +3693,7 @@ async def league_ongoing_game():
             "position": selected_position,
             "summoner": summoner or {},
             "ranked": ranked or {},
-            "tag": (_read_player_tags().get(puuid) or {}) if settings.ongoing_show_local_tag else {},
+            "tag": _find_player_tag(_read_player_tags(), puuid) if settings.ongoing_show_local_tag else {},
             "recent": {
                 "matches": len(matches),
                 "wins": sum(1 for match in matches if match.get("win")),
