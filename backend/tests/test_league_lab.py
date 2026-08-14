@@ -1,4 +1,5 @@
 import asyncio
+import json
 import stat
 import subprocess
 import time
@@ -1187,3 +1188,126 @@ def test_game_settings_file_mode_uses_tencent_game_config(tmp_path, monkeypatch)
     finally:
         league_lab.league_lab_service.credentials = original
         settings_path.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+
+def test_opgg_account_writes_are_off_by_default():
+    settings = LeagueLabSettings()
+    assert settings.opgg_window_enabled is True
+    assert settings.opgg_auto_show is True
+    assert settings.opgg_auto_apply_runes is False
+    assert settings.opgg_auto_apply_spells is False
+    assert settings.opgg_auto_apply_items is False
+
+
+def test_opgg_proxy_uses_fixed_origin_and_cache(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": ["16.16"]}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, **kwargs):
+            calls.append((url, kwargs))
+            return FakeResponse()
+
+    league_lab._opgg_cache.clear()
+    monkeypatch.setattr(league_lab.httpx, "AsyncClient", FakeClient)
+    first = asyncio.run(league_lab.league_opgg_versions("global", "ranked"))
+    second = asyncio.run(league_lab.league_opgg_versions("global", "ranked"))
+
+    assert first == second == {"data": ["16.16"]}
+    assert calls[0][0] == "https://lol-api-champion.op.gg/api/global/champions/ranked/versions"
+    assert len(calls) == 1
+
+
+def test_opgg_spell_apply_honors_flash_position(monkeypatch):
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, json_body))
+        if method == "GET":
+            return {"spell1Id": 14, "spell2Id": 4}
+        return None
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    result = asyncio.run(league_lab.league_opgg_apply_spells(
+        league_lab.OpggSpellApply(spell_ids=[14, 4], flash_position="d")
+    ))
+
+    assert calls[-1] == ("PATCH", "/lol-champ-select/v1/session/my-selection", {"spell1Id": 4, "spell2Id": 14})
+    assert result["spell1_id"] == 4
+
+
+def test_opgg_runes_replace_an_editable_page(monkeypatch):
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, json_body))
+        if (method, path) == ("GET", "/lol-perks/v1/pages"):
+            return [{"id": 9, "isEditable": True}]
+        return None
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    result = asyncio.run(league_lab.league_opgg_apply_runes(league_lab.OpggRuneApply(
+        champion_id=86,
+        champion_name="盖伦",
+        position="top",
+        primary_page_id=8000,
+        secondary_page_id=8400,
+        primary_rune_ids=[8010, 9111, 9105, 8299],
+        secondary_rune_ids=[8429, 8451],
+        stat_mod_ids=[5008, 5008, 5001],
+    )))
+
+    assert result["page_id"] == 9
+    assert calls[-1] == ("PUT", "/lol-perks/v1/currentpage", 9)
+    assert calls[1][2]["selectedPerkIds"] == [8010, 9111, 9105, 8299, 8429, 8451, 5008, 5008, 5001]
+
+
+def test_opgg_item_set_is_written_atomically_to_dedicated_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(league_lab, "_league_recommended_items_dir", lambda: asyncio.sleep(0, result=tmp_path))
+    result = asyncio.run(league_lab.league_opgg_apply_items(league_lab.OpggItemSetApply(
+        champion_id=86,
+        champion_name="盖伦",
+        mode="ranked",
+        position="top",
+        region="global",
+        tier="all",
+        version="16.16",
+        groups=[{"title": "核心装", "item_ids": [6631, 3046, 3033]}],
+    )))
+
+    target = tmp_path / f"{result['uid']}.json"
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert target.is_file()
+    assert not target.with_suffix(".json.tmp").exists()
+    assert payload["blocks"][0]["items"][0] == {"id": "6631", "count": 1}
+
+
+def test_opgg_cleanup_removes_only_owned_item_sets(tmp_path, monkeypatch):
+    owned = tmp_path / "insight-opgg-86-ranked.json"
+    unrelated = tmp_path / "user-custom.json"
+    owned.write_text("{}", encoding="utf-8")
+    unrelated.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(league_lab, "_league_recommended_items_dir", lambda: asyncio.sleep(0, result=tmp_path))
+
+    result = asyncio.run(league_lab.league_opgg_clear_item_sets())
+
+    assert result["removed"] == [owned.name]
+    assert not owned.exists()
+    assert unrelated.exists()

@@ -114,6 +114,33 @@ fn open_league_cd_timer(app: AppHandle) -> Result<(), String> {
     .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn open_league_opgg(app: AppHandle) -> Result<(), String> {
+    let lifecycle = app.state::<LeagueOpggLifecycle>();
+    lifecycle.manually_hidden.store(false, Ordering::SeqCst);
+    if let Some(window) = app.get_webview_window("league-opgg") {
+        window.show().map_err(|error| error.to_string())?;
+        window.unminimize().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    let content_protected = app
+        .state::<LeaguePrivacyLifecycle>()
+        .content_protected
+        .load(Ordering::SeqCst);
+    WebviewWindowBuilder::new(&app, "league-opgg", WebviewUrl::App("opgg.html".into()))
+        .title("Insight · OP.GG 英雄数据")
+        .inner_size(620.0, 760.0)
+        .min_inner_size(530.0, 530.0)
+        .resizable(true)
+        .decorations(true)
+        .always_on_top(true)
+        .content_protected(content_protected)
+        .build()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
 #[derive(Default)]
 struct LeagueMiniLifecycle {
     manually_hidden: AtomicBool,
@@ -122,6 +149,12 @@ struct LeagueMiniLifecycle {
 
 #[derive(Default)]
 struct LeagueCdTimerLifecycle {
+    manually_hidden: AtomicBool,
+    context: Mutex<String>,
+}
+
+#[derive(Default)]
+struct LeagueOpggLifecycle {
     manually_hidden: AtomicBool,
     context: Mutex<String>,
 }
@@ -136,7 +169,13 @@ fn set_league_content_protection(app: AppHandle, enabled: bool) -> Result<(), St
     app.state::<LeaguePrivacyLifecycle>()
         .content_protected
         .store(enabled, Ordering::SeqCst);
-    for label in ["main", "league-mini", "league-ongoing", "league-cd-timer"] {
+    for label in [
+        "main",
+        "league-mini",
+        "league-ongoing",
+        "league-cd-timer",
+        "league-opgg",
+    ] {
         if let Some(window) = app.get_webview_window(label) {
             window
                 .set_content_protected(enabled)
@@ -192,6 +231,44 @@ fn sync_league_cd_timer(app: AppHandle, should_show: bool, context: String) -> R
         return Ok(());
     }
     open_league_cd_timer(app)
+}
+
+#[tauri::command]
+fn sync_league_opgg(
+    app: AppHandle,
+    enabled: bool,
+    should_show: bool,
+    context: String,
+) -> Result<(), String> {
+    let lifecycle = app.state::<LeagueOpggLifecycle>();
+    let mut saved_context = lifecycle
+        .context
+        .lock()
+        .map_err(|_| "OP.GG lifecycle lock poisoned".to_string())?;
+    if *saved_context != context {
+        *saved_context = context;
+        lifecycle.manually_hidden.store(false, Ordering::SeqCst);
+    }
+    drop(saved_context);
+    if !enabled {
+        if let Some(window) = app.get_webview_window("league-opgg") {
+            window.hide().map_err(|error| error.to_string())?;
+        }
+        return Ok(());
+    }
+    if app.get_webview_window("league-opgg").is_none() {
+        open_league_opgg(app.clone())?;
+        if !should_show {
+            if let Some(window) = app.get_webview_window("league-opgg") {
+                window.hide().map_err(|error| error.to_string())?;
+            }
+        }
+        return Ok(());
+    }
+    if should_show && !lifecycle.manually_hidden.load(Ordering::SeqCst) {
+        open_league_opgg(app)?;
+    }
+    Ok(())
 }
 
 struct BackendProcess {
@@ -655,6 +732,7 @@ pub fn run() {
         .manage(AppLifecycle::default())
         .manage(LeagueMiniLifecycle::default())
         .manage(LeagueCdTimerLifecycle::default())
+        .manage(LeagueOpggLifecycle::default())
         .manage(LeaguePrivacyLifecycle::default())
         .invoke_handler(tauri::generate_handler![
             read_legacy_ui_state,
@@ -668,8 +746,10 @@ pub fn run() {
             open_league_mini,
             open_league_ongoing,
             open_league_cd_timer,
+            open_league_opgg,
             sync_league_mini,
             sync_league_cd_timer,
+            sync_league_opgg,
             set_league_content_protection
         ])
         .setup(|app| {
@@ -764,6 +844,18 @@ pub fn run() {
         } if label == "league-cd-timer" => {
             api.prevent_close();
             let lifecycle = handle.state::<LeagueCdTimerLifecycle>();
+            lifecycle.manually_hidden.store(true, Ordering::SeqCst);
+            if let Some(window) = handle.get_webview_window(&label) {
+                let _ = window.hide();
+            }
+        }
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { api, .. },
+            ..
+        } if label == "league-opgg" => {
+            api.prevent_close();
+            let lifecycle = handle.state::<LeagueOpggLifecycle>();
             lifecycle.manually_hidden.store(true, Ordering::SeqCst);
             if let Some(window) = handle.get_webview_window(&label) {
                 let _ = window.hide();

@@ -5,6 +5,7 @@ import { fetchLeagueLabStatus } from "../api/leagueLabApi";
 export default function LeagueMiniAutoManager() {
   const lastSync = useRef("");
   const lastCooldownSync = useRef("");
+  const lastOpggSync = useRef("");
 
   useEffect(() => {
     if (!window.__TAURI_INTERNALS__) return undefined;
@@ -29,6 +30,14 @@ export default function LeagueMiniAutoManager() {
         if (cooldownSignature !== lastCooldownSync.current) {
           lastCooldownSync.current = cooldownSignature;
           await invoke("sync_league_cd_timer", { shouldShow: cooldownShouldShow, context: cooldownContext });
+        }
+        const opggEnabled = Boolean(settings.opgg_window_enabled);
+        const opggShouldShow = Boolean(opggEnabled && settings.opgg_auto_show && status?.opgg_should_show);
+        const opggContext = `${status?.connected ? "connected" : "offline"}:${status?.phase || "None"}`;
+        const opggSignature = `${opggEnabled}:${opggShouldShow}:${opggContext}:${contentProtected}`;
+        if (opggSignature !== lastOpggSync.current) {
+          lastOpggSync.current = opggSignature;
+          await invoke("sync_league_opgg", { enabled: opggEnabled, shouldShow: opggShouldShow, context: opggContext });
         }
       } catch {
         // Backend startup and shutdown races are expected; the next poll retries.

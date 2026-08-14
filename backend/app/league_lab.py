@@ -125,6 +125,12 @@ class LeagueLabSettings(BaseModel):
     cooldown_timer_enabled: bool = False
     cooldown_timer_type: Literal["countdown", "countup"] = "countdown"
     cooldown_timer_reverse_adjustment: bool = False
+    opgg_window_enabled: bool = True
+    opgg_auto_show: bool = True
+    opgg_auto_apply_runes: bool = False
+    opgg_auto_apply_spells: bool = False
+    opgg_auto_apply_items: bool = False
+    opgg_flash_position: Literal["auto", "d", "f"] = "auto"
     streamer_mode_enabled: bool = False
     streamer_mode_use_aliases: bool = False
     streamer_content_protection_enabled: bool = False
@@ -159,6 +165,38 @@ class ChatMessageSend(BaseModel):
 
 class InGameTextSend(BaseModel):
     text: str = Field(min_length=1, max_length=300)
+
+
+class OpggRuneApply(BaseModel):
+    champion_id: int = Field(gt=0)
+    champion_name: str = Field(min_length=1, max_length=80)
+    position: str = Field(default="none", max_length=24)
+    primary_page_id: int = Field(gt=0)
+    secondary_page_id: int = Field(gt=0)
+    primary_rune_ids: list[int] = Field(min_length=1, max_length=8)
+    secondary_rune_ids: list[int] = Field(default_factory=list, max_length=4)
+    stat_mod_ids: list[int] = Field(default_factory=list, max_length=4)
+
+
+class OpggSpellApply(BaseModel):
+    spell_ids: list[int] = Field(min_length=2, max_length=2)
+    flash_position: Literal["auto", "d", "f"] = "auto"
+
+
+class OpggItemGroup(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    item_ids: list[int] = Field(min_length=1, max_length=80)
+
+
+class OpggItemSetApply(BaseModel):
+    champion_id: int = Field(gt=0)
+    champion_name: str = Field(min_length=1, max_length=80)
+    mode: str = Field(default="ranked", max_length=24)
+    position: str = Field(default="none", max_length=24)
+    region: str = Field(default="global", max_length=24)
+    tier: str = Field(default="all", max_length=24)
+    version: str = Field(default="", max_length=24)
+    groups: list[OpggItemGroup] = Field(min_length=1, max_length=24)
 
 
 class GameSettingsFileModeUpdate(BaseModel):
@@ -756,6 +794,7 @@ class LeagueLabService:
             "action_countdown": action_countdown,
             "respawn_timer": self.respawn_timer,
             "cooldown_timer_should_show": self.settings.cooldown_timer_enabled and self.phase == "InProgress" and self.game_mode in {"CLASSIC", "PRACTICETOOL", "ARAM", "URF", "ONEFORALL", "NEXUSBLITZ", "ULTBOOK", "KIWI"},
+            "opgg_should_show": self.settings.opgg_window_enabled and self.settings.opgg_auto_show and self.phase == "ChampSelect",
             "mini_should_show": self.settings.mini_enabled and self.settings.mini_auto_show and self.phase in {"Lobby", "Matchmaking", "ReadyCheck", "ChampSelect"} and not bool(self.champ_select.get("is_spectating")),
             "settings": self.settings.model_dump(),
         }
@@ -764,10 +803,10 @@ class LeagueLabService:
         try:
             phase = await self.request("GET", "/lol-gameflow/v1/gameflow-phase")
             self.phase = str(phase or "")
-            if self.phase == "InProgress" and not self.game_mode:
+            if self.phase in {"ChampSelect", "InProgress"}:
                 gameflow = await self.request("GET", "/lol-gameflow/v1/session")
                 self.game_mode = str((((gameflow or {}).get("gameData") or {}).get("queue") or {}).get("gameMode") or "").upper()
-            elif self.phase != "InProgress":
+            else:
                 self.game_mode = ""
             summoner = await self.request("GET", "/lol-summoner/v1/current-summoner")
             if isinstance(summoner, dict):
@@ -2823,6 +2862,17 @@ async def league_summoner_spell_icon(spell_id: int):
     return Response(content=content, media_type=media_type, headers={"Cache-Control": "private, max-age=86400"})
 
 
+@router.get("/assets/items/{item_id}.png")
+async def league_item_icon(item_id: int):
+    if item_id <= 0:
+        raise HTTPException(status_code=404, detail="装备图标不存在")
+    try:
+        content, media_type = await league_lab_service.request_bytes(f"/lol-game-data/assets/v1/items/{item_id}.png")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(content=content, media_type=media_type, headers={"Cache-Control": "private, max-age=86400"})
+
+
 @router.get("/assets/profile-icons/{profile_icon_id}.jpg")
 async def league_profile_icon(profile_icon_id: int):
     if profile_icon_id < 0:
@@ -2885,6 +2935,128 @@ async def league_loadout_catalog():
     return {"styles": normalized_styles, "spells": normalized_spells}
 
 
+_OPGG_BASE_URL = "https://lol-api-champion.op.gg"
+_OPGG_MODES = {"ranked", "aram", "arena", "nexus_blitz", "urf"}
+_OPGG_REGIONS = {"global", "na", "euw", "kr", "br", "eune", "jp", "lan", "las", "oce", "tr", "ru", "sg", "id", "ph", "th", "vn", "tw", "me"}
+_OPGG_TIERS = {"all", "ibsg", "gold_plus", "platinum_plus", "emerald_plus", "diamond_plus", "master", "master_plus", "grandmaster", "challenger"}
+_OPGG_POSITIONS = {"mid", "jungle", "adc", "top", "support", "all", "none"}
+_opgg_cache: dict[str, tuple[float, object]] = {}
+
+
+def _opgg_value(value: str, allowed: set[str], label: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in allowed:
+        raise HTTPException(status_code=422, detail=f"不支持的 OP.GG {label}: {normalized}")
+    return normalized
+
+
+async def _opgg_get(path: str, params: dict | None = None, *, cache_seconds: int = 120):
+    cache_key = json.dumps([path, params or {}], ensure_ascii=True, sort_keys=True)
+    cached = _opgg_cache.get(cache_key)
+    if cached and time.monotonic() - cached[0] < cache_seconds:
+        return cached[1]
+    try:
+        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+            response = await client.get(f"{_OPGG_BASE_URL}{path}", params=params, headers={"Accept": "application/json"})
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=f"OP.GG 数据请求失败: {type(exc).__name__}") from exc
+    _opgg_cache[cache_key] = (time.monotonic(), payload)
+    return payload
+
+
+@router.get("/opgg/versions")
+async def league_opgg_versions(region: str = "global", mode: str = "ranked"):
+    region = _opgg_value(region, _OPGG_REGIONS, "地区")
+    mode = _opgg_value(mode, _OPGG_MODES, "模式")
+    return await _opgg_get(f"/api/{region}/champions/{mode}/versions", cache_seconds=900)
+
+
+@router.get("/opgg/champions")
+async def league_opgg_champions(region: str = "global", mode: str = "ranked", tier: str = "all", version: str = ""):
+    region = _opgg_value(region, _OPGG_REGIONS, "地区")
+    mode = _opgg_value(mode, _OPGG_MODES, "模式")
+    tier = _opgg_value(tier, _OPGG_TIERS, "分段")
+    if version and not re.fullmatch(r"\d{1,2}\.\d{1,2}", version):
+        raise HTTPException(status_code=422, detail="OP.GG 版本格式无效")
+    params = {"version": version or None, "tier": None if mode == "arena" else tier}
+    return await _opgg_get(f"/api/{region}/champions/{mode}", params=params)
+
+
+@router.get("/opgg/champions/{champion_id}")
+async def league_opgg_champion(
+    champion_id: int,
+    region: str = "global",
+    mode: str = "ranked",
+    position: str = "top",
+    tier: str = "all",
+    version: str = "",
+):
+    if champion_id <= 0:
+        raise HTTPException(status_code=422, detail="英雄 ID 无效")
+    region = _opgg_value(region, _OPGG_REGIONS, "地区")
+    mode = _opgg_value(mode, _OPGG_MODES, "模式")
+    tier = _opgg_value(tier, _OPGG_TIERS, "分段")
+    position = _opgg_value(position, _OPGG_POSITIONS, "位置")
+    if mode != "ranked":
+        position = "none"
+    if version and not re.fullmatch(r"\d{1,2}\.\d{1,2}", version):
+        raise HTTPException(status_code=422, detail="OP.GG 版本格式无效")
+    path = f"/api/{region}/champions/{mode}/{champion_id}" if mode == "arena" else f"/api/{region}/champions/{mode}/{champion_id}/{position}"
+    params = {"version": version or None, "tier": None if mode == "arena" else tier}
+    return await _opgg_get(path, params=params)
+
+
+@router.post("/opgg/apply-spells")
+async def league_opgg_apply_spells(body: OpggSpellApply):
+    spell1, spell2 = (int(value) for value in body.spell_ids)
+    if spell1 <= 0 or spell2 <= 0:
+        raise HTTPException(status_code=422, detail="召唤师技能 ID 无效")
+    try:
+        current = await league_lab_service.request("GET", "/lol-champ-select/v1/session/my-selection")
+        old1, old2 = int((current or {}).get("spell1Id") or 0), int((current or {}).get("spell2Id") or 0)
+        flash_id = 4
+        if body.flash_position != "auto" and flash_id in {spell1, spell2}:
+            if (body.flash_position == "d" and spell2 == flash_id) or (body.flash_position == "f" and spell1 == flash_id):
+                spell1, spell2 = spell2, spell1
+        elif spell1 == old2 or spell2 == old1:
+            spell1, spell2 = spell2, spell1
+        await league_lab_service.request("PATCH", "/lol-champ-select/v1/session/my-selection", json_body={"spell1Id": spell1, "spell2Id": spell2})
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"applied": True, "spell1_id": spell1, "spell2_id": spell2}
+
+
+@router.post("/opgg/apply-runes")
+async def league_opgg_apply_runes(body: OpggRuneApply):
+    selected = [int(value) for value in [*body.primary_rune_ids, *body.secondary_rune_ids, *body.stat_mod_ids] if int(value) > 0]
+    if not selected:
+        raise HTTPException(status_code=422, detail="符文配置为空")
+    page_body = {
+        "name": f"[OP.GG] {body.champion_name}" + (f" - {body.position}" if body.position != "none" else ""),
+        "primaryStyleId": body.primary_page_id,
+        "subStyleId": body.secondary_page_id,
+        "selectedPerkIds": selected,
+        "current": True,
+    }
+    try:
+        pages = await league_lab_service.request("GET", "/lol-perks/v1/pages")
+        editable = next((page for page in (pages or []) if isinstance(page, dict) and page.get("isEditable")), None)
+        if editable and editable.get("id") is not None:
+            page_id = editable["id"]
+            await league_lab_service.request("PUT", f"/lol-perks/v1/pages/{page_id}", json_body=page_body)
+        else:
+            created = await league_lab_service.request("POST", "/lol-perks/v1/pages", json_body=page_body)
+            page_id = created.get("id") if isinstance(created, dict) else None
+        if page_id is None:
+            raise RuntimeError("LCU 未返回可用符文页")
+        await league_lab_service.request("PUT", "/lol-perks/v1/currentpage", json_body=page_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"applied": True, "page_id": page_id, "name": page_body["name"]}
+
+
 @router.get("/toolkit/overview")
 async def league_toolkit_overview():
     async def optional(path: str):
@@ -2933,6 +3105,70 @@ async def _league_game_settings_path() -> Path:
     if not settings_path.is_file():
         raise RuntimeError("未找到 PersistedSettings.json")
     return settings_path
+
+
+async def _league_recommended_items_dir() -> Path:
+    install_root = await league_lab_service.request("GET", "/data-store/v1/install-dir")
+    if not isinstance(install_root, str) or not install_root.strip():
+        raise RuntimeError("LCU 未返回游戏安装目录")
+    root = Path(install_root).expanduser().resolve()
+    region = (league_lab_service.credentials.region if league_lab_service.credentials else "").upper()
+    target = (root.parent / "Game" / "Config" / "Global" / "Recommended") if region == "TENCENT" else (root / "Config" / "Global" / "Recommended")
+    target.mkdir(parents=True, exist_ok=True)
+    if not target.is_dir():
+        raise RuntimeError("推荐装备目录不可用")
+    return target
+
+
+@router.post("/opgg/apply-items")
+async def league_opgg_apply_items(body: OpggItemSetApply):
+    safe_parts = [body.champion_id, body.mode, body.region, body.tier, body.position, body.version or "latest"]
+    uid = "insight-opgg-" + "-".join(re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(part)) for part in safe_parts)
+    item_set = {
+        "uid": uid,
+        "title": f"[OP.GG] {body.champion_name} - {body.mode}" + (f" - {body.position}" if body.position != "none" else ""),
+        "sortrank": 0,
+        "type": "global",
+        "map": "any",
+        "mode": "any",
+        "blocks": [
+            {"type": group.title, "items": [{"id": str(item_id), "count": 1} for item_id in group.item_ids if item_id > 0]}
+            for group in body.groups
+        ],
+        "associatedChampions": [],
+        "associatedMaps": [],
+        "preferredItemSlots": [],
+    }
+    item_set["blocks"] = [block for block in item_set["blocks"] if block["items"]]
+    if not item_set["blocks"]:
+        raise HTTPException(status_code=422, detail="装备配置为空")
+    try:
+        target_dir = await _league_recommended_items_dir()
+        target = (target_dir / f"{uid}.json").resolve()
+        if target.parent != target_dir.resolve():
+            raise RuntimeError("推荐装备文件路径无效")
+        temporary = target.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(item_set, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        os.replace(temporary, target)
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=f"写入推荐装备失败: {exc}") from exc
+    return {"applied": True, "path": str(target), "uid": uid, "blocks": len(item_set["blocks"])}
+
+
+@router.delete("/opgg/item-sets")
+async def league_opgg_clear_item_sets():
+    try:
+        target_dir = await _league_recommended_items_dir()
+        removed = []
+        for target in target_dir.glob("insight-opgg-*.json"):
+            resolved = target.resolve()
+            if resolved.parent != target_dir.resolve() or not resolved.is_file():
+                continue
+            resolved.unlink()
+            removed.append(resolved.name)
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=f"清理推荐装备失败: {exc}") from exc
+    return {"cleared": True, "removed": removed, "count": len(removed)}
 
 
 async def _league_game_settings_file_mode() -> str:

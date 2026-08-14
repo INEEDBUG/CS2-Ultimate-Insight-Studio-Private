@@ -85,6 +85,41 @@ export async function sendLeagueCooldownTimerText(text) {
   return data;
 }
 
+export async function fetchLeagueOpggVersions(params) {
+  const { data } = await API.get("/league-lab/opgg/versions", { params });
+  return data;
+}
+
+export async function fetchLeagueOpggChampions(params) {
+  const { data } = await API.get("/league-lab/opgg/champions", { params });
+  return data;
+}
+
+export async function fetchLeagueOpggChampion(championId, params) {
+  const { data } = await API.get(`/league-lab/opgg/champions/${encodeURIComponent(championId)}`, { params });
+  return data;
+}
+
+export async function applyLeagueOpggSpells(body) {
+  const { data } = await API.post("/league-lab/opgg/apply-spells", body);
+  return data;
+}
+
+export async function applyLeagueOpggRunes(body) {
+  const { data } = await API.post("/league-lab/opgg/apply-runes", body);
+  return data;
+}
+
+export async function applyLeagueOpggItems(body) {
+  const { data } = await API.post("/league-lab/opgg/apply-items", body);
+  return data;
+}
+
+export async function clearLeagueOpggItems() {
+  const { data } = await API.delete("/league-lab/opgg/item-sets");
+  return data;
+}
+
 export async function fetchLeagueToolkitOverview() {
   const { data } = await API.get("/league-lab/toolkit/overview");
   return data;
