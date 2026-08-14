@@ -115,6 +115,8 @@ class LeagueLabSettings(BaseModel):
     mini_enabled: bool = True
     mini_auto_show: bool = True
     respawn_timer_enabled: bool = False
+    streamer_mode_enabled: bool = False
+    streamer_mode_use_aliases: bool = False
 
 
 class ChampionLoadout(BaseModel):

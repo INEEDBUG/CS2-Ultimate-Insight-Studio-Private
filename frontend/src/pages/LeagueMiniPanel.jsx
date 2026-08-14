@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Pin, RefreshCw, Shield, Swords } from "lucide-react";
 import { fetchLeagueLabStatus, rerollLeagueChampion, runLeagueLabAction, saveLeagueLabSettings, selectLeagueChampionSkin, swapLeagueBenchChampion } from "../api/leagueLabApi";
 import { getLeagueChampionIconUrl } from "../api/api";
+import { maskLeagueName } from "../utils/leagueStreamerMode";
 
 const PHASE_LABELS = {
   Lobby: "房间中",
@@ -34,12 +35,14 @@ export default function LeagueMiniPanel() {
   const actionSeconds = actionCountdown?.due_at ? Math.max(0, actionCountdown.due_at * 1000 - now) / 1000 : null;
   const phaseDeadline = status?.champ_select?.timer_deadline_at;
   const phaseSeconds = phaseDeadline ? Math.max(0, phaseDeadline * 1000 - now) / 1000 : null;
+  const streamerMode = Boolean(status?.settings?.streamer_mode_enabled);
+  const visibleSummonerName = streamerMode ? maskLeagueName(status?.summoner_name, 0, status?.settings?.streamer_mode_use_aliases, status?.current_summoner?.puuid) : status?.summoner_name;
   return <div className="h-screen overflow-y-auto bg-[#111214] p-3 text-white">
     <div className="mb-3 flex items-center justify-between border-b border-white/10 pb-2 text-[11px] text-zinc-400"><span>Insight · League Mini</span><span className="flex items-center gap-2"><Pin className="h-3 w-3 text-emerald-400" /><RefreshCw onClick={load} className="h-3.5 w-3.5 cursor-pointer" /></span></div>
     <div className="mb-3 rounded-xl border border-white/10 bg-white/[.025] p-3 text-center">
       <div className="mx-auto mb-2 grid h-12 w-12 place-items-center rounded-2xl bg-emerald-400/10 text-emerald-300">{status?.phase === "ChampSelect" ? <Swords /> : <Shield />}</div>
       <div className="text-sm font-bold">{status?.connected ? (PHASE_LABELS[status.phase] || status.phase || "已连接英雄联盟") : "等待英雄联盟客户端"}</div>
-      <div className="mt-1 text-[11px] text-zinc-500">{status?.summoner_name || "启动并登录客户端后自动连接"}</div>
+      <div className="mt-1 text-[11px] text-zinc-500">{visibleSummonerName || "启动并登录客户端后自动连接"}</div>
     </div>
     {(actionSeconds != null || (status?.phase === "ChampSelect" && phaseSeconds != null)) && <div className="mb-3 grid grid-cols-2 gap-2">
       {actionSeconds != null && <div className="rounded-xl border border-emerald-400/25 bg-emerald-500/10 p-2.5"><div className="truncate text-[10px] text-emerald-300">{actionCountdown.label}</div><div className="mt-1 text-2xl font-black tabular-nums">{actionSeconds.toFixed(1)}<span className="ml-1 text-xs font-medium text-zinc-400">秒</span></div></div>}
