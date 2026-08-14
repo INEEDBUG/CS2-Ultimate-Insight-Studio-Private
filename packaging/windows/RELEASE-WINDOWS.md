@@ -2,7 +2,7 @@
 
 正式 Windows 产品是 **Tauri 2 + NSIS**。桌面壳使用系统 WebView2，负责显示 React 前端、启动与回收内嵌 Python 后端，以及提供窗口、目录选择和外链能力。
 
-Python 后端、Pillow、pandas、NumPy 与 demoparser2 等既有运行时依赖保持原样打入 resources。发布链继续使用仓库原有的 lean demoparser wheel，避免重新引入 Polars/PyArrow；本轮不改变 Demo 分析行为。应用内自动更新使用 `tauri-plugin-updater`，更新清单与安装包托管在 Cloudflare R2（见下文「在线更新」）。
+Python 后端与 demoparser2 等既有运行时依赖按锁定清单打入 resources。发布链继续使用仓库原有的 lean demoparser wheel，避免重新引入 NumPy、pandas、Polars 或 PyArrow。应用内自动更新使用 `tauri-plugin-updater`：安装包来自本仓库 GitHub Release，签名清单发布到本仓库 `updater` 分支（见下文「在线更新」）。
 
 如果仓库配置了 `WINDOWS_PFX_BASE64` 与 `WINDOWS_PFX_PASSWORD`，GitHub Actions 会把 PFX 导入临时证书库，并让 Tauri 对主程序和 NSIS 安装包执行 Authenticode 签名；未配置时仍允许产出 unsigned 开发包。
 
@@ -12,9 +12,9 @@ Python 后端、Pillow、pandas、NumPy 与 demoparser2 等既有运行时依赖
 2. 推送 semver tag：`git tag v1.2.3 && git push origin v1.2.3`（`V1.2.3` 也会触发）。
 3. `Release Windows` workflow 构建并上传 Tauri NSIS 安装包、`runtime-size-report.json` 与 `SHA256SUMS`。
 
-## 在线更新（Tauri updater + Cloudflare R2）
+## 在线更新（Tauri updater + GitHub Releases）
 
-私人衍生版本已停用原项目的 R2 自动更新通道，防止定制构建被上游安装包覆盖。当前候选包通过私人仓库的 `Release Windows` 手动工作流构建，并以 GitHub Actions artifact 交付；正式公开发布前再配置本项目自己的签名密钥与更新通道。
+客户端固定读取 `https://raw.githubusercontent.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/updater/latest.json`，后端“检查更新”也查询同一仓库的 `releases/latest`。两条路径必须保持一致，不能重新指向原始上游仓库。
 
 1. **更新签名密钥（一次性）**：`node node_modules/@tauri-apps/cli/tauri.js signer generate -w %USERPROFILE%\.tauri\cs2-insight-agent.key`。
    公钥写入 `tauri.conf.json > plugins.updater.pubkey`；私钥务必备份，丢失后老客户端将无法再接受任何更新。
@@ -26,12 +26,9 @@ pnpm.cmd run desktop:build:ver -- 2.4.0
 
    CI 或自定义密钥路径时改用环境变量 `TAURI_SIGNING_PRIVATE_KEY`（密钥内容或文件路径均可）与 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。注意 PowerShell 无法设置「空字符串」环境变量（`$env:X = ""` 等于删除），空密码密钥请交给 `desktop:build:ver` 处理或在 CI YAML 中设置。
 
-3. **发布**：设置 R2 凭据（`R2_ENDPOINT` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET`，可选 `R2_PUBLIC_BASE_URL`、`RELEASE_NOTES`、`UPDATE_MODE=force|normal`）后执行 `pnpm run deploy:r2`。脚本会上传：
-   - `CS2 Ultimate Insight Studio_<ver>_x64-setup.exe` — 完整安装包，同时是更新包；
-   - `latest.json` — Tauri updater 清单（内嵌 `.sig` 签名，含 `update_mode`）；
-   - `latest.yml` — electron-updater 桥接清单：仍在旧 Electron 版上的用户会把 Tauri 安装包当作更新静默安装，完成一次性迁移。
+3. **发布**：推送到 `main` 后，`Release Windows` 工作流自动递增补丁版本、运行前后端与 Rust 验收、构建并创建 GitHub Release；随后把带 `.sig` 的 `latest.json` 写入 `updater` 分支。Release 只上传普通用户需要的 Windows 安装 EXE，签名与校验文件由更新清单和工作流内部处理。
 
-客户端每次启动都会检查更新。`update_mode=normal` 时可「立即更新 / 稍后再说」；`force` 时弹窗说明「本次更新涉及重大内容，必需更新才能使用」，只能立即更新。
+客户端启动时检查更新，运行或驻留后台期间每 15 分钟继续检查。正常更新可选择「立即更新 / 稍后再说」。
 
 Windows 端更新流程：下载校验签名 → 应用自动退出 → NSIS 以 passive 模式安装（安装 hook 会等待后端进程退出）→ 自动重启。Authenticode 证书签名（`WINDOWS_PFX_*`）与更新签名互相独立，两者都建议配置。
 
