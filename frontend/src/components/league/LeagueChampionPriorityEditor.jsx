@@ -16,8 +16,9 @@ export default function LeagueChampionPriorityEditor({settings,onUpdate}) {
   const profile=profiles[mode]||emptyProfile();
   const config=profile[kind];
   const selected=config.champions?.[position]||[];
-  const byId=useMemo(()=>new Map(champions.map((item)=>[item.id,item])),[champions]);
-  const filtered=useMemo(()=>{const q=search.trim().toLowerCase();return champions.filter((item)=>!q||item.name.toLowerCase().includes(q)||item.alias.toLowerCase().includes(q)||String(item.id).includes(q));},[champions,search]);
+  const selectableChampions=useMemo(()=>mode==="arena"&&kind==="pick"?[{id:-3,name:"勇敢举动",alias:"bravery",special:true},...champions]:champions,[champions,mode,kind]);
+  const byId=useMemo(()=>new Map(selectableChampions.map((item)=>[item.id,item])),[selectableChampions]);
+  const filtered=useMemo(()=>{const q=search.trim().toLowerCase();return selectableChampions.filter((item)=>!q||item.name.toLowerCase().includes(q)||item.alias.toLowerCase().includes(q)||String(item.id).includes(q));},[selectableChampions,search]);
   const patchConfig=(patch)=>onUpdate({auto_select_profiles:{...profiles,[mode]:{...profile,[kind]:{...config,...patch}}}});
   const setPool=(ids)=>patchConfig({champions:{...emptyPool(),...(config.champions||{}),[position]:ids}});
   const move=(index,delta)=>{const next=[...selected],target=index+delta;if(target<0||target>=next.length)return;[next[index],next[target]]=[next[target],next[index]];setPool(next);};

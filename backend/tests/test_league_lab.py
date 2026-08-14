@@ -253,6 +253,48 @@ def test_auto_select_uses_the_first_available_preference(monkeypatch):
     assert calls == [("PATCH", "/lol-champ-select/v1/session/actions/8", {"championId": 103, "type": "pick", "completed": True})]
 
 
+def test_auto_select_limits_card_mode_pick_to_server_subset(monkeypatch):
+    service = LeagueLabService()
+    profile = league_lab.AutoSelectProfile(
+        pick={"enabled": True, "champions": {"default": [103, 157]}, "delay_seconds": 0, "strategy": "lock-in-immediately"}
+    )
+    service.settings = LeagueLabSettings(automation_enabled=True, auto_select_enabled=True, auto_select_profiles={"aram": profile})
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if path == "/lol-champ-select/v1/session":
+            return {"localPlayerCellId": 2, "benchEnabled": True, "allowSubsetChampionPicks": True, "actions": [[{"id": 8, "actorCellId": 2, "type": "pick", "isInProgress": True}]]}
+        if path == "/lol-gameflow/v1/session": return {"gameData": {"queue": {"id": 450, "gameMode": "ARAM"}}}
+        if path == "/lol-lobby-team-builder/champ-select/v1/subset-champion-list": return [157]
+        if path == "/lol-champ-select/v1/pickable-champion-ids": return [103, 157]
+        calls.append((method, path, json_body))
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(service._run_auto_select())
+
+    assert calls == [("PATCH", "/lol-champ-select/v1/session/actions/8", {"championId": 157, "type": "pick", "completed": True})]
+
+
+def test_auto_select_supports_arena_bravery_special_action(monkeypatch):
+    service = LeagueLabService()
+    profile = league_lab.AutoSelectProfile(
+        pick={"enabled": True, "champions": {"default": [-3]}, "delay_seconds": 0, "strategy": "lock-in-immediately"}
+    )
+    service.settings = LeagueLabSettings(automation_enabled=True, auto_select_enabled=True, auto_select_profiles={"arena": profile})
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if path == "/lol-champ-select/v1/session": return {"localPlayerCellId": 2, "actions": [[{"id": 9, "actorCellId": 2, "type": "pick", "isInProgress": True}]]}
+        if path == "/lol-gameflow/v1/session": return {"gameData": {"queue": {"id": 1700, "gameMode": "CHERRY"}}}
+        if path == "/lol-champ-select/v1/pickable-champion-ids": return []
+        calls.append((method, path, json_body))
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(service._run_auto_select())
+
+    assert calls == [("PATCH", "/lol-champ-select/v1/session/actions/9", {"championId": -3, "type": "pick", "completed": True})]
+
+
 def test_mode_group_matches_league_queue_families():
     assert LeagueLabService._mode_group({"gameData": {"queue": {"id": 420, "gameMode": "CLASSIC", "type": "RANKED_SOLO_5x5"}}}) == "ranked"
     assert LeagueLabService._mode_group({"gameData": {"queue": {"id": 450, "gameMode": "ARAM"}}}) == "aram"

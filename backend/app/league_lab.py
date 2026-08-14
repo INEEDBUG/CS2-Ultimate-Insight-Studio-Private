@@ -790,6 +790,13 @@ class LeagueLabService:
         local_cell = session.get("localPlayerCellId")
         group, profile = await self._active_auto_select_profile(session)
         position = self._position_for_session(session)
+        subset_champion_ids: set[int] = set()
+        if session.get("allowSubsetChampionPicks"):
+            try:
+                subset = await self.request("GET", "/lol-lobby-team-builder/champ-select/v1/subset-champion-list")
+                subset_champion_ids = {int(value) for value in (subset or [])}
+            except (RuntimeError, TypeError, ValueError):
+                subset_champion_ids = set()
         teammate_intents = {
             int(member.get("championPickIntent"))
             for member in (session.get("myTeam") or [])
@@ -810,7 +817,17 @@ class LeagueLabService:
                 available = await self.request("GET", available_path)
                 if action_type == "pick" and profile.pick.enabled and not profile.pick.ignore_intent:
                     candidates = [value for value in candidates if value not in teammate_intents]
-                champion_id = next((value for value in candidates if value in (available or [])), None)
+                available_ids = {int(value) for value in (available or [])}
+                if action_type == "pick" and session.get("allowSubsetChampionPicks"):
+                    available_ids &= subset_champion_ids
+                champion_id = next(
+                    (
+                        value
+                        for value in candidates
+                        if value in available_ids or (action_type == "pick" and group == "arena" and value == -3)
+                    ),
+                    None,
+                )
                 if champion_id is None:
                     continue
                 delay = configured.delay_seconds if configured.enabled else self.settings.champion_action_delay_seconds
@@ -833,7 +850,7 @@ class LeagueLabService:
         if profile.pick.enabled and profile.pick.bench_handle_trade_enabled:
             await self._run_trade_handling(session, self._profile_candidates(profile.pick.champions, position))
         if profile.pick.enabled and session.get("benchEnabled"):
-            await self._run_bench_swap(session, profile.pick, position)
+            await self._run_bench_swap(session, profile.pick, position, subset_champion_ids)
 
     async def _run_trade_handling(self, session: dict, expected: list[int]) -> None:
         for trade in session.get("trades") or []:
@@ -850,9 +867,21 @@ class LeagueLabService:
             self.last_action = f"已接受英雄交换：{requester_champion}"
             self.last_action_at = time.time()
 
-    async def _run_bench_swap(self, session: dict, profile: PickProfile, position: str) -> None:
+    async def _run_bench_swap(
+        self,
+        session: dict,
+        profile: PickProfile,
+        position: str,
+        subset_champion_ids: set[int] | None = None,
+    ) -> None:
         expected = self._profile_candidates(profile.champions, position)
-        bench = [int(item.get("championId")) for item in (session.get("benchChampions") or []) if isinstance(item, dict) and item.get("championId")]
+        bench = [
+            int(item.get("championId"))
+            for item in (session.get("benchChampions") or [])
+            if isinstance(item, dict) and item.get("championId")
+        ]
+        if session.get("allowSubsetChampionPicks") and str((session.get("timer") or {}).get("phase") or "") == "BAN_PICK":
+            bench = [champion_id for champion_id in bench if champion_id in (subset_champion_ids or set())]
         candidate = next((champion_id for champion_id in expected if champion_id in bench), None)
         if candidate is None and profile.bench_select_first_available_champion and bench:
             candidate = bench[0]

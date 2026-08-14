@@ -54,10 +54,11 @@ This document prevents the League integration from becoming a collection of unre
 - LeagueAkari-style streamer privacy mode across the main League lab, player center, Mini and independent ongoing-game window, with stable optional aliases, local-tag/PUUID masking and optional native capture protection.
 - Reversible `PersistedSettings.json` read-only/writable control using the LCU-reported install directory, including Tencent's separate `Game/Config` layout.
 - LeagueClientUx window repair parity: read the live zoom scale, resize both the native `RCLIENT` shell and `CefBrowserWindow`, then center the client; the action is manual and confirmed.
+- Card/subset champion-select parity: the server-provided subset list now gates automatic picks and bench swaps during `BAN_PICK`, and Arena's special `-3` bravery action is available as a first-class ordered pick choice.
 
 ### Partially implemented; upstream behavior is richer
 
-- Pick/ban: core upstream behavior is implemented; remaining work is exact upstream queue-group metadata refresh, subset-card modes, special vote actions and champion artwork/role metadata parity.
+- Pick/ban: core upstream behavior, subset-card modes and Arena bravery are implemented; remaining work is exact upstream queue-group metadata refresh and richer champion artwork/role metadata parity.
 - Champion config: saved loadouts plus LCU-backed champion artwork search, primary/secondary rune selection, named summoner-spell selection and LeagueAkari-equivalent normal/ranked-position/ARAM/URF/Nexus Blitz/Ultimate Spellbook routing with fallback are implemented.
 - Honor: strategy parity is implemented; the UI intentionally keeps the feature opt-in and disabled by default.
 - Invitations: per-type strategy, priority ordering, away gating and the complete upstream dynamic queue-type strategy catalog are implemented.
