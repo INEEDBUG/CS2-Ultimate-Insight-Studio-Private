@@ -982,6 +982,79 @@ def test_chat_presence_update_is_explicit_and_uses_lcu(monkeypatch):
     assert result["chat_presence"]["availability"] == "away"
 
 
+def test_chat_ready_automation_applies_status_and_apex_rank_once(monkeypatch):
+    service = LeagueLabService()
+    service.settings = LeagueLabSettings(
+        automation_enabled=True,
+        auto_set_status_message_enabled=True,
+        status_message="今晚打排位",
+        auto_set_ranked_status_enabled=True,
+        ranked_status={"queue": "RANKED_SOLO_5x5", "tier": "CHALLENGER", "division": "IV"},
+    )
+    service._chat_ready_since = time.monotonic() - 3
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, json_body))
+        if method == "GET":
+            return {"availability": "chat", "statusMessage": ""}
+        return None
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(service._run_chat_ready_automation())
+    asyncio.run(service._run_chat_ready_automation())
+
+    writes = [row for row in calls if row[0] == "PUT"]
+    assert writes == [
+        ("PUT", "/lol-chat/v1/me", {"statusMessage": "今晚打排位"}),
+        ("PUT", "/lol-chat/v1/me", {"lol": {"rankedLeagueQueue": "RANKED_SOLO_5x5", "rankedLeagueTier": "CHALLENGER"}}),
+    ]
+    assert service._chat_ready_automation_done is True
+
+
+def test_chat_ready_automation_never_writes_when_master_switch_is_off(monkeypatch):
+    service = LeagueLabService()
+    service.settings = LeagueLabSettings(
+        automation_enabled=False,
+        auto_set_status_message_enabled=True,
+        status_message="不会写入",
+    )
+    service._chat_ready_since = time.monotonic() - 3
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, json_body))
+        return {"availability": "chat"}
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(service._run_chat_ready_automation())
+
+    assert calls == [("GET", "/lol-chat/v1/me", None)]
+    assert service._chat_ready_automation_done is True
+
+
+def test_manual_ranked_status_applies_division_and_interrupts_login_automation(monkeypatch):
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, json_body))
+
+    service = league_lab.league_lab_service
+    service._chat_ready_automation_done = False
+    monkeypatch.setattr(service, "request", request)
+    result = asyncio.run(league_lab.league_update_ranked_status(
+        league_lab.RankedStatusUpdate(queue="RANKED_FLEX_SR", tier="GOLD", division="II")
+    ))
+
+    assert calls == [("PUT", "/lol-chat/v1/me", {"lol": {
+        "rankedLeagueQueue": "RANKED_FLEX_SR",
+        "rankedLeagueTier": "GOLD",
+        "rankedLeagueDivision": "II",
+    }})]
+    assert result["ranked_status"] == {"queue": "RANKED_FLEX_SR", "tier": "GOLD", "division": "II"}
+    assert service._chat_ready_automation_done is True
+
+
 def test_manual_chat_preset_sends_to_champion_select(monkeypatch):
     calls = []
 

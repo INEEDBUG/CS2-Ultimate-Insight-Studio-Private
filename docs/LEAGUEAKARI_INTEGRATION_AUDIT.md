@@ -55,6 +55,7 @@ This document prevents the League integration from becoming a collection of unre
 - Reversible `PersistedSettings.json` read-only/writable control using the LCU-reported install directory, including Tencent's separate `Game/Config` layout.
 - LeagueClientUx window repair parity: read the live zoom scale, resize both the native `RCLIENT` shell and `CefBrowserWindow`, then center the client; the action is manual and confirmed.
 - Card/subset champion-select parity: the server-provided subset list now gates automatic picks and bench swaps during `BAN_PICK`, and Arena's special `-3` bravery action is available as a first-class ordered pick choice.
+- Login automation parity for chat-ready state: after `/lol-chat/v1/me` remains available for two seconds, the app can restore the saved status message and displayed ranked queue/tier/division once per client connection. Manual application interrupts that login pass, apex tiers omit division, disconnects reset the state, and every write remains disabled by default behind the master automation switch.
 
 ### Partially implemented; upstream behavior is richer
 
@@ -70,7 +71,7 @@ This document prevents the League integration from becoming a collection of unre
 - Saved named filter presets and a local AND/OR composable rule builder are implemented; predicates requiring richer timeline/team payloads remain (the durable SQLite collection workspace works now).
 - OP.GG and remaining specialized auxiliary overlay windows (an independent native real-time match window and Mini respawn timer now work).
 - Reward/mission/event claiming plus mutating loot and friend tools (the read-only overview works now; writes require separate safety review).
-- In-game preset messaging: explicit fixed-text presets plus generated recent-form, premade and jungle-path drafts for lobby/champion-select are implemented, along with manual chat availability and status-message tools. Native keyboard injection during an active match remains.
+- In-game preset messaging: explicit fixed-text presets plus generated recent-form, premade and jungle-path drafts for lobby/champion-select are implemented, along with manual chat availability/status-message/ranked-display tools and one-shot login restoration. Native keyboard injection during an active match remains.
 - A configurable global terminate shortcut remains. Explicit foreground-only League game-process termination, LeagueClientUx window sizing/centering, streamer text masking and native Windows capture exclusion are implemented.
 
 ## Porting decisions

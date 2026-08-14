@@ -112,6 +112,10 @@ class LeagueLabSettings(BaseModel):
     auto_reply_only_away: bool = False
     auto_reply_text: str = Field(default="", max_length=500)
     lock_offline_status: bool = False
+    auto_set_status_message_enabled: bool = False
+    status_message: str = Field(default="", max_length=500)
+    auto_set_ranked_status_enabled: bool = False
+    ranked_status: "RankedStatusUpdate" = Field(default_factory=lambda: RankedStatusUpdate())
     auto_send_aram_team_side_enabled: bool = False
     auto_send_aram_team_side_visible_to_team: bool = False
     auto_invite_friend_puuids: list[str] = Field(default_factory=list, max_length=20)
@@ -136,6 +140,14 @@ class ChampionLoadout(BaseModel):
 class ChatPresenceUpdate(BaseModel):
     availability: Literal["chat", "mobile", "away", "offline", "dnd", "spectating", "online"] | None = None
     status_message: str | None = Field(default=None, max_length=500)
+
+
+class RankedStatusUpdate(BaseModel):
+    queue: str = Field(default="RANKED_SOLO_5x5", min_length=1, max_length=80)
+    tier: Literal[
+        "IRON", "BRONZE", "SILVER", "GOLD", "PLATINUM", "EMERALD", "DIAMOND", "MASTER", "GRANDMASTER", "CHALLENGER"
+    ] = "CHALLENGER"
+    division: Literal["I", "II", "III", "IV"] = "I"
 
 
 class ChatMessageSend(BaseModel):
@@ -344,6 +356,8 @@ class LeagueLabService:
         self._matchmaking_status = "idle"
         self._last_event_at = 0.0
         self._aram_side_sent_context = ""
+        self._chat_ready_since: float | None = None
+        self._chat_ready_automation_done = False
         self.champ_select: dict = {}
         self.respawn_timer: dict = {"available": False, "dead": False, "time_left": 0.0, "total_time": 0.0}
         self._last_discovery_at = 0.0
@@ -417,9 +431,18 @@ class LeagueLabService:
             self._champion_action_due_at.clear()
             self._matchmaking_due_at = None
             self._matchmaking_status = "idle"
+            self._reset_chat_ready_automation()
             if credentials:
                 self._event_task = asyncio.create_task(self._run_event_stream(credentials), name="league-lcu-events")
         return credentials is not None
+
+    def _reset_chat_ready_automation(self) -> None:
+        self._chat_ready_since = None
+        self._chat_ready_automation_done = False
+
+    def _interrupt_chat_ready_automation(self) -> None:
+        self._chat_ready_since = None
+        self._chat_ready_automation_done = True
 
     async def _run_event_stream(self, credentials: LcuCredentials) -> None:
         """Subscribe to LCU JsonApi events; the polling loop remains a recovery fallback."""
@@ -539,10 +562,12 @@ class LeagueLabService:
             # A 404 does not invalidate the in-memory LCU credentials.
             if exc.response.status_code in {401, 403}:
                 self.credentials = None
+                self._reset_chat_ready_automation()
             raise RuntimeError(self.last_error) from exc
         except httpx.RequestError as exc:
             self.last_error = f"LCU 请求失败: {type(exc).__name__}"
             self.credentials = None
+            self._reset_chat_ready_automation()
             raise RuntimeError(self.last_error) from exc
         except ValueError as exc:
             self.last_error = f"LCU 请求失败: {type(exc).__name__}"
@@ -1156,9 +1181,62 @@ class LeagueLabService:
         )
         self._handled_invitations.add(invite_id)
 
+    async def apply_status_message(self, message: str, *, automated: bool = False) -> None:
+        if not automated:
+            self._interrupt_chat_ready_automation()
+        await self.request("PUT", "/lol-chat/v1/me", json_body={"statusMessage": message})
+        self.last_action = "已自动恢复聊天状态签名" if automated else "已应用聊天状态签名"
+        self.last_action_at = time.time()
+
+    async def apply_ranked_status(self, ranked_status: RankedStatusUpdate, *, automated: bool = False) -> None:
+        if not automated:
+            self._interrupt_chat_ready_automation()
+        ranked = ranked_status.model_dump()
+        if ranked_status.tier in {"MASTER", "GRANDMASTER", "CHALLENGER"}:
+            ranked.pop("division", None)
+        await self.request("PUT", "/lol-chat/v1/me", json_body={
+            "lol": {
+                "rankedLeagueQueue": ranked["queue"],
+                "rankedLeagueTier": ranked["tier"],
+                **({"rankedLeagueDivision": ranked["division"]} if "division" in ranked else {}),
+            }
+        })
+        self.last_action = "已自动恢复排位展示" if automated else "已应用排位展示"
+        self.last_action_at = time.time()
+
+    async def _run_chat_ready_automation(self) -> None:
+        """Apply LeagueAkari login automations once, after `/lol-chat/v1/me` settles for two seconds."""
+        if self._chat_ready_automation_done:
+            return
+        try:
+            chat_me = await self.request("GET", "/lol-chat/v1/me")
+        except RuntimeError:
+            self._chat_ready_since = None
+            return
+        if not isinstance(chat_me, dict) or not chat_me:
+            self._chat_ready_since = None
+            return
+        now = time.monotonic()
+        if self._chat_ready_since is None:
+            self._chat_ready_since = now
+            return
+        if now - self._chat_ready_since < 2.0:
+            return
+        self._chat_ready_automation_done = True
+        if not self.settings.automation_enabled:
+            return
+        results = []
+        if self.settings.auto_set_status_message_enabled:
+            results.append(self.apply_status_message(self.settings.status_message, automated=True))
+        if self.settings.auto_set_ranked_status_enabled:
+            results.append(self.apply_ranked_status(self.settings.ranked_status, automated=True))
+        if results:
+            await asyncio.gather(*results, return_exceptions=True)
+
     async def _run_automation(self) -> None:
         settings = self.settings
         phase = self.phase
+        await self._run_chat_ready_automation()
         if not settings.automation_enabled:
             self._accept_due_at = None
             return
@@ -1224,7 +1302,8 @@ class LeagueLabService:
                 raise
             except Exception:
                 logger.exception("League lab background loop failed")
-            timeout = 1.0 if self.credentials and self.settings.respawn_timer_enabled and self.phase == "InProgress" else 5.0
+            chat_settling = self.credentials and not self._chat_ready_automation_done and self._chat_ready_since is not None
+            timeout = 1.0 if chat_settling or (self.credentials and self.settings.respawn_timer_enabled and self.phase == "InProgress") else 5.0
             try:
                 await asyncio.wait_for(self._event_wakeup.wait(), timeout=timeout)
                 self._event_wakeup.clear()
@@ -2754,11 +2833,22 @@ async def league_update_chat_presence(body: ChatPresenceUpdate):
     if not patch:
         raise HTTPException(status_code=422, detail="没有需要应用的聊天状态")
     try:
+        if body.status_message is not None:
+            league_lab_service._interrupt_chat_ready_automation()
         await league_lab_service.request("PUT", "/lol-chat/v1/me", json_body=patch)
         current = await league_lab_service.request("GET", "/lol-chat/v1/me")
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"chat_presence": current if isinstance(current, dict) else patch, "applied": True}
+
+
+@router.put("/toolkit/ranked-status")
+async def league_update_ranked_status(body: RankedStatusUpdate):
+    try:
+        await league_lab_service.apply_ranked_status(body)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ranked_status": body.model_dump(), "applied": True}
 
 
 @router.post("/toolkit/terminate-game-client")

@@ -85,6 +85,11 @@ export async function updateLeagueChatPresence(payload) {
   return data;
 }
 
+export async function updateLeagueRankedStatus(payload) {
+  const { data } = await API.put("/league-lab/toolkit/ranked-status", payload);
+  return data;
+}
+
 export async function sendLeagueChatMessage(lines) {
   const { data } = await API.post("/league-lab/toolkit/chat-message", { lines });
   return data;
