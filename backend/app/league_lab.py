@@ -2226,7 +2226,11 @@ def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "")
             row_player = row_identity.get("player") or {}
             row_champion_id = int(row.get("championId") or 0)
             scoped_participants.append({
+                "participant_id": row.get("participantId"),
                 "puuid": row_player.get("puuid") or row_identity.get("puuid"),
+                "game_name": row_player.get("gameName") or row_player.get("displayName") or row_player.get("summonerName") or "",
+                "tag_line": row_player.get("tagLine") or "",
+                "profile_icon_id": row_player.get("profileIcon") or row_player.get("profileIconId"),
                 "team_id": row.get("teamId"),
                 "champion_id": row_champion_id,
                 "champion_name": names.get(row_champion_id, str(row_champion_id)),
@@ -2236,9 +2240,12 @@ def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "")
                 "spell2_id": row.get("spell2Id"),
                 "kills": row_stats.get("kills", 0), "deaths": row_stats.get("deaths", 0), "assists": row_stats.get("assists", 0),
                 "win": bool(row_stats.get("win")), "gold": row_stats.get("goldEarned", 0),
+                "level": row_stats.get("champLevel", 0), "gold_spent": row_stats.get("goldSpent", 0),
                 "cs": int(row_stats.get("totalMinionsKilled", 0)) + int(row_stats.get("neutralMinionsKilled", 0)),
                 "damage": row_stats.get("totalDamageDealtToChampions", 0), "damage_taken": row_stats.get("totalDamageTaken", 0),
-                "vision_score": row_stats.get("visionScore", 0), "items": [row_stats.get(f"item{i}") for i in range(7) if row_stats.get(f"item{i}")],
+                "healing": row_stats.get("totalHeal", 0), "time_ccing": row_stats.get("totalTimeCCDealt", 0),
+                "tower_damage": row_stats.get("damageDealtToTurrets", 0), "vision_score": row_stats.get("visionScore", 0),
+                "items": [row_stats.get(f"item{i}") for i in range(7) if row_stats.get(f"item{i}")],
                 "perks": [row_stats.get(f"perk{i}") for i in range(6) if row_stats.get(f"perk{i}")],
                 "augments": [row_stats.get(f"playerAugment{i}") for i in range(1, 7) if row_stats.get(f"playerAugment{i}")],
                 "challenges": row.get("challenges") or row_stats.get("challenges") or {},
@@ -2251,6 +2258,7 @@ def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "")
                 "game_mode": game.get("gameMode"),
                 "game_type": game.get("gameType"),
                 "game_version": game.get("gameVersion"),
+                "map_id": game.get("mapId"),
                 "queue_id": game.get("queueId"),
                 "participant_puuid": (identity.get("player") or {}).get("puuid") if identity else None,
                 "team_id": participant.get("teamId"),
@@ -2305,13 +2313,19 @@ def _normalize_sgp_match_rows(payload: dict, names: dict[int, str], puuid: str) 
         for row in game.get("participants") or []:
             row_champion_id = int(row.get("championId") or 0)
             scoped_participants.append({
-                "puuid": row.get("puuid"), "team_id": row.get("teamId"),
+                "participant_id": row.get("participantId"), "puuid": row.get("puuid"),
+                "game_name": row.get("riotIdGameName") or row.get("gameName") or row.get("summonerName") or "",
+                "tag_line": row.get("riotIdTagline") or row.get("tagLine") or "",
+                "profile_icon_id": row.get("profileIcon") or row.get("profileIconId"), "team_id": row.get("teamId"),
                 "champion_id": row_champion_id, "champion_name": names.get(row_champion_id, row.get("championName") or str(row_champion_id)),
                 "position": row.get("teamPosition"), "role": row.get("individualPosition"),
                 "spell1_id": row.get("summoner1Id") or row.get("spell1Id"), "spell2_id": row.get("summoner2Id") or row.get("spell2Id"),
                 "kills": row.get("kills", 0), "deaths": row.get("deaths", 0), "assists": row.get("assists", 0), "win": bool(row.get("win")),
-                "gold": row.get("goldEarned", 0), "cs": int(row.get("totalMinionsKilled", 0)) + int(row.get("neutralMinionsKilled", 0)),
-                "damage": row.get("totalDamageDealtToChampions", 0), "damage_taken": row.get("totalDamageTaken", 0), "vision_score": row.get("visionScore", 0),
+                "gold": row.get("goldEarned", 0), "gold_spent": row.get("goldSpent", 0), "level": row.get("champLevel", 0),
+                "cs": int(row.get("totalMinionsKilled", 0)) + int(row.get("neutralMinionsKilled", 0)),
+                "damage": row.get("totalDamageDealtToChampions", 0), "damage_taken": row.get("totalDamageTaken", 0),
+                "healing": row.get("totalHeal", 0), "time_ccing": row.get("totalTimeCCDealt", 0),
+                "tower_damage": row.get("damageDealtToTurrets", 0), "vision_score": row.get("visionScore", 0),
                 "items": [row.get(f"item{i}") for i in range(7) if row.get(f"item{i}")], "perks": [row.get(f"perk{i}") for i in range(6) if row.get(f"perk{i}")],
                 "augments": [row.get(f"playerAugment{i}") for i in range(1, 7) if row.get(f"playerAugment{i}")], "challenges": row.get("challenges") or {},
             })
@@ -2323,6 +2337,7 @@ def _normalize_sgp_match_rows(payload: dict, names: dict[int, str], puuid: str) 
                 "game_mode": game.get("gameMode"),
                 "game_type": game.get("gameType"),
                 "game_version": game.get("gameVersion"),
+                "map_id": game.get("mapId"),
                 "queue_id": game.get("queueId"),
                 "participant_puuid": participant.get("puuid"),
                 "team_id": participant.get("teamId"),
@@ -4417,12 +4432,11 @@ async def league_profile_utility_action(body: ProfileUtilityAction):
     return {"applied": True, "action": body.action}
 
 
-@router.get("/toolkit/game-preview/{game_id}")
-async def league_game_preview(
+async def _load_league_match_payload(
     game_id: int,
-    source: Literal["auto", "lcu", "sgp"] = "auto",
-    include_timeline: bool = True,
-):
+    source: Literal["auto", "lcu", "sgp"],
+    include_timeline: bool,
+) -> tuple[dict, dict | None, str, list[str]]:
     if game_id <= 0:
         raise HTTPException(status_code=422, detail="Game ID 必须是正整数")
     errors: list[str] = []
@@ -4456,6 +4470,91 @@ async def league_game_preview(
                 timeline = timeline["json"]
         except RuntimeError as exc:
             errors.append(str(exc))
+    return game, timeline, active_source, errors
+
+
+def _normalize_match_timeline(game: dict, timeline: dict | None, source: str) -> dict:
+    identities: dict[int, dict] = {}
+    for row in game.get("participantIdentities") or []:
+        if not isinstance(row, dict):
+            continue
+        participant_id = int(row.get("participantId") or 0)
+        if participant_id:
+            identities[participant_id] = row.get("player") if isinstance(row.get("player"), dict) else row
+    participants = []
+    for index, row in enumerate(game.get("participants") or []):
+        if not isinstance(row, dict):
+            continue
+        participant_id = int(row.get("participantId") or index + 1)
+        identity = identities.get(participant_id) or {}
+        participants.append({
+            "participant_id": participant_id,
+            "puuid": row.get("puuid") or identity.get("puuid") or identity.get("playerPuuid") or "",
+            "game_name": row.get("riotIdGameName") or row.get("gameName") or identity.get("gameName") or identity.get("displayName") or identity.get("summonerName") or "",
+            "tag_line": row.get("riotIdTagline") or row.get("tagLine") or identity.get("tagLine") or "",
+            "champion_id": int(row.get("championId") or 0),
+            "team_id": int(row.get("teamId") or 0),
+        })
+    frames = []
+    event_keys = {
+        "type", "timestamp", "participantId", "creatorId", "killerId", "victimId",
+        "assistingParticipantIds", "monsterType", "monsterSubType", "buildingType",
+        "towerType", "laneType", "itemId", "skillSlot", "levelUpType", "afterId",
+        "beforeId", "killType", "multiKillLength", "position",
+    }
+    participant_frame_keys = {
+        "totalGold", "currentGold", "level", "xp", "minionsKilled", "jungleMinionsKilled",
+        "position", "damageStats",
+    }
+    for frame in (timeline or {}).get("frames") or []:
+        if not isinstance(frame, dict):
+            continue
+        normalized_events = [
+            {key: value for key, value in event.items() if key in event_keys}
+            for event in (frame.get("events") or [])
+            if isinstance(event, dict) and event.get("type")
+        ]
+        normalized_participants = {}
+        for participant_id, participant_frame in (frame.get("participantFrames") or {}).items():
+            if not isinstance(participant_frame, dict):
+                continue
+            normalized_participants[str(participant_id)] = {
+                key: value for key, value in participant_frame.items() if key in participant_frame_keys
+            }
+        frames.append({
+            "timestamp": int(frame.get("timestamp") or 0),
+            "participant_frames": normalized_participants,
+            "events": normalized_events,
+        })
+    return {
+        "source": source,
+        "game_id": game.get("gameId"),
+        "participants": participants,
+        "frames": frames,
+        "events": [event for frame in frames for event in frame["events"]],
+        "frame_count": len(frames),
+        "event_count": sum(len(frame["events"]) for frame in frames),
+    }
+
+
+@router.get("/matches/{game_id}/details")
+async def league_match_details(
+    game_id: int,
+    source: Literal["auto", "lcu", "sgp"] = "auto",
+):
+    game, timeline, active_source, errors = await _load_league_match_payload(game_id, source, True)
+    result = _normalize_match_timeline(game, timeline, active_source)
+    result["warnings"] = errors
+    return result
+
+
+@router.get("/toolkit/game-preview/{game_id}")
+async def league_game_preview(
+    game_id: int,
+    source: Literal["auto", "lcu", "sgp"] = "auto",
+    include_timeline: bool = True,
+):
+    game, timeline, active_source, errors = await _load_league_match_payload(game_id, source, include_timeline)
     names = await _champion_names()
     result = _normalize_game_preview(game, names, active_source, timeline)
     result["warnings"] = errors

@@ -94,7 +94,9 @@ export function getLeagueSummonerSpellIconUrl(spellId) {
 }
 
 export function getLeagueItemIconUrl(itemId) {
-  return getDesktopAssetUrl(`/api/league-lab/assets/items/${encodeURIComponent(itemId)}.png`);
+  const id = encodeURIComponent(String(itemId || ""));
+  const url = API_BASE_URL ? `${API_BASE_URL}/api/league-lab/assets/items/${id}.png` : `/api/league-lab/assets/items/${id}.png`;
+  return withDesktopSessionToken(url);
 }
 
 export function getLeagueProfileIconUrl(profileIconId) {

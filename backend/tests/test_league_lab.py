@@ -1283,7 +1283,8 @@ def test_sgp_match_rows_normalize_wrapped_summary():
                 "gameType": "MATCHED_GAME",
                 "queueId": 420,
                 "participants": [{
-                    "puuid": "player-1", "championId": 22, "championName": "Ashe",
+                    "puuid": "player-1", "riotIdGameName": "Ashe Main", "riotIdTagline": "HN1",
+                    "profileIconId": 29, "championId": 22, "championName": "Ashe",
                     "teamPosition": "BOTTOM", "individualPosition": "BOTTOM",
                     "summoner1Id": 4, "summoner2Id": 7, "kills": 10, "deaths": 2,
                     "assists": 8, "win": True, "totalMinionsKilled": 180,
@@ -1308,6 +1309,9 @@ def test_sgp_match_rows_normalize_wrapped_summary():
     }
     assert row["items"] == [3006]
     assert row["participants"][0]["puuid"] == "player-1"
+    assert row["participants"][0]["game_name"] == "Ashe Main"
+    assert row["participants"][0]["tag_line"] == "HN1"
+    assert row["participants"][0]["profile_icon_id"] == 29
     assert row["participants"][0]["champion_name"] == "寒冰射手"
 
 
@@ -1873,6 +1877,33 @@ def test_arbitrary_game_preview_normalizes_lcu_scoreboard_and_timeline(monkeypat
     assert result["teams"][0]["players"][0]["match_stats"]["kda"] == 7.0
     assert result["ongoing_preview"]["historical_preview"] is True
     assert result["ongoing_preview"]["available"] is True
+
+
+def test_match_timeline_normalizes_participants_frames_and_build_events():
+    game = {
+        "gameId": 77,
+        "participantIdentities": [{"participantId": 1, "player": {"puuid": "p1", "gameName": "Alpha", "tagLine": "CN1"}}],
+        "participants": [{"participantId": 1, "teamId": 100, "championId": 86}],
+    }
+    timeline = {
+        "frames": [{
+            "timestamp": 60000,
+            "participantFrames": {"1": {"totalGold": 900, "currentGold": 300, "level": 2, "xp": 500, "minionsKilled": 7, "jungleMinionsKilled": 0, "position": {"x": 100, "y": 200}, "unknown": "drop"}},
+            "events": [
+                {"type": "ITEM_PURCHASED", "timestamp": 61000, "participantId": 1, "itemId": 1001, "secret": "drop"},
+                {"type": "SKILL_LEVEL_UP", "timestamp": 62000, "participantId": 1, "skillSlot": 1, "levelUpType": "NORMAL"},
+            ],
+        }],
+    }
+
+    result = league_lab._normalize_match_timeline(game, timeline, "lcu")
+
+    assert result["participants"] == [{"participant_id": 1, "puuid": "p1", "game_name": "Alpha", "tag_line": "CN1", "champion_id": 86, "team_id": 100}]
+    assert result["frame_count"] == 1
+    assert result["event_count"] == 2
+    assert result["frames"][0]["participant_frames"]["1"]["totalGold"] == 900
+    assert "unknown" not in result["frames"][0]["participant_frames"]["1"]
+    assert result["events"][0] == {"type": "ITEM_PURCHASED", "timestamp": 61000, "participantId": 1, "itemId": 1001}
 
 
 def test_arbitrary_game_preview_falls_back_to_sgp(monkeypatch):

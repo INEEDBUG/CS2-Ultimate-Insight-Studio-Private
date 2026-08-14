@@ -284,6 +284,13 @@ export async function fetchLeagueGamePreview(gameId, source = "auto", includeTim
   return data;
 }
 
+export async function fetchLeagueMatchDetails(gameId, source = "auto") {
+  const { data } = await API.get(`/league-lab/matches/${encodeURIComponent(gameId)}/details`, {
+    params: { source },
+  });
+  return data;
+}
+
 export async function updateLeagueChatPresence(payload) {
   const { data } = await API.put("/league-lab/toolkit/chat-presence", payload);
   return data;

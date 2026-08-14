@@ -48,6 +48,7 @@ This document prevents the League integration from becoming a collection of unre
 - Match-replay parity: current and searched-player match cards read LCU replay availability, create the required version/queue/game-end metadata, show live `.rofl` download progress and hand a completed replay back to League for playback. Download and playback are always explicit button actions.
 - Champion-mastery parity: the profile keeps a fast top-ten summary and exposes the complete LCU mastery catalog on demand with official icons, mastery level/points, point ordering and local search.
 - Encounter-history parity: current-account match imports build a per-opponent shared-game index, isolated by the active local account. A searched player's profile exposes paginated head-to-head rows with both champions and K/D/A, and allows removing an individual locally persisted encounter without touching Riot data.
+- Expanded match-card foundation: collapsed performance rows now open into both-team scoreboards, target-player combat/economy/vision details, spell/rune/augment summaries, filterable major events, per-player skill/item build order, team-gold timeline and replay actions. LCU and SGP match normalization retains the ten-player identities and the detail endpoint returns only the timeline fields required by the UI.
 - Opt-in local respawn countdown in League Mini through the in-game Live Client Data endpoint; disabled by default.
 - Thirty-second enriched live-game cache so frequent UI refreshes do not repeatedly request every player's history.
 - League Mini ARAM bench card with current champion, bench choices, reroll count, manual swap and reroll actions.
@@ -80,6 +81,28 @@ This document prevents the League integration from becoming a collection of unre
 ### Deliberately not exposed because upstream is incomplete
 
 - Loot crafting/redeeming is intentionally not exposed: the reviewed upstream `LootTools.vue` labels itself under development and leaves its `craft` handler empty. Read-only inventory parity is retained until upstream itself has a working, auditable user flow.
+
+## User-surface parity audit
+
+This table is stricter than the shard matrix below: a backend capability is not counted as a finished user surface until the corresponding React/Tauri view and interaction have been reviewed. “Partial” is an explicit remaining-work marker, not a completion claim.
+
+| Upstream user surface | Local surface | Current evidence | Status |
+| --- | --- | --- | --- |
+| Startup and client connection | League lab connection/startup cards | multi-client discovery, exact-PID binding and Riot/WeGame/TCLS launch cards | Equivalent |
+| Player tabs and summoner search | integrated player center | current/cross-region Riot ID lookup, recent tabs, ranked, mastery, challenges, tags, pagination and collection | Equivalent with host layout |
+| Match-history overview | detailed match cards | collapsed result/performance row, ten-player roster, replay action and expandable tabs | Equivalent foundation |
+| Match summary | `双方总览` | both teams, clickable players, K/D/A, KP, damage share, CS/gold and loadouts | Equivalent foundation |
+| Raw match details | `详细属性` | target-player combat/economy/vision cards only; upstream searchable ten-player raw-stat matrix is not yet reproduced | Partial |
+| Runes | `符文` | all participants, spells and stored perk/augment IDs; official perk artwork and end-of-game descriptions remain | Partial |
+| Events | `事件` | chronological major-event filters and actors/victims; champion filters, plate totals and map-position popovers remain | Partial |
+| Builds | `出装过程` | per-player skills and item purchases with timestamps; upstream navigator, evolutions, undo/sell grouping and SGP spacer presentation remain | Partial |
+| Timeline | `时间线` | frame/event counts and team-gold chart; upstream participant/stat selection, difference lines and SGP stats-line remain | Partial |
+| Encountered games | integrated encounter history | account-isolated shared games, pagination and local single-row removal | Equivalent with host layout |
+| Ongoing game | main and independent ongoing views | ten-player cards, recent form, premade and jungle analysis | Equivalent foundation; visual parity still needs real-window review |
+| Automation | League automation sections | gameflow, selection/ban, champion config and miscellaneous behavior | Equivalent; real Tencent state-machine acceptance pending |
+| Toolkit | League toolkit sections | lobby/client/profile/rewards/friends/in-game-send and preview actions | Equivalent except deliberately excluded unfinished loot crafting |
+| Mini and auxiliary windows | Mini, ongoing, OP.GG and cooldown windows | phase lifecycle, pinning, close suppression, ARAM actions and auxiliary tools | Equivalent; real-window lifecycle acceptance pending |
+| Settings and shell | integrated settings plus Tauri shell | theme/privacy/capture/shortcuts/tray/updater and persisted League settings | Host equivalent |
 
 ## Shard-to-host traceability matrix
 

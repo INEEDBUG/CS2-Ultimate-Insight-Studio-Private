@@ -34,6 +34,7 @@ describe("desktop backend asset URLs", () => {
       getDemoRadarMapUrl,
       getLiteCutAssetStreamUrl,
       getLeagueChampionIconUrl,
+      getLeagueItemIconUrl,
       getLeagueProfileIconUrl,
       setDesktopSessionToken,
     } = await import("./api.js");
@@ -48,6 +49,9 @@ describe("desktop backend asset URLs", () => {
     );
     expect(getLeagueChampionIconUrl(22)).toBe(
       "http://127.0.0.1:19871/api/league-lab/assets/champions/22.png?_session=session-123",
+    );
+    expect(getLeagueItemIconUrl(3089)).toBe(
+      "http://127.0.0.1:19871/api/league-lab/assets/items/3089.png?_session=session-123",
     );
     expect(getLeagueProfileIconUrl(29)).toBe(
       "http://127.0.0.1:19871/api/league-lab/assets/profile-icons/29.jpg?_session=session-123",
