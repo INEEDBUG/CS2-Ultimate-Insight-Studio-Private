@@ -26,11 +26,15 @@ export default function LeagueMiniPanel() {
   const load = useCallback(async () => { try { setStatus(await fetchLeagueLabStatus()); } catch { setStatus(null); } }, []);
   useEffect(() => { load(); const id = setInterval(load, 1500); return () => clearInterval(id); }, [load]);
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 100); return () => clearInterval(id); }, []);
+  useEffect(() => {
+    document.documentElement.style.opacity = String(status?.settings?.mini_opacity ?? 1);
+    return () => { document.documentElement.style.opacity = "1"; };
+  }, [status?.settings?.mini_opacity]);
   const update = async (patch) => setStatus(await saveLeagueLabSettings({ ...(status?.settings || {}), ...patch }));
   const team = status?.champ_select?.my_team || [];
   const bench = status?.champ_select?.bench_champions || [];
   const respawn = status?.respawn_timer || {};
-  const skinSelector = status?.champ_select?.skin_selector || {};
+  const skinSelector = status?.settings?.mini_show_skin_selector === false ? {} : (status?.champ_select?.skin_selector || {});
   const actionCountdown = status?.action_countdown;
   const actionSeconds = actionCountdown?.due_at ? Math.max(0, actionCountdown.due_at * 1000 - now) / 1000 : null;
   const phaseDeadline = status?.champ_select?.timer_deadline_at;

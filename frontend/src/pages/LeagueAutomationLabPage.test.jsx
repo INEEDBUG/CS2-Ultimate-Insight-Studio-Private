@@ -49,6 +49,9 @@ describe("LeagueAutomationLabPage", () => {
 
     fireEvent.click(screen.getByRole("switch", { name: "启用英雄联盟自动化" }));
     await waitFor(() => expect(saveLeagueLabSettings).toHaveBeenCalledWith(expect.objectContaining({ automation_enabled: true })));
+    expect(screen.getByLabelText("Mini 不透明度").value).toBe("1");
+    expect(screen.getByLabelText("OP.GG 不透明度").value).toBe("1");
+    expect(screen.getByRole("switch", { name: "Mini 显示皮肤选择器" })).toBeTruthy();
   });
 
   it("uses the detailed match card in the current-account history", async () => {
@@ -68,5 +71,9 @@ describe("LeagueAutomationLabPage", () => {
     expect(screen.getByRole("switch", { name: "显示打野路线画像" })).toBeTruthy();
     expect(screen.getByLabelText("实时对局战绩读取数").value).toBe("20");
     expect(screen.getByLabelText("打野画像分析场数").value).toBe("4");
+    expect(screen.getByRole("switch", { name: "显示连胜 / 连败标签" })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "显示表现画像标签" })).toBeTruthy();
+    expect(screen.getByLabelText("实时对局并发查询数").value).toBe("10");
+    expect(screen.getByLabelText("组排推断阈值").value).toBe("3");
   });
 });

@@ -142,7 +142,11 @@ fn open_league_opgg(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn toggle_league_aux_window(app: AppHandle, kind: String, visible: Option<bool>) -> Result<(), String> {
+fn toggle_league_aux_window(
+    app: AppHandle,
+    kind: String,
+    visible: Option<bool>,
+) -> Result<(), String> {
     let (label, open): (&str, fn(AppHandle) -> Result<(), String>) = match kind.as_str() {
         "ongoing" => ("league-ongoing", open_league_ongoing),
         "opgg" => ("league-opgg", open_league_opgg),
@@ -161,6 +165,23 @@ fn toggle_league_aux_window(app: AppHandle, kind: String, visible: Option<bool>)
     } else {
         Ok(())
     }
+}
+
+#[tauri::command]
+fn reset_league_window_position(app: AppHandle, kind: String) -> Result<(), String> {
+    let label = match kind.as_str() {
+        "mini" => "league-mini",
+        "ongoing" => "league-ongoing",
+        "opgg" => "league-opgg",
+        "cooldown" => "league-cd-timer",
+        _ => return Err("unsupported League auxiliary window".to_string()),
+    };
+    let window = app
+        .get_webview_window(label)
+        .ok_or_else(|| "League auxiliary window is not open".to_string())?;
+    window.center().map_err(|error| error.to_string())?;
+    window.show().map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 #[derive(Default)]
@@ -771,6 +792,7 @@ pub fn run() {
             open_league_cd_timer,
             open_league_opgg,
             toggle_league_aux_window,
+            reset_league_window_position,
             sync_league_mini,
             sync_league_cd_timer,
             sync_league_opgg,

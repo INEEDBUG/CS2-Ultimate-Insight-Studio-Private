@@ -1807,9 +1807,12 @@ def test_opgg_account_writes_are_off_by_default():
     settings = LeagueLabSettings()
     assert settings.opgg_window_enabled is True
     assert settings.opgg_auto_show is True
+    assert settings.opgg_opacity == 1.0
     assert settings.opgg_auto_apply_runes is False
     assert settings.opgg_auto_apply_spells is False
     assert settings.opgg_auto_apply_items is False
+    assert settings.mini_opacity == 1.0
+    assert settings.mini_show_skin_selector is True
 
 
 def test_match_history_and_ongoing_navigation_defaults_are_safe():
@@ -1818,11 +1821,39 @@ def test_match_history_and_ongoing_navigation_defaults_are_safe():
     assert settings.match_history_load_count == 20
     assert settings.ongoing_auto_route_when_game_starts is False
     assert settings.ongoing_match_history_load_count == 20
+    assert settings.ongoing_query_concurrency == 10
+    assert settings.ongoing_premade_threshold == 3
     assert settings.ongoing_jungle_analysis_count == 4
     assert settings.ongoing_show_champion_usage is True
     assert settings.ongoing_show_jungle_pathing is True
     assert settings.ongoing_show_premade_tag is True
     assert settings.ongoing_show_local_tag is True
+    assert settings.ongoing_show_streak_tags is True
+    assert settings.ongoing_show_performance_tags is True
+
+
+def test_ongoing_performance_tags_cover_streaks_and_recent_form():
+    matches = [
+        {
+            "win": True,
+            "kills": 8,
+            "deaths": 2,
+            "assists": 6,
+            "cs": 240,
+            "duration_seconds": 1800,
+            "vision_score": 40,
+            "challenges": {"soloKills": 2},
+        }
+        for _ in range(5)
+    ]
+    tags = league_lab._ongoing_performance_tags(matches)
+    ids = {tag["id"] for tag in tags}
+    assert {"winning-streak", "high-win-rate", "great-kda", "high-cs"}.issubset(ids)
+
+
+def test_ongoing_performance_tags_respect_visibility_settings():
+    matches = [{"win": False, "kills": 0, "deaths": 8, "assists": 1} for _ in range(5)]
+    assert league_lab._ongoing_performance_tags(matches, show_streaks=False, show_performance=False) == []
 
 
 def test_opgg_proxy_uses_fixed_origin_and_cache(monkeypatch):

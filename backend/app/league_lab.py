@@ -136,21 +136,28 @@ class LeagueLabSettings(BaseModel):
     auto_invite_friend_puuids: list[str] = Field(default_factory=list, max_length=20)
     mini_enabled: bool = True
     mini_auto_show: bool = True
+    mini_opacity: float = Field(default=1.0, ge=0.4, le=1.0)
+    mini_show_skin_selector: bool = True
     match_history_refresh_after_game: bool = True
     match_history_load_count: int = Field(default=20, ge=1, le=100)
     ongoing_auto_route_when_game_starts: bool = False
     ongoing_match_history_load_count: int = Field(default=20, ge=1, le=100)
+    ongoing_query_concurrency: int = Field(default=10, ge=1, le=20)
+    ongoing_premade_threshold: int = Field(default=3, ge=1, le=20)
     ongoing_jungle_analysis_count: int = Field(default=4, ge=1, le=20)
     ongoing_show_champion_usage: bool = True
     ongoing_show_jungle_pathing: bool = True
     ongoing_show_premade_tag: bool = True
     ongoing_show_local_tag: bool = True
+    ongoing_show_streak_tags: bool = True
+    ongoing_show_performance_tags: bool = True
     respawn_timer_enabled: bool = False
     cooldown_timer_enabled: bool = False
     cooldown_timer_type: Literal["countdown", "countup"] = "countdown"
     cooldown_timer_reverse_adjustment: bool = False
     opgg_window_enabled: bool = True
     opgg_auto_show: bool = True
+    opgg_opacity: float = Field(default=1.0, ge=0.4, le=1.0)
     opgg_auto_apply_runes: bool = False
     opgg_auto_apply_spells: bool = False
     opgg_auto_apply_items: bool = False
@@ -2611,6 +2618,62 @@ def _infer_premade_groups(histories: dict[str, dict], active_puuids: set[str], t
     return groups
 
 
+def _ongoing_performance_tags(matches: list[dict], *, show_streaks: bool = True, show_performance: bool = True) -> list[dict]:
+    """Build read-only player-card tags from the already loaded match sample."""
+    tags: list[dict] = []
+    if not matches:
+        return tags
+    if show_streaks:
+        first_result = bool(matches[0].get("win"))
+        streak = 0
+        for match in matches:
+            if bool(match.get("win")) != first_result:
+                break
+            streak += 1
+        if streak >= 2:
+            tags.append({
+                "id": "winning-streak" if first_result else "losing-streak",
+                "label": f"{streak} 连{'胜' if first_result else '败'}",
+                "tone": "positive" if first_result else "negative",
+            })
+    if not show_performance:
+        return tags
+
+    sample = len(matches)
+    win_rate = sum(1 for match in matches if match.get("win")) / sample
+    if sample >= 5 and win_rate >= 0.6:
+        tags.append({"id": "high-win-rate", "label": f"近况强势 {win_rate:.0%}", "tone": "positive"})
+    elif sample >= 5 and win_rate <= 0.4:
+        tags.append({"id": "low-win-rate", "label": f"近况低迷 {win_rate:.0%}", "tone": "negative"})
+
+    def average(key: str) -> float:
+        return sum(float(match.get(key) or 0) for match in matches) / sample
+
+    avg_kda = sum(
+        (float(match.get("kills") or 0) + float(match.get("assists") or 0))
+        / max(1.0, float(match.get("deaths") or 0))
+        for match in matches
+    ) / sample
+    if avg_kda >= 4:
+        tags.append({"id": "great-kda", "label": f"高 KDA {avg_kda:.1f}", "tone": "positive"})
+    elif avg_kda <= 1.5:
+        tags.append({"id": "low-kda", "label": f"KDA {avg_kda:.1f}", "tone": "negative"})
+
+    cs_minutes = [
+        float(match.get("cs") or 0) / max(1.0, float(match.get("duration_seconds") or 0) / 60)
+        for match in matches
+        if float(match.get("duration_seconds") or 0) > 0
+    ]
+    if cs_minutes and sum(cs_minutes) / len(cs_minutes) >= 7.5:
+        tags.append({"id": "high-cs", "label": f"补刀 {sum(cs_minutes) / len(cs_minutes):.1f}/分", "tone": "info"})
+    if average("vision_score") >= 35:
+        tags.append({"id": "high-vision", "label": f"视野 {average('vision_score'):.0f}", "tone": "info"})
+    solo_kills = [float((match.get("challenges") or {}).get("soloKills") or 0) for match in matches]
+    if sum(solo_kills) / sample >= 1:
+        tags.append({"id": "solo-kills", "label": f"场均单杀 {sum(solo_kills) / sample:.1f}", "tone": "warning"})
+    return tags[:5]
+
+
 _JUNGLE_ANALYSIS_MINUTES = 14
 _JUNGLE_KILL_WEIGHT = 5
 _JUNGLE_CAMPS = (
@@ -3646,11 +3709,15 @@ async def league_ongoing_game():
             game_data.get("gameId"),
             [
                 settings.ongoing_match_history_load_count,
+                settings.ongoing_query_concurrency,
+                settings.ongoing_premade_threshold,
                 settings.ongoing_jungle_analysis_count,
                 settings.ongoing_show_champion_usage,
                 settings.ongoing_show_jungle_pathing,
                 settings.ongoing_show_premade_tag,
                 settings.ongoing_show_local_tag,
+                settings.ongoing_show_streak_tags,
+                settings.ongoing_show_performance_tags,
             ],
             [
                 [row.get("puuid") or row.get("playerPuuid"), row.get("championId"), row.get("team") or row.get("teamId"), row.get("selectedPosition")]
@@ -3661,6 +3728,8 @@ async def league_ongoing_game():
     )
     if _ongoing_cache["key"] == cache_key and time.monotonic() < _ongoing_cache["expires_at"]:
         return _ongoing_cache["payload"]
+    query_semaphore = asyncio.Semaphore(settings.ongoing_query_concurrency)
+
     async def enrich(row):
         if not isinstance(row, dict):
             return None, None
@@ -3668,14 +3737,15 @@ async def league_ongoing_game():
         summoner, ranked, history = None, None, None
         if puuid:
             try:
-                summoner, ranked, history = await asyncio.gather(
-                    league_lab_service.request("GET", f"/lol-summoner/v2/summoners/puuid/{puuid}"),
-                    league_lab_service.request("GET", f"/lol-ranked/v1/ranked-stats/{puuid}"),
-                    league_lab_service.request(
-                        "GET", f"/lol-match-history/v1/products/lol/{puuid}/matches",
-                        params={"begIndex": 0, "endIndex": settings.ongoing_match_history_load_count - 1},
-                    ),
-                )
+                async with query_semaphore:
+                    summoner, ranked, history = await asyncio.gather(
+                        league_lab_service.request("GET", f"/lol-summoner/v2/summoners/puuid/{puuid}"),
+                        league_lab_service.request("GET", f"/lol-ranked/v1/ranked-stats/{puuid}"),
+                        league_lab_service.request(
+                            "GET", f"/lol-match-history/v1/products/lol/{puuid}/matches",
+                            params={"begIndex": 0, "endIndex": settings.ongoing_match_history_load_count - 1},
+                        ),
+                    )
             except RuntimeError:
                 pass
         champion_id = int(row.get("championId") or 0)
@@ -3704,11 +3774,20 @@ async def league_ongoing_game():
                 "average_kda": round(sum((match.get("kills", 0) + match.get("assists", 0)) / max(1, match.get("deaths", 0)) for match in champion_matches) / max(1, len(champion_matches)), 2),
             },
             "jungle_analysis": jungle_analysis,
+            "performance_tags": _ongoing_performance_tags(
+                matches,
+                show_streaks=settings.ongoing_show_streak_tags,
+                show_performance=settings.ongoing_show_performance_tags,
+            ),
         }, history or {})
     enriched = await asyncio.gather(*(enrich(row) for row in selections))
     players = [result[0] for result in enriched if result[0]]
     histories = {result[0]["puuid"]: result[1] for result in enriched if result[0] and result[0].get("puuid")}
-    premade_groups = _infer_premade_groups(histories, set(histories)) if settings.ongoing_show_premade_tag else {}
+    premade_groups = _infer_premade_groups(
+        histories,
+        set(histories),
+        threshold=settings.ongoing_premade_threshold,
+    ) if settings.ongoing_show_premade_tag else {}
     for player in players:
         player["premade_group"] = premade_groups.get(player.get("puuid"))
     result = {

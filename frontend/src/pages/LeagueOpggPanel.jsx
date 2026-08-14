@@ -54,6 +54,7 @@ export default function LeagueOpggPanel() {
   const listRequest=useRef(0),detailRequest=useRef(0),autoApplied=useRef(new Set()),previousPhase=useRef("");
   const names=useMemo(()=>new Map(catalog.map((row)=>[Number(row.id),row.name||`英雄 ${row.id}`])),[catalog]);
   const settings=status?.settings||{};
+  useEffect(()=>{document.documentElement.style.opacity=String(settings.opgg_opacity??1);return()=>{document.documentElement.style.opacity="1";};},[settings.opgg_opacity]);
 
   const refreshList=useCallback(async()=>{
     const request=++listRequest.current;setLoading(true);setMessage("");
