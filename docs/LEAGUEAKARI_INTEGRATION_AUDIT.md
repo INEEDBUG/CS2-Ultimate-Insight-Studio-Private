@@ -68,6 +68,7 @@ This document prevents the League integration from becoming a collection of unre
 - Arbitrary Game ID preview and dry-run parity: the toolkit resolves a completed match through LCU with current-region SGP fallback, normalizes both team scoreboards, optionally loads the timeline summary, and can route the historical roster into the existing ongoing-game panel without writing any client state.
 - Configurable global game-termination shortcut parity: the Tauri global-shortcut plugin is scoped to the main window, registration is driven by persisted League settings, the feature defaults off, and every trigger still passes the backend foreground-process guard before `League of Legends.exe` can be terminated.
 - In-game-send parity: fixed-text presets support ordered multiline content, optional global shortcuts and an independent cancel shortcut, while recent-form, premade and jungle-analysis drafts support friendly/enemy/all targeting with nine independent target shortcuts. Lobby and ChampSelect use the matching LCU conversation; InProgress sends one line at a time only after re-reading the live phase and verifying `League of Legends.exe` remains foreground. The account-write gate, feature switch and every preset shortcut all default off, while manual sends require the exact confirmation phrase. Global show shortcuts are also available for the stateful ongoing-game window, OP.GG and cooldown timer.
+- League settings export/import parity: the client exports a versioned local JSON document, recursively excludes credential-like fields, accepts only settings known by the installed version and rejects future schemas. Import never restores the automation, account-write, in-game-send, process-termination or OP.GG auto-apply master switches; the user must explicitly enable them again after reviewing the restored configuration.
 
 ### Implemented with deliberate React/Tauri presentation differences
 
@@ -102,7 +103,7 @@ This table is stricter than the shard matrix below: a backend capability is not 
 | Automation | League automation sections | gameflow, selection/ban, champion config and miscellaneous behavior | Equivalent; real Tencent state-machine acceptance pending |
 | Toolkit | League toolkit sections | lobby/client/profile/rewards/friends/in-game-send and preview actions | Equivalent except deliberately excluded unfinished loot crafting |
 | Mini and auxiliary windows | Mini, ongoing, OP.GG and cooldown windows | phase lifecycle, pinning, close suppression, ARAM actions and auxiliary tools | Equivalent; real-window lifecycle acceptance pending |
-| Settings and shell | integrated settings plus Tauri shell | theme/privacy/capture/shortcuts/tray/updater and persisted League settings | Host equivalent |
+| Settings and shell | integrated settings plus Tauri shell | theme/privacy/capture/shortcuts/tray/updater, persisted League settings and safe JSON export/import | Host equivalent |
 
 ## Shard-to-host traceability matrix
 
@@ -115,7 +116,7 @@ This is the completion checklist against the authoritative registration list in 
 | `app-common` | theme, locale, streamer privacy and capture protection | Equivalent |
 | `logger-factory` | Python/Rust application logging | Host equivalent |
 | `mobx-utils` | React/Zustand state and LCU WebSocket event propagation | Host equivalent |
-| `config-migrate`, `setting-factory`, `storage` | versioned Pydantic settings plus local SQLite/JSON persistence | Host equivalent |
+| `config-migrate`, `setting-factory`, `storage` | versioned Pydantic settings, local SQLite/JSON persistence and credential-free settings export/import | Host equivalent |
 | `game-client` | foreground guard, termination shortcut, Live Client Data and settings-file control | Equivalent |
 | `league-client`, `league-client-ux`, `riot-client` | native all-process command-line discovery, exact-PID chooser, memory-only credentials, HTTPS and WebSocket clients | Equivalent |
 | `client-installation` | TCLS, per-installation WeGame launcher, standalone WeGame and Riot Client registry/file detection plus explicit launch cards | Equivalent |
