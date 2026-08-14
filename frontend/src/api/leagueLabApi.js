@@ -91,6 +91,11 @@ export async function fetchLeaguePlayerCollection(puuid, limit = 100) {
   return data;
 }
 
+export async function fetchLeaguePlayerMastery(puuid) {
+  const { data } = await API.get(`/league-lab/players/${encodeURIComponent(puuid)}/mastery`);
+  return data;
+}
+
 export async function fetchLeaguePlayerJungleAnalysis(puuid, limit = 6, serverId = "") {
   const { data } = await API.get(`/league-lab/players/${encodeURIComponent(puuid)}/jungle-analysis`, { params: { limit, server_id: serverId || undefined } });
   return data;

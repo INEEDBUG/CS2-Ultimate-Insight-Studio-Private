@@ -3227,6 +3227,31 @@ async def league_player_collection(puuid: str, limit: int = 100):
     return {"puuid": puuid, "matches": matches, "count": len(matches), "source": "sqlite"}
 
 
+@router.get("/players/{puuid}/mastery")
+async def league_player_mastery(puuid: str):
+    if not puuid.strip():
+        raise HTTPException(status_code=422, detail="缺少玩家 PUUID")
+    try:
+        rows, names = await asyncio.gather(
+            league_lab_service.request("GET", f"/lol-champion-mastery/v1/{quote(puuid, safe='')}/champion-mastery"),
+            _champion_names(),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    normalized = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        champion_id = int(row.get("championId") or 0)
+        normalized.append({
+            **row,
+            "championId": champion_id,
+            "championName": names.get(champion_id, str(champion_id)),
+        })
+    normalized.sort(key=lambda row: int(row.get("championPoints") or 0), reverse=True)
+    return {"mastery": normalized, "count": len(normalized)}
+
+
 @router.get("/players/{puuid}/jungle-analysis")
 async def league_player_jungle_analysis(puuid: str, limit: int = 6, server_id: str = ""):
     try:

@@ -266,6 +266,27 @@ def test_replay_watch_is_manual_and_uses_league_replay_endpoint(monkeypatch):
     ]
 
 
+def test_full_champion_mastery_is_named_and_sorted(monkeypatch):
+    async def request(method, path, *, json_body=None, params=None):
+        assert path == "/lol-champion-mastery/v1/player-puuid/champion-mastery"
+        return [
+            {"championId": 2, "championPoints": 500},
+            {"championId": 1, "championPoints": 1200},
+        ]
+
+    async def names():
+        return {1: "Annie", 2: "Olaf"}
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    monkeypatch.setattr(league_lab, "_champion_names", names)
+    result = asyncio.run(league_lab.league_player_mastery("player-puuid"))
+
+    assert [(row["championName"], row["championPoints"]) for row in result["mastery"]] == [
+        ("Annie", 1200),
+        ("Olaf", 500),
+    ]
+
+
 def test_settings_are_persisted_without_lcu_credentials(tmp_path, monkeypatch):
     monkeypatch.setattr(LeagueLabService, "_settings_path", staticmethod(lambda: tmp_path / "league-lab.json"))
     service = LeagueLabService()
