@@ -44,6 +44,7 @@ This document prevents the League integration from becoming a collection of unre
 - Client toolkit overview plus LeagueAkari-equivalent mission (`SELECT_REWARDS`), reward-grant (`PENDING_SELECTION`) and Event Hub claim flows, and selected-friend deletion. The implementation re-reads live LCU state immediately before every write, never preselects or randomly chooses a reward, requires a default-off account-write master switch and exact confirmation phrase, and deletes only explicitly selected friend IDs.
 - LeagueAkari client/lobby/profile toolkit parity: eligible/unavailable queue discovery, revalidated queue-lobby creation, explicit lobby leave, Strawberry champion slot/map/difficulty controls, profile background skin/augment selection, banner accent, prestige-crest removal, challenge-token clearing and account-scope emote clearing. Every account write shares the default-off toolkit gate, exact confirmation phrase and live catalog/lobby revalidation.
 - Friend-tool parity: grouped/searchable Riot IDs, selected-only deletion, background enrichment of last-match and friendship-start dates through LCU/SGP, and one-click routing into the integrated player center. Date enrichment is read-only and intentionally does not delay the toolkit overview.
+- Multi-client/startup parity: every readable `LeagueClientUx` process is enumerated with account, region and phase metadata; the user can bind the lab to an exact PID without exposing credentials. Tencent TCLS, the per-installation WeGame launcher, standalone WeGame and Riot Client are detected using LeagueAkari-compatible registry/file rules and are launched only from an explicit user click.
 - Opt-in local respawn countdown in League Mini through the in-game Live Client Data endpoint; disabled by default.
 - Thirty-second enriched live-game cache so frequent UI refreshes do not repeatedly request every player's history.
 - League Mini ARAM bench card with current champion, bench choices, reroll count, manual swap and reroll actions.
@@ -90,8 +91,8 @@ This is the completion checklist against the authoritative registration list in 
 | `mobx-utils` | React/Zustand state and LCU WebSocket event propagation | Host equivalent |
 | `config-migrate`, `setting-factory`, `storage` | versioned Pydantic settings plus local SQLite/JSON persistence | Host equivalent |
 | `game-client` | foreground guard, termination shortcut, Live Client Data and settings-file control | Equivalent |
-| `league-client`, `league-client-ux`, `riot-client` | native command-line discovery, memory-only credentials, HTTPS and WebSocket clients | Equivalent; multi-client chooser remains under audit |
-| `client-installation` | no launcher surface yet | Pending: detected-client chooser and TCLS/WeGame/Riot launchers |
+| `league-client`, `league-client-ux`, `riot-client` | native all-process command-line discovery, exact-PID chooser, memory-only credentials, HTTPS and WebSocket clients | Equivalent |
+| `client-installation` | TCLS, per-installation WeGame launcher, standalone WeGame and Riot Client registry/file detection plus explicit launch cards | Equivalent |
 | `window-manager`, `tray` | Tauri main/Mini/ongoing/OP.GG/cooldown windows and close-to-tray lifecycle | Equivalent |
 | `keyboard-shortcuts` | Tauri global-shortcut managers with default-off settings | Equivalent |
 | `self-update` | signed Tauri GitHub updater | Host equivalent |

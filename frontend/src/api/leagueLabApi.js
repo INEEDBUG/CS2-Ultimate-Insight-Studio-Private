@@ -5,6 +5,26 @@ export async function fetchLeagueLabStatus() {
   return data;
 }
 
+export async function fetchLeagueClients() {
+  const { data } = await API.get("/league-lab/clients");
+  return data;
+}
+
+export async function selectLeagueClient(pid) {
+  const { data } = await API.post("/league-lab/clients/select", { pid });
+  return data;
+}
+
+export async function fetchLeagueClientInstallations() {
+  const { data } = await API.get("/league-lab/installations");
+  return data;
+}
+
+export async function launchLeagueClient(kind) {
+  const { data } = await API.post("/league-lab/installations/launch", { kind });
+  return data;
+}
+
 export async function saveLeagueLabSettings(settings) {
   const { data } = await API.put("/league-lab/settings", settings);
   return data;

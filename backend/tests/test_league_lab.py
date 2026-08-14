@@ -25,6 +25,7 @@ def test_parse_league_client_command_line_extracts_lcu_credentials():
     assert parsed.platform_id == "HN1"
     assert parsed.riot_client_port == 60001
     assert parsed.riot_client_token == "riot_secret"
+    assert parsed.pid == 0
     assert "secret_token" not in parsed.base_url
     assert "riot_secret" not in parsed.riot_client_base_url
 
@@ -90,6 +91,132 @@ def test_discovery_uses_thread_compatible_subprocess(monkeypatch):
     assert parsed is not None
     assert parsed.port == 54321
     assert parsed.token == "memory_only"
+    assert parsed.pid == 1234
+
+
+def test_discovery_returns_every_running_league_client_without_tokens_leaking(monkeypatch):
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 0, stdout=b"1234\r\n5678\r\n")
+
+    monkeypatch.setattr(league_lab.os, "name", "nt")
+    monkeypatch.setattr(league_lab.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        league_lab,
+        "_read_windows_process_command_line",
+        lambda pid: f"LeagueClientUx.exe --app-port={pid} --remoting-auth-token=memory_{pid}",
+    )
+
+    clients = asyncio.run(league_lab.discover_lcu_clients())
+
+    assert [(client.pid, client.port) for client in clients] == [(1234, 1234), (5678, 5678)]
+
+
+def test_client_list_identifies_accounts_without_exposing_credentials(monkeypatch):
+    clients = [
+        league_lab.LcuCredentials(1111, "secret-one", "CN", "HN1", pid=101),
+        league_lab.LcuCredentials(2222, "secret-two", "CN", "HN2", pid=202),
+    ]
+
+    async def discover():
+        return clients
+
+    class FakeResponse:
+        def __init__(self, url):
+            self.url = url
+            self.content = b"{}"
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            if self.url.endswith("current-summoner"):
+                return {"gameName": f"Player-{self.url.split(':')[2].split('/')[0]}", "tagLine": "CN1"}
+            return "Lobby"
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, **kwargs):
+            assert kwargs.get("headers", {}).get("Authorization", "").startswith("Basic ")
+            return FakeResponse(url)
+
+    monkeypatch.setattr(league_lab, "discover_lcu_clients", discover)
+    monkeypatch.setattr(league_lab.httpx, "AsyncClient", FakeClient)
+    result = asyncio.run(league_lab.league_clients())
+
+    assert [row["pid"] for row in result["clients"]] == [101, 202]
+    serialized = json.dumps(result)
+    assert "secret-one" not in serialized
+    assert "secret-two" not in serialized
+
+
+def test_select_client_uses_exact_running_pid(monkeypatch):
+    service = LeagueLabService()
+    clients = [
+        league_lab.LcuCredentials(1111, "one", pid=101),
+        league_lab.LcuCredentials(2222, "two", pid=202),
+    ]
+
+    async def discover():
+        return clients
+
+    async def refresh_state():
+        service.summoner_name = "Selected"
+
+    monkeypatch.setattr(league_lab, "discover_lcu_clients", discover)
+    monkeypatch.setattr(service, "_replace_credentials", lambda value: setattr(service, "credentials", value))
+    monkeypatch.setattr(service, "_refresh_state", refresh_state)
+
+    asyncio.run(service.select_client(202))
+
+    assert service.credentials == clients[1]
+    assert service._selected_client_pid == 202
+    assert service.summoner_name == "Selected"
+
+
+def test_detected_client_launcher_uses_argument_array_without_shell(tmp_path, monkeypatch):
+    executable = tmp_path / "RiotClientServices.exe"
+    executable.write_bytes(b"fixture")
+
+    async def installations():
+        return {
+            "riot": {
+                "kind": "riot",
+                "label": "Riot Client",
+                "path": str(executable),
+                "args": ["--launch-product=league_of_legends", "--launch-patchline=live"],
+            }
+        }
+
+    captured = {}
+
+    class FakeProcess:
+        def poll(self):
+            return None
+
+    def popen(args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return FakeProcess()
+
+    monkeypatch.setattr(league_lab, "detect_client_installations", installations)
+    monkeypatch.setattr(league_lab.subprocess, "Popen", popen)
+    result = asyncio.run(league_lab.launch_detected_client("riot"))
+
+    assert result == {"started": True, "kind": "riot", "label": "Riot Client"}
+    assert captured["args"] == [
+        str(executable.resolve()),
+        "--launch-product=league_of_legends",
+        "--launch-patchline=live",
+    ]
+    assert "shell" not in captured["kwargs"]
 
 
 def test_settings_are_persisted_without_lcu_credentials(tmp_path, monkeypatch):

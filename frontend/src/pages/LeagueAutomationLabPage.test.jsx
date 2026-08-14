@@ -1,10 +1,14 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LeagueAutomationLabPage from "./LeagueAutomationLabPage";
-import { fetchLeagueLabStatus, saveLeagueLabSettings } from "../api/leagueLabApi";
+import { fetchLeagueClientInstallations, fetchLeagueClients, fetchLeagueLabStatus, saveLeagueLabSettings } from "../api/leagueLabApi";
 
 vi.mock("../api/leagueLabApi", () => ({
   fetchLeagueLabStatus: vi.fn(),
+  fetchLeagueClients: vi.fn(),
+  fetchLeagueClientInstallations: vi.fn(),
+  selectLeagueClient: vi.fn(),
+  launchLeagueClient: vi.fn(),
   saveLeagueLabSettings: vi.fn(),
   runLeagueLabAction: vi.fn(),
 }));
@@ -28,6 +32,8 @@ describe("LeagueAutomationLabPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fetchLeagueLabStatus.mockResolvedValue(status);
+    fetchLeagueClients.mockResolvedValue({ clients: [], selected_pid: 0 });
+    fetchLeagueClientInstallations.mockResolvedValue({ installations: [] });
     saveLeagueLabSettings.mockResolvedValue({ ...status, settings: { ...status.settings, automation_enabled: true } });
   });
 

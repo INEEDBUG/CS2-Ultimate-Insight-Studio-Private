@@ -250,6 +250,14 @@ class LeagueClientWindowResize(BaseModel):
     base_height: int = Field(default=720, ge=360, le=2160)
 
 
+class LeagueClientSelect(BaseModel):
+    pid: int = Field(gt=0)
+
+
+class LeagueClientLaunch(BaseModel):
+    kind: Literal["tcls", "wegame-lol", "wegame", "riot"]
+
+
 class MissionRewardClaim(BaseModel):
     mission_id: str = Field(min_length=1, max_length=160)
     reward_group_ids: list[str] = Field(min_length=1, max_length=20)
@@ -323,6 +331,7 @@ class LcuCredentials:
     platform_id: str = ""
     riot_client_port: int = 0
     riot_client_token: str = ""
+    pid: int = 0
 
     @property
     def base_url(self) -> str:
@@ -343,7 +352,7 @@ class LcuCredentials:
         return f"Basic {encoded}"
 
 
-def parse_league_client_command_line(command_line: str) -> LcuCredentials | None:
+def parse_league_client_command_line(command_line: str, *, pid: int = 0) -> LcuCredentials | None:
     port_match = _PORT_RE.search(command_line or "")
     token_match = _TOKEN_RE.search(command_line or "")
     if not port_match or not token_match:
@@ -359,15 +368,17 @@ def parse_league_client_command_line(command_line: str) -> LcuCredentials | None
         platform_id=platform_match.group(1) if platform_match else "",
         riot_client_port=int(riot_client_port_match.group(1)) if riot_client_port_match else 0,
         riot_client_token=riot_client_token_match.group(1) if riot_client_token_match else "",
+        pid=pid,
     )
 
 
-async def discover_lcu_credentials() -> LcuCredentials | None:
+async def discover_lcu_clients() -> list[LcuCredentials]:
     if os.name != "nt":
-        return None
-    script = "(Get-Process LeagueClientUx -ErrorAction SilentlyContinue | Select-Object -First 1).Id"
+        return []
+    script = "Get-Process LeagueClientUx -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id"
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    def read_command_line() -> str:
+
+    def read_command_lines() -> list[LcuCredentials]:
         completed = subprocess.run(
             ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
             stdout=subprocess.PIPE,
@@ -376,17 +387,32 @@ async def discover_lcu_credentials() -> LcuCredentials | None:
             check=False,
             creationflags=creation_flags,
         )
-        try:
-            pid = int(completed.stdout.decode("ascii", errors="ignore").strip())
-        except ValueError:
-            return ""
-        return _read_windows_process_command_line(pid)
+        pids = []
+        for value in completed.stdout.decode("ascii", errors="ignore").split():
+            try:
+                pids.append(int(value))
+            except ValueError:
+                continue
+        clients = []
+        for pid in pids:
+            parsed = parse_league_client_command_line(_read_windows_process_command_line(pid), pid=pid)
+            if parsed:
+                clients.append(parsed)
+        return clients
 
     try:
-        command_line = await asyncio.to_thread(read_command_line)
+        return await asyncio.to_thread(read_command_lines)
     except (OSError, subprocess.TimeoutExpired):
-        return None
-    return parse_league_client_command_line(command_line)
+        return []
+
+
+async def discover_lcu_credentials(preferred_pid: int | None = None) -> LcuCredentials | None:
+    clients = await discover_lcu_clients()
+    if preferred_pid:
+        selected = next((client for client in clients if client.pid == preferred_pid), None)
+        if selected:
+            return selected
+    return clients[0] if clients else None
 
 
 def _read_windows_process_command_line(pid: int) -> str:
@@ -421,6 +447,116 @@ def _read_windows_process_command_line(pid: int) -> str:
         return ctypes.wstring_at(value.Buffer, value.Length // ctypes.sizeof(ctypes.c_wchar)) if value.Buffer else ""
     finally:
         kernel32.CloseHandle(handle)
+
+
+def _read_registry_string(root, key_path: str, value_name: str) -> str:
+    try:
+        import winreg
+
+        with winreg.OpenKey(root, key_path) as key:
+            value, _ = winreg.QueryValueEx(key, value_name)
+        return str(value or "").strip()
+    except (ImportError, OSError):
+        return ""
+
+
+def _existing_executable(path: str | Path | None) -> str:
+    if not path:
+        return ""
+    candidate = Path(path).expanduser()
+    try:
+        return str(candidate.resolve()) if candidate.is_file() else ""
+    except OSError:
+        return ""
+
+
+def _detect_client_installations_sync() -> dict[str, dict]:
+    """Detect the same Tencent/WeGame/Riot launch surfaces exposed by LeagueAkari."""
+    if os.name != "nt":
+        return {}
+    try:
+        import winreg
+    except ImportError:
+        return {}
+
+    detected: dict[str, dict] = {}
+    install_dir = _read_registry_string(winreg.HKEY_CURRENT_USER, r"Software\Tencent\LOL", "InstallPath")
+    candidates: list[tuple[str, str, Path, list[str]]] = []
+    if install_dir:
+        root = Path(install_dir)
+        candidates.extend([
+            ("tcls", "腾讯 TCLS", root / "Launcher" / "Client.exe", []),
+            ("wegame-lol", "WeGame 英雄联盟", root / "WeGameLauncher" / "launcher.exe", []),
+        ])
+
+    default_icon = _read_registry_string(winreg.HKEY_CURRENT_USER, r"wegame\DefaultIcon", "")
+    icon_match = re.match(r'^"([^"]+)"|^([^,]+)', default_icon)
+    if icon_match:
+        candidates.append(("wegame", "WeGame", Path(icon_match.group(1) or icon_match.group(2).strip()), []))
+
+    for drive_ord in range(ord("C"), ord("Z") + 1):
+        root = Path(f"{chr(drive_ord)}:\\WeGameApps\\英雄联盟")
+        if root.is_dir():
+            candidates.extend([
+                ("tcls", "腾讯 TCLS", root / "Launcher" / "Client.exe", []),
+                ("wegame-lol", "WeGame 英雄联盟", root / "WeGameLauncher" / "launcher.exe", []),
+            ])
+
+    program_data = Path(os.environ.get("ProgramData") or r"C:\ProgramData")
+    installs_file = program_data / "Riot Games" / "RiotClientInstalls.json"
+    try:
+        installs = json.loads(installs_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        installs = {}
+    for value in (installs.get("associated_client") or {}).values() if isinstance(installs, dict) else []:
+        path = Path(str(value or ""))
+        if "riot games" in str(path).lower() and "英雄联盟" not in str(path):
+            candidates.append(("riot", "Riot Client", path, ["--launch-product=league_of_legends", "--launch-patchline=live"]))
+    candidates.append((
+        "riot",
+        "Riot Client",
+        Path(f"{os.environ.get('SystemDrive') or 'C:'}\\") / "Riot Games" / "Riot Client" / "RiotClientServices.exe",
+        ["--launch-product=league_of_legends", "--launch-patchline=live"],
+    ))
+
+    for kind, label, candidate, args in candidates:
+        executable = _existing_executable(candidate)
+        if executable and kind not in detected:
+            detected[kind] = {"kind": kind, "label": label, "path": executable, "args": args}
+    return detected
+
+
+async def detect_client_installations() -> dict[str, dict]:
+    return await asyncio.to_thread(_detect_client_installations_sync)
+
+
+async def launch_detected_client(kind: str) -> dict:
+    installations = await detect_client_installations()
+    target = installations.get(kind)
+    if not target:
+        raise RuntimeError("未检测到所选客户端安装路径")
+    executable = _existing_executable(target.get("path"))
+    if not executable:
+        raise RuntimeError("客户端安装路径已失效，请重新检测")
+
+    def launch() -> None:
+        creation_flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        process = subprocess.Popen(
+            [executable, *(target.get("args") or [])],
+            cwd=str(Path(executable).parent),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            creationflags=creation_flags,
+        )
+        process.poll()
+
+    try:
+        await asyncio.to_thread(launch)
+    except OSError as exc:
+        raise RuntimeError(f"客户端启动失败: {type(exc).__name__}") from exc
+    return {"started": True, "kind": kind, "label": target["label"]}
 
 
 def _terminate_foreground_league_game_client() -> int:
@@ -594,6 +730,8 @@ class LeagueLabService:
         self.champ_select: dict = {}
         self.respawn_timer: dict = {"available": False, "dead": False, "time_left": 0.0, "total_time": 0.0}
         self._last_discovery_at = 0.0
+        self._selected_client_pid = 0
+        self._available_clients: list[LcuCredentials] = []
 
     @staticmethod
     def _settings_path() -> Path:
@@ -648,7 +786,16 @@ class LeagueLabService:
         if not force and now - self._last_discovery_at < 5.0:
             return False
         self._last_discovery_at = now
-        credentials = await discover_lcu_credentials()
+        clients = await discover_lcu_clients()
+        self._available_clients = clients
+        credentials = next((client for client in clients if client.pid == self._selected_client_pid), None)
+        if credentials is None:
+            credentials = clients[0] if clients else None
+            self._selected_client_pid = credentials.pid if credentials else 0
+        self._replace_credentials(credentials)
+        return credentials is not None
+
+    def _replace_credentials(self, credentials: LcuCredentials | None) -> None:
         if credentials != self.credentials:
             if self._event_task:
                 self._event_task.cancel()
@@ -668,7 +815,17 @@ class LeagueLabService:
             self._reset_chat_ready_automation()
             if credentials:
                 self._event_task = asyncio.create_task(self._run_event_stream(credentials), name="league-lcu-events")
-        return credentials is not None
+
+    async def select_client(self, pid: int) -> None:
+        clients = await discover_lcu_clients()
+        credentials = next((client for client in clients if client.pid == pid), None)
+        if credentials is None:
+            raise RuntimeError("所选 LeagueClientUx 已退出或无法读取认证信息")
+        self._available_clients = clients
+        self._selected_client_pid = pid
+        self._last_discovery_at = time.monotonic()
+        self._replace_credentials(credentials)
+        await self._refresh_state()
 
     def _reset_chat_ready_automation(self) -> None:
         self._chat_ready_since = None
@@ -887,6 +1044,8 @@ class LeagueLabService:
             "current_summoner": self.current_summoner,
             "region": credentials.region if credentials else "",
             "platform_id": credentials.platform_id if credentials else "",
+            "client_pid": credentials.pid if credentials else 0,
+            "available_client_count": len(self._available_clients),
             "last_error": self.last_error,
             "last_action": self.last_action,
             "last_action_at": self.last_action_at or None,
@@ -2610,6 +2769,73 @@ async def _load_jungle_analysis(
 @router.get("/status")
 async def league_lab_status():
     return await league_lab_service.snapshot()
+
+
+async def _lcu_client_public_identity(credentials: LcuCredentials) -> dict:
+    async def read(path: str):
+        try:
+            async with httpx.AsyncClient(verify=False, timeout=2.0) as client:
+                response = await client.get(
+                    f"{credentials.base_url}{path}",
+                    headers={"Authorization": credentials.auth_header},
+                )
+            response.raise_for_status()
+            return response.json() if response.content else None
+        except (httpx.HTTPError, ValueError):
+            return None
+
+    summoner, phase = await asyncio.gather(
+        read("/lol-summoner/v1/current-summoner"),
+        read("/lol-gameflow/v1/gameflow-phase"),
+    )
+    summoner = summoner if isinstance(summoner, dict) else {}
+    return {
+        "pid": credentials.pid,
+        "selected": credentials.pid == league_lab_service._selected_client_pid,
+        "game_name": summoner.get("gameName") or summoner.get("displayName") or "",
+        "tag_line": summoner.get("tagLine") or "",
+        "profile_icon_id": summoner.get("profileIconId"),
+        "summoner_level": summoner.get("summonerLevel"),
+        "phase": str(phase or ""),
+        "region": credentials.region,
+        "platform_id": credentials.platform_id,
+        "has_riot_client": bool(credentials.riot_client_port and credentials.riot_client_token),
+    }
+
+
+@router.get("/clients")
+async def league_clients():
+    clients = await discover_lcu_clients()
+    league_lab_service._available_clients = clients
+    rows = await asyncio.gather(*(_lcu_client_public_identity(client) for client in clients))
+    return {
+        "clients": rows,
+        "count": len(rows),
+        "selected_pid": league_lab_service._selected_client_pid,
+    }
+
+
+@router.post("/clients/select")
+async def select_league_client(body: LeagueClientSelect):
+    try:
+        await league_lab_service.select_client(body.pid)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return league_lab_service.status()
+
+
+@router.get("/installations")
+async def league_client_installations():
+    rows = list((await detect_client_installations()).values())
+    return {"installations": rows, "count": len(rows)}
+
+
+@router.post("/installations/launch")
+async def launch_league_client(body: LeagueClientLaunch):
+    try:
+        return await launch_detected_client(body.kind)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.put("/settings")
