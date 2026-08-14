@@ -830,3 +830,25 @@ def test_manual_chat_preset_sends_to_champion_select(monkeypatch):
 
     assert calls[-1] == ("POST", "/lol-chat/v1/conversations/champ/messages", {"body": "第一行\n第二行", "type": "chat"})
     assert result["line_count"] == 2
+
+
+def test_terminate_game_client_endpoint_uses_foreground_guard(monkeypatch):
+    monkeypatch.setattr(league_lab, "_terminate_foreground_league_game_client", lambda: 4242)
+
+    result = asyncio.run(league_lab.league_terminate_game_client())
+
+    assert result == {"terminated": True, "pid": 4242}
+
+
+def test_terminate_game_client_endpoint_preserves_guard_error(monkeypatch):
+    def blocked():
+        raise RuntimeError("当前前台窗口不是 League 游戏进程，未执行任何操作")
+
+    monkeypatch.setattr(league_lab, "_terminate_foreground_league_game_client", blocked)
+    try:
+        asyncio.run(league_lab.league_terminate_game_client())
+    except league_lab.HTTPException as exc:
+        assert exc.status_code == 409
+        assert "未执行任何操作" in str(exc.detail)
+    else:
+        raise AssertionError("foreground guard must block termination")

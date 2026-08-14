@@ -80,6 +80,11 @@ export async function sendLeagueChatMessage(lines) {
   return data;
 }
 
+export async function terminateLeagueGameClient() {
+  const { data } = await API.post("/league-lab/toolkit/terminate-game-client");
+  return data;
+}
+
 export async function swapLeagueBenchChampion(championId) {
   const { data } = await API.post(`/league-lab/champ-select/bench/swap/${championId}`);
   return data;

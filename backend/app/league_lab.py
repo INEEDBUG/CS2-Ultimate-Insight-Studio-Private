@@ -235,6 +235,58 @@ def _read_windows_process_command_line(pid: int) -> str:
         kernel32.CloseHandle(handle)
 
 
+def _terminate_foreground_league_game_client() -> int:
+    """Terminate only a foreground League of Legends.exe process."""
+    if os.name != "nt":
+        raise RuntimeError("游戏进程控制仅支持 Windows")
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.TerminateProcess.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        raise RuntimeError("当前没有前台窗口")
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    if not pid.value:
+        raise RuntimeError("无法识别前台进程")
+    process_query_limited_information = 0x1000
+    process_terminate = 0x0001
+    handle = kernel32.OpenProcess(
+        process_query_limited_information | process_terminate,
+        False,
+        pid.value,
+    )
+    if not handle:
+        raise RuntimeError("无法访问前台进程；若游戏以管理员身份运行，请以相同权限启动本软件")
+    try:
+        size = wintypes.DWORD(32768)
+        image_path = ctypes.create_unicode_buffer(size.value)
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, image_path, ctypes.byref(size)):
+            raise RuntimeError("无法验证前台进程名称")
+        if Path(image_path.value).name.casefold() != "league of legends.exe":
+            raise RuntimeError("当前前台窗口不是 League 游戏进程，未执行任何操作")
+        if not kernel32.TerminateProcess(handle, 1):
+            raise RuntimeError("结束 League 游戏进程失败")
+        return int(pid.value)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 class LeagueLabService:
     def __init__(self) -> None:
         self.settings = self._load_settings()
@@ -2003,6 +2055,15 @@ async def league_update_chat_presence(body: ChatPresenceUpdate):
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"chat_presence": current if isinstance(current, dict) else patch, "applied": True}
+
+
+@router.post("/toolkit/terminate-game-client")
+async def league_terminate_game_client():
+    try:
+        pid = await asyncio.to_thread(_terminate_foreground_league_game_client)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"terminated": True, "pid": pid}
 
 
 @router.post("/toolkit/chat-message")
