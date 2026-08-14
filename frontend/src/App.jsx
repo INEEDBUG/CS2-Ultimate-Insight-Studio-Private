@@ -62,6 +62,7 @@ import DemoDownloadActivityCenter from "./components/DemoDownloadActivityCenter"
 import LeagueMiniAutoManager from "./components/LeagueMiniAutoManager";
 import LeagueGlobalShortcutManager from "./components/LeagueGlobalShortcutManager";
 import LeaguePresetShortcutManager from "./components/LeaguePresetShortcutManager";
+import LeagueAuxShortcutManager from "./components/LeagueAuxShortcutManager";
 
 const GuidePage = lazy(() => import("./pages/GuidePage"));
 const DemoLibraryPage = lazy(() => import("./pages/DemoLibraryPage"));
@@ -3313,6 +3314,7 @@ export default function App() {
         <LeagueMiniAutoManager />
         <LeagueGlobalShortcutManager />
         <LeaguePresetShortcutManager />
+        <LeagueAuxShortcutManager />
         <CustomTitleBar />
         <DemoDownloadActivityCenter />
         <DesktopCloseDialog

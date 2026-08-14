@@ -4,7 +4,7 @@ import { fetchCurrentLeaguePlayer, fetchLeaguePlayer, fetchLeaguePlayerCollectio
 import { getLeagueChampionIconUrl } from "../../api/api";
 import LeagueMatchFilterPresets from "./LeagueMatchFilterPresets";
 import LeagueAdvancedMatchFilters from "./LeagueAdvancedMatchFilters";
-import { matchesLeagueRules } from "../../utils/leagueMatchFilter";
+import { matchesLeagueRuleTree } from "../../utils/leagueMatchFilter";
 import { leaguePrivacyText, maskLeagueName } from "../../utils/leagueStreamerMode";
 
 function queueRows(ranked) {
@@ -21,7 +21,7 @@ export default function LeaguePlayerCenter({ currentPuuid = "", streamerMode = f
   const [jungle, setJungle] = useState(null);
   const [jungleBusy, setJungleBusy] = useState(false);
   const [page, setPage] = useState(0);
-  const [filter, setFilter] = useState({ result: "all", mode: "all", position: "all", text: "", minKills: "", maxDeaths: "", minKda: "", advancedLogic:"and", advancedRules:[] });
+  const [filter, setFilter] = useState({ result: "all", mode: "all", position: "all", text: "", minKills: "", maxDeaths: "", minKda: "", advancedTree:{type:"group",logic:"and",negate:false,children:[]} });
   const [busy, setBusy] = useState(false);
   const [tag, setTag] = useState({ label: "", note: "", color: "emerald" });
   const load = async (target = currentPuuid, nextPage = 0, collect = false, serverOverride) => {
@@ -58,7 +58,7 @@ export default function LeaguePlayerCenter({ currentPuuid = "", streamerMode = f
     if (filter.maxDeaths !== "" && Number(match.deaths || 0) > Number(filter.maxDeaths)) return false;
     const kda = (Number(match.kills || 0) + Number(match.assists || 0)) / Math.max(1, Number(match.deaths || 0));
     if (filter.minKda !== "" && kda < Number(filter.minKda)) return false;
-    if (!matchesLeagueRules(match, filter.advancedRules || [], filter.advancedLogic || "and")) return false;
+    if (!matchesLeagueRuleTree(match, filter.advancedTree)) return false;
     const text = filter.text.trim().toLowerCase();
     return !text || String(match.champion_name || "").toLowerCase().includes(text) || String(match.queue_id || "").includes(text);
   }), [data, filter]);
@@ -74,9 +74,13 @@ export default function LeaguePlayerCenter({ currentPuuid = "", streamerMode = f
   }, [data]);
   const summoner = data?.summoner || {};
   const visibleName = streamerMode ? maskLeagueName(summoner.game_name, 0, useAliases, summoner.puuid) : summoner.game_name;
+  const applyFilterPreset = (next) => setFilter({
+    ...next,
+    advancedTree: next?.advancedTree || {type:"group",logic:next?.advancedLogic||"and",negate:false,children:(next?.advancedRules||[]).map((rule)=>({type:"rule",scope:"self",...rule}))},
+  });
   return <div className="space-y-4">
-    <LeagueMatchFilterPresets filter={filter} onApply={setFilter} />
-    <LeagueAdvancedMatchFilters rules={filter.advancedRules||[]} logic={filter.advancedLogic||"and"} onChange={(advancedRules,advancedLogic)=>setFilter({...filter,advancedRules,advancedLogic})}/>
+    <LeagueMatchFilterPresets filter={filter} onApply={applyFilterPreset} />
+    <LeagueAdvancedMatchFilters tree={filter.advancedTree} onChange={(advancedTree)=>setFilter({...filter,advancedTree})}/>
     {collectionChallenges.length>0&&<section className="rounded-2xl border border-cs2-border bg-cs2-bg-elevated p-4"><h3 className="mb-3 text-sm font-bold">藏品挑战</h3><div className="grid grid-cols-2 gap-2 md:grid-cols-3">{collectionChallenges.map((row)=><span key={row.id} className="rounded-lg bg-white/[.04] p-3 text-xs">{row.label}<br/><b className="text-base">{Number(row.currentValue||0).toLocaleString()}</b><span className="ml-2 text-[10px] text-cs2-text-muted">{row.currentLevel||""}</span></span>)}</div></section>}
     <div className="grid gap-2 md:grid-cols-[minmax(220px,1fr)_180px_auto_auto_auto]"><div className="relative"><Search className="absolute left-3 top-2.5 h-4 w-4 text-cs2-text-muted"/><input value={streamerMode?"":query} disabled={streamerMode} onChange={(e)=>setQuery(e.target.value)} onKeyDown={(e)=>e.key==="Enter"&&load(query,0)} placeholder={streamerMode?"直播隐私模式已隐藏 Riot ID 搜索框":"搜索 Riot ID，例如：玩家名#标签"} className="w-full rounded-xl border border-cs2-border bg-cs2-bg-input py-2 pl-9 pr-3 text-sm disabled:opacity-60"/></div><select aria-label="搜索区服" value={selectedServer} disabled={streamerMode} onChange={(e)=>setSelectedServer(e.target.value)} className="rounded-xl border border-cs2-border bg-cs2-bg-input px-3 py-2 text-xs disabled:opacity-60"><option value="">当前客户端区服</option>{servers.map((server)=><option key={server.id} value={server.id}>{server.label}{server.current?"（当前）":""}</option>)}</select><button disabled={streamerMode} onClick={()=>load(query,0)} className="rounded-xl border border-cs2-border px-4 text-xs font-semibold disabled:opacity-40"><RefreshCw className={`inline h-4 w-4 ${busy?"animate-spin":""}`}/> 读取</button><button disabled={!data?.summoner?.puuid||busy} onClick={()=>load(data.summoner.puuid,0,true,data.server_id||selectedServer)} className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-4 text-xs font-semibold text-cyan-200 disabled:opacity-40">收集 100 场</button><button disabled={!data?.collection_count||busy} onClick={openCollection} className="rounded-xl border border-violet-400/30 bg-violet-400/10 px-4 text-xs font-semibold text-violet-200 disabled:opacity-40">本地 {data?.collection_count||0} 场</button></div>
     {recent.length>0&&<section className="rounded-xl border border-cs2-border bg-cs2-bg-elevated p-3"><div className="mb-2 text-xs font-semibold text-cs2-text-secondary"><Clock3 className="mr-1 inline h-3.5 w-3.5"/>最近遇见</div><div className="flex flex-wrap gap-2">{recent.slice(0,12).map((row,index)=><button key={row.puuid} onClick={()=>load(row.puuid,0)} className="rounded-lg border border-cs2-border-subtle px-3 py-2 text-left text-xs hover:border-emerald-400/30"><b>{streamerMode?maskLeagueName(row.game_name,index,useAliases,row.puuid):(row.game_name||"未知玩家")}</b>{!streamerMode&&<span className="text-cs2-text-muted">#{row.tag_line}</span>}{!streamerMode&&row.tag?.label&&<span className="ml-2 text-emerald-300">{row.tag.label}</span>}</button>)}</div></section>}

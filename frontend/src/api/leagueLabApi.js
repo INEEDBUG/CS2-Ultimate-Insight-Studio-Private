@@ -242,8 +242,13 @@ export async function sendLeagueInGamePreset(presetId, trigger = "manual", confi
   return data;
 }
 
-export async function sendLeagueInGameLines(lines, confirmation) {
-  const { data } = await API.post("/league-lab/toolkit/in-game-presets/send-lines", { lines, confirmation });
+export async function sendLeagueInGameLines(lines, confirmation = "", trigger = "manual", kind = null, target = null) {
+  const { data } = await API.post("/league-lab/toolkit/in-game-presets/send-lines", { lines, confirmation, trigger, kind, target });
+  return data;
+}
+
+export async function cancelLeagueInGameSend() {
+  const { data } = await API.post("/league-lab/toolkit/in-game-presets/cancel");
   return data;
 }
 

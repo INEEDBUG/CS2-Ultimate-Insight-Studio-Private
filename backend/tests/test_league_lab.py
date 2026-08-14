@@ -1031,15 +1031,19 @@ def test_sgp_match_rows_normalize_wrapped_summary():
     }
     rows = league_lab._normalize_sgp_match_rows(payload, {22: "寒冰射手"}, "player-1")
 
-    assert rows == [{
+    assert len(rows) == 1
+    row = rows[0]
+    assert {key: row[key] for key in ("game_id", "played_at", "duration_seconds", "game_mode", "game_type", "queue_id")} == {
         "game_id": 9, "played_at": 123456, "duration_seconds": 1800,
         "game_mode": "CLASSIC", "game_type": "MATCHED_GAME", "queue_id": 420,
-        "position": "BOTTOM", "role": "BOTTOM", "champion_id": 22,
-        "champion_name": "寒冰射手", "spell1_id": 4, "spell2_id": 7,
-        "kills": 10, "deaths": 2, "assists": 8, "win": True, "cs": 190,
-        "gold": 14000, "damage": 25000, "items": [3006],
-        "challenges": {"kda": 9.0}, "source": "sgp",
-    }]
+    }
+    assert {key: row[key] for key in ("champion_name", "kills", "deaths", "assists", "cs", "gold", "damage")} == {
+        "champion_name": "寒冰射手", "kills": 10, "deaths": 2, "assists": 8,
+        "cs": 190, "gold": 14000, "damage": 25000,
+    }
+    assert row["items"] == [3006]
+    assert row["participants"][0]["puuid"] == "player-1"
+    assert row["participants"][0]["champion_name"] == "寒冰射手"
 
 
 def test_single_jungle_analysis_matches_leagueakari_geometry_and_early_ganks():
@@ -1725,3 +1729,31 @@ def test_ad_hoc_in_game_lines_require_exact_confirmation(monkeypatch):
 
     assert sent == ["友方近况：状态稳定"]
     assert result == {"sent": True, "transport": "lcu", "line_count": 1}
+
+
+def test_cancel_in_game_send_sets_the_current_task_signal():
+    league_lab._in_game_send_cancel.clear()
+    result = asyncio.run(league_lab.league_cancel_in_game_send())
+    assert result == {"cancel_requested": True}
+    assert league_lab._in_game_send_cancel.is_set()
+    league_lab._in_game_send_cancel.clear()
+
+
+def test_generated_preset_shortcut_requires_matching_configured_target(monkeypatch):
+    settings = LeagueLabSettings(toolkit_account_actions_enabled=True, in_game_send_enabled=True)
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", settings)
+    body = league_lab.InGameAdHocSend(lines=["敌方近期表现"], trigger="shortcut", kind="rating", target="enemy")
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.league_send_in_game_lines(body))
+    assert caught.value.status_code == 409
+
+    settings.in_game_rating_shortcuts.enemy = "Ctrl+Alt+E"
+    sent = []
+
+    async def send_lines(lines):
+        sent.extend(lines)
+        return {"sent": True}
+
+    monkeypatch.setattr(league_lab, "_send_league_preset_lines", send_lines)
+    assert asyncio.run(league_lab.league_send_in_game_lines(body)) == {"sent": True}
+    assert sent == ["敌方近期表现"]

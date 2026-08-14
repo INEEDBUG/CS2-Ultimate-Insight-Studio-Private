@@ -18,6 +18,7 @@ import re
 import ssl
 import stat
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -87,6 +88,12 @@ class InGameFixedTextPreset(BaseModel):
     content: str = Field(default="", max_length=65536)
 
 
+class InGamePresetTargetShortcuts(BaseModel):
+    friendly: str | None = Field(default=None, max_length=80)
+    enemy: str | None = Field(default=None, max_length=80)
+    all: str | None = Field(default=None, max_length=80)
+
+
 class LeagueLabSettings(BaseModel):
     automation_enabled: bool = False
     auto_accept_enabled: bool = False
@@ -147,7 +154,14 @@ class LeagueLabSettings(BaseModel):
     terminate_game_shortcut: str = Field(default="Ctrl+Alt+End", min_length=3, max_length=80)
     in_game_send_enabled: bool = False
     in_game_send_interval_ms: int = Field(default=250, ge=100, le=5000)
+    in_game_cancel_shortcut: str | None = Field(default=None, max_length=80)
     in_game_fixed_presets: list[InGameFixedTextPreset] = Field(default_factory=list, max_length=100)
+    in_game_rating_shortcuts: InGamePresetTargetShortcuts = Field(default_factory=InGamePresetTargetShortcuts)
+    in_game_premade_shortcuts: InGamePresetTargetShortcuts = Field(default_factory=InGamePresetTargetShortcuts)
+    in_game_jungle_shortcuts: InGamePresetTargetShortcuts = Field(default_factory=InGamePresetTargetShortcuts)
+    ongoing_window_shortcut: str | None = Field(default=None, max_length=80)
+    opgg_window_shortcut: str | None = Field(default=None, max_length=80)
+    cooldown_window_shortcut: str | None = Field(default=None, max_length=80)
 
 
 class ChampionLoadout(BaseModel):
@@ -189,6 +203,9 @@ class InGamePresetSend(BaseModel):
 
 class InGameAdHocSend(BaseModel):
     lines: list[str] = Field(min_length=1, max_length=10)
+    trigger: Literal["manual", "shortcut"] = "manual"
+    kind: Literal["rating", "premade", "jungle"] | None = None
+    target: Literal["friendly", "enemy", "all"] | None = None
     confirmation: str = Field(default="", max_length=20)
 
 
@@ -1957,6 +1974,31 @@ def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "")
             continue
         stats = participant.get("stats") or {}
         champion_id = int(participant.get("championId") or 0)
+        identity_by_id = {row.get("participantId"): row for row in identities if isinstance(row, dict)}
+        scoped_participants = []
+        for row in game.get("participants") or []:
+            row_stats = row.get("stats") or {}
+            row_identity = identity_by_id.get(row.get("participantId")) or {}
+            row_player = row_identity.get("player") or {}
+            row_champion_id = int(row.get("championId") or 0)
+            scoped_participants.append({
+                "puuid": row_player.get("puuid") or row_identity.get("puuid"),
+                "team_id": row.get("teamId"),
+                "champion_id": row_champion_id,
+                "champion_name": names.get(row_champion_id, str(row_champion_id)),
+                "position": row.get("teamPosition") or row.get("timeline", {}).get("lane"),
+                "role": row.get("individualPosition") or row.get("timeline", {}).get("role"),
+                "spell1_id": row.get("spell1Id"),
+                "spell2_id": row.get("spell2Id"),
+                "kills": row_stats.get("kills", 0), "deaths": row_stats.get("deaths", 0), "assists": row_stats.get("assists", 0),
+                "win": bool(row_stats.get("win")), "gold": row_stats.get("goldEarned", 0),
+                "cs": int(row_stats.get("totalMinionsKilled", 0)) + int(row_stats.get("neutralMinionsKilled", 0)),
+                "damage": row_stats.get("totalDamageDealtToChampions", 0), "damage_taken": row_stats.get("totalDamageTaken", 0),
+                "vision_score": row_stats.get("visionScore", 0), "items": [row_stats.get(f"item{i}") for i in range(7) if row_stats.get(f"item{i}")],
+                "perks": [row_stats.get(f"perk{i}") for i in range(6) if row_stats.get(f"perk{i}")],
+                "augments": [row_stats.get(f"playerAugment{i}") for i in range(1, 7) if row_stats.get(f"playerAugment{i}")],
+                "challenges": row.get("challenges") or row_stats.get("challenges") or {},
+            })
         normalized.append(
             {
                 "game_id": game.get("gameId"),
@@ -1965,6 +2007,9 @@ def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "")
                 "game_mode": game.get("gameMode"),
                 "game_type": game.get("gameType"),
                 "queue_id": game.get("queueId"),
+                "participant_puuid": (identity.get("player") or {}).get("puuid") if identity else None,
+                "team_id": participant.get("teamId"),
+                "participants": scoped_participants,
                 "position": participant.get("teamPosition") or participant.get("timeline", {}).get("lane"),
                 "role": participant.get("individualPosition") or participant.get("timeline", {}).get("role"),
                 "champion_id": champion_id,
@@ -1978,7 +2023,21 @@ def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "")
                 "cs": int(stats.get("totalMinionsKilled", 0)) + int(stats.get("neutralMinionsKilled", 0)),
                 "gold": stats.get("goldEarned", 0),
                 "damage": stats.get("totalDamageDealtToChampions", 0),
+                "damage_taken": stats.get("totalDamageTaken", 0),
+                "gold_spent": stats.get("goldSpent", 0),
+                "tower_damage": stats.get("damageDealtToTurrets", 0),
+                "healing": stats.get("totalHeal", 0),
+                "time_ccing": stats.get("totalTimeCCDealt", 0),
+                "vision_score": stats.get("visionScore", 0),
+                "level": stats.get("champLevel", 0),
+                "double_kills": stats.get("doubleKills", 0),
+                "triple_kills": stats.get("tripleKills", 0),
+                "quadra_kills": stats.get("quadraKills", 0),
+                "penta_kills": stats.get("pentaKills", 0),
                 "items": [stats.get(f"item{i}") for i in range(7) if stats.get(f"item{i}")],
+                "perks": [stats.get(f"perk{i}") for i in range(6) if stats.get(f"perk{i}")],
+                "augments": [stats.get(f"playerAugment{i}") for i in range(1, 7) if stats.get(f"playerAugment{i}")],
+                "challenges": participant.get("challenges") or stats.get("challenges") or {},
             }
         )
     return normalized
@@ -1997,6 +2056,20 @@ def _normalize_sgp_match_rows(payload: dict, names: dict[int, str], puuid: str) 
         if not participant:
             continue
         champion_id = int(participant.get("championId") or 0)
+        scoped_participants = []
+        for row in game.get("participants") or []:
+            row_champion_id = int(row.get("championId") or 0)
+            scoped_participants.append({
+                "puuid": row.get("puuid"), "team_id": row.get("teamId"),
+                "champion_id": row_champion_id, "champion_name": names.get(row_champion_id, row.get("championName") or str(row_champion_id)),
+                "position": row.get("teamPosition"), "role": row.get("individualPosition"),
+                "spell1_id": row.get("summoner1Id") or row.get("spell1Id"), "spell2_id": row.get("summoner2Id") or row.get("spell2Id"),
+                "kills": row.get("kills", 0), "deaths": row.get("deaths", 0), "assists": row.get("assists", 0), "win": bool(row.get("win")),
+                "gold": row.get("goldEarned", 0), "cs": int(row.get("totalMinionsKilled", 0)) + int(row.get("neutralMinionsKilled", 0)),
+                "damage": row.get("totalDamageDealtToChampions", 0), "damage_taken": row.get("totalDamageTaken", 0), "vision_score": row.get("visionScore", 0),
+                "items": [row.get(f"item{i}") for i in range(7) if row.get(f"item{i}")], "perks": [row.get(f"perk{i}") for i in range(6) if row.get(f"perk{i}")],
+                "augments": [row.get(f"playerAugment{i}") for i in range(1, 7) if row.get(f"playerAugment{i}")], "challenges": row.get("challenges") or {},
+            })
         normalized.append(
             {
                 "game_id": game.get("gameId"),
@@ -2005,6 +2078,9 @@ def _normalize_sgp_match_rows(payload: dict, names: dict[int, str], puuid: str) 
                 "game_mode": game.get("gameMode"),
                 "game_type": game.get("gameType"),
                 "queue_id": game.get("queueId"),
+                "participant_puuid": participant.get("puuid"),
+                "team_id": participant.get("teamId"),
+                "participants": scoped_participants,
                 "position": participant.get("teamPosition"),
                 "role": participant.get("individualPosition"),
                 "champion_id": champion_id,
@@ -2018,7 +2094,20 @@ def _normalize_sgp_match_rows(payload: dict, names: dict[int, str], puuid: str) 
                 "cs": int(participant.get("totalMinionsKilled", 0)) + int(participant.get("neutralMinionsKilled", 0)),
                 "gold": participant.get("goldEarned", 0),
                 "damage": participant.get("totalDamageDealtToChampions", 0),
+                "damage_taken": participant.get("totalDamageTaken", 0),
+                "gold_spent": participant.get("goldSpent", 0),
+                "tower_damage": participant.get("damageDealtToTurrets", 0),
+                "healing": participant.get("totalHeal", 0),
+                "time_ccing": participant.get("totalTimeCCDealt", 0),
+                "vision_score": participant.get("visionScore", 0),
+                "level": participant.get("champLevel", 0),
+                "double_kills": participant.get("doubleKills", 0),
+                "triple_kills": participant.get("tripleKills", 0),
+                "quadra_kills": participant.get("quadraKills", 0),
+                "penta_kills": participant.get("pentaKills", 0),
                 "items": [participant.get(f"item{i}") for i in range(7) if participant.get(f"item{i}")],
+                "perks": [participant.get(f"perk{i}") for i in range(6) if participant.get(f"perk{i}")],
+                "augments": [participant.get(f"playerAugment{i}") for i in range(1, 7) if participant.get(f"playerAugment{i}")],
                 "challenges": participant.get("challenges") or {},
                 "source": "sgp",
             }
@@ -4049,6 +4138,7 @@ async def league_terminate_game_client():
 
 
 _in_game_send_lock = asyncio.Lock()
+_in_game_send_cancel = threading.Event()
 
 
 async def _send_league_preset_lines(lines: list[str]) -> dict:
@@ -4088,14 +4178,18 @@ async def _send_league_preset_lines(lines: list[str]) -> dict:
     if live_phase != "InProgress":
         raise HTTPException(status_code=409, detail="当前不在房间、英雄选择或游戏进行阶段")
     async with _in_game_send_lock:
+        _in_game_send_cancel.clear()
         pid = None
         for index, line in enumerate(normalized):
+            if _in_game_send_cancel.is_set():
+                return {"sent": False, "cancelled": True, "phase": live_phase, "line_count": index, "transport": "native", "pid": pid}
             try:
                 pid = await asyncio.to_thread(_send_text_to_foreground_league_game, line)
             except RuntimeError as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
             if index < len(normalized) - 1:
                 await asyncio.sleep(league_lab_service.settings.in_game_send_interval_ms / 1000)
+        _in_game_send_cancel.clear()
     return {"sent": True, "phase": live_phase, "line_count": len(normalized), "transport": "native", "pid": pid}
 
 
@@ -4122,9 +4216,22 @@ async def league_send_in_game_lines(body: InGameAdHocSend):
     _require_toolkit_account_actions()
     if not league_lab_service.settings.in_game_send_enabled:
         raise HTTPException(status_code=403, detail="请先启用游戏内预设发送")
-    if body.confirmation != "我确认发送":
-        raise HTTPException(status_code=422, detail="确认短语不正确")
+    if body.trigger == "manual":
+        if body.confirmation != "我确认发送":
+            raise HTTPException(status_code=422, detail="确认短语不正确")
+    else:
+        if not body.kind or not body.target:
+            raise HTTPException(status_code=422, detail="快捷键发送缺少预设类型或目标")
+        shortcuts = getattr(league_lab_service.settings, f"in_game_{body.kind}_shortcuts")
+        if not getattr(shortcuts, body.target):
+            raise HTTPException(status_code=409, detail="该分析预设目标没有启用快捷键")
     return await _send_league_preset_lines(body.lines)
+
+
+@router.post("/toolkit/in-game-presets/cancel")
+async def league_cancel_in_game_send():
+    _in_game_send_cancel.set()
+    return {"cancel_requested": True}
 
 
 @router.post("/toolkit/chat-message")

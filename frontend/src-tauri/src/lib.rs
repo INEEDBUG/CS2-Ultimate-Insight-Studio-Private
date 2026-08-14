@@ -141,6 +141,28 @@ fn open_league_opgg(app: AppHandle) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn toggle_league_aux_window(app: AppHandle, kind: String, visible: Option<bool>) -> Result<(), String> {
+    let (label, open): (&str, fn(AppHandle) -> Result<(), String>) = match kind.as_str() {
+        "ongoing" => ("league-ongoing", open_league_ongoing),
+        "opgg" => ("league-opgg", open_league_opgg),
+        "cooldown" => ("league-cd-timer", open_league_cd_timer),
+        _ => return Err("unsupported League auxiliary window".to_string()),
+    };
+    let current_visible = app
+        .get_webview_window(label)
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    let should_show = visible.unwrap_or(!current_visible);
+    if should_show {
+        open(app)
+    } else if let Some(window) = app.get_webview_window(label) {
+        window.hide().map_err(|error| error.to_string())
+    } else {
+        Ok(())
+    }
+}
+
 #[derive(Default)]
 struct LeagueMiniLifecycle {
     manually_hidden: AtomicBool,
@@ -748,6 +770,7 @@ pub fn run() {
             open_league_ongoing,
             open_league_cd_timer,
             open_league_opgg,
+            toggle_league_aux_window,
             sync_league_mini,
             sync_league_cd_timer,
             sync_league_opgg,
