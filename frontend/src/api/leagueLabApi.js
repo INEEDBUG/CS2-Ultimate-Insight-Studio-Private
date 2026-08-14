@@ -75,6 +75,16 @@ export async function fetchLeagueOngoingGame() {
   return data;
 }
 
+export async function fetchLeagueCooldownTimerState() {
+  const { data } = await API.get("/league-lab/cooldown-timer/state");
+  return data;
+}
+
+export async function sendLeagueCooldownTimerText(text) {
+  const { data } = await API.post("/league-lab/cooldown-timer/send", { text });
+  return data;
+}
+
 export async function fetchLeagueToolkitOverview() {
   const { data } = await API.get("/league-lab/toolkit/overview");
   return data;

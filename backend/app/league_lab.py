@@ -122,6 +122,9 @@ class LeagueLabSettings(BaseModel):
     mini_enabled: bool = True
     mini_auto_show: bool = True
     respawn_timer_enabled: bool = False
+    cooldown_timer_enabled: bool = False
+    cooldown_timer_type: Literal["countdown", "countup"] = "countdown"
+    cooldown_timer_reverse_adjustment: bool = False
     streamer_mode_enabled: bool = False
     streamer_mode_use_aliases: bool = False
     streamer_content_protection_enabled: bool = False
@@ -152,6 +155,10 @@ class RankedStatusUpdate(BaseModel):
 
 class ChatMessageSend(BaseModel):
     lines: list[str] = Field(min_length=1, max_length=10)
+
+
+class InGameTextSend(BaseModel):
+    text: str = Field(min_length=1, max_length=300)
 
 
 class GameSettingsFileModeUpdate(BaseModel):
@@ -326,11 +333,95 @@ def _terminate_foreground_league_game_client() -> int:
         kernel32.CloseHandle(handle)
 
 
+def _send_text_to_foreground_league_game(text: str) -> int:
+    """Send explicit user-requested chat text only to a foreground League game window."""
+    if os.name != "nt":
+        raise RuntimeError("游戏内文字发送仅支持 Windows")
+    normalized = text.strip()
+    if not normalized:
+        raise RuntimeError("发送内容不能为空")
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        raise RuntimeError("当前没有前台窗口")
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    if not pid.value:
+        raise RuntimeError("无法识别前台进程")
+    handle = kernel32.OpenProcess(0x1000, False, pid.value)
+    if not handle:
+        raise RuntimeError("无法访问前台进程；若游戏以管理员身份运行，请以相同权限启动本软件")
+    try:
+        size = wintypes.DWORD(32768)
+        image_path = ctypes.create_unicode_buffer(size.value)
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, image_path, ctypes.byref(size)):
+            raise RuntimeError("无法验证前台进程名称")
+        if Path(image_path.value).name.casefold() != "league of legends.exe":
+            raise RuntimeError("当前前台窗口不是 League 游戏进程，未发送任何按键")
+    finally:
+        kernel32.CloseHandle(handle)
+
+    class KeyboardInput(ctypes.Structure):
+        _fields_ = [
+            ("virtual_key", wintypes.WORD),
+            ("scan_code", wintypes.WORD),
+            ("flags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("extra_info", ctypes.c_size_t),
+        ]
+
+    class InputUnion(ctypes.Union):
+        _fields_ = [("keyboard", KeyboardInput)]
+
+    class Input(ctypes.Structure):
+        _anonymous_ = ("value",)
+        _fields_ = [("input_type", wintypes.DWORD), ("value", InputUnion)]
+
+    user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(Input), ctypes.c_int]
+    user32.SendInput.restype = wintypes.UINT
+
+    def send_key(virtual_key: int = 0, scan_code: int = 0, flags: int = 0) -> None:
+        event = Input(input_type=1, keyboard=KeyboardInput(virtual_key, scan_code, flags, 0, 0))
+        if user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(Input)) != 1:
+            raise RuntimeError("Windows 未接受游戏内键盘输入")
+
+    send_key(0x0D)
+    time.sleep(0.02)
+    send_key(0x0D, flags=0x0002)
+    time.sleep(0.065)
+    encoded = normalized.encode("utf-16-le")
+    for index in range(0, len(encoded), 2):
+        code_unit = int.from_bytes(encoded[index:index + 2], "little")
+        send_key(scan_code=code_unit, flags=0x0004)
+        send_key(scan_code=code_unit, flags=0x0004 | 0x0002)
+    time.sleep(0.065)
+    send_key(0x0D)
+    time.sleep(0.02)
+    send_key(0x0D, flags=0x0002)
+    return int(pid.value)
+
+
 class LeagueLabService:
     def __init__(self) -> None:
         self.settings = self._load_settings()
         self.credentials: LcuCredentials | None = None
         self.phase = ""
+        self.game_mode = ""
         self.summoner_name = ""
         self.current_summoner: dict = {}
         self.last_error = ""
@@ -422,6 +513,7 @@ class LeagueLabService:
                 self._event_task = None
             self.credentials = credentials
             self.phase = ""
+            self.game_mode = ""
             self.summoner_name = ""
             self.current_summoner = {}
             self._acted_phase = ""
@@ -648,6 +740,7 @@ class LeagueLabService:
         return {
             "connected": credentials is not None,
             "phase": self.phase,
+            "game_mode": self.game_mode,
             "summoner_name": self.summoner_name,
             "current_summoner": self.current_summoner,
             "region": credentials.region if credentials else "",
@@ -662,6 +755,7 @@ class LeagueLabService:
             "matchmaking_due_at": (time.time() + max(0.0, self._matchmaking_due_at - time.monotonic())) if self._matchmaking_due_at else None,
             "action_countdown": action_countdown,
             "respawn_timer": self.respawn_timer,
+            "cooldown_timer_should_show": self.settings.cooldown_timer_enabled and self.phase == "InProgress" and self.game_mode in {"CLASSIC", "PRACTICETOOL", "ARAM", "URF", "ONEFORALL", "NEXUSBLITZ", "ULTBOOK", "KIWI"},
             "mini_should_show": self.settings.mini_enabled and self.settings.mini_auto_show and self.phase in {"Lobby", "Matchmaking", "ReadyCheck", "ChampSelect"} and not bool(self.champ_select.get("is_spectating")),
             "settings": self.settings.model_dump(),
         }
@@ -670,6 +764,11 @@ class LeagueLabService:
         try:
             phase = await self.request("GET", "/lol-gameflow/v1/gameflow-phase")
             self.phase = str(phase or "")
+            if self.phase == "InProgress" and not self.game_mode:
+                gameflow = await self.request("GET", "/lol-gameflow/v1/session")
+                self.game_mode = str((((gameflow or {}).get("gameData") or {}).get("queue") or {}).get("gameMode") or "").upper()
+            elif self.phase != "InProgress":
+                self.game_mode = ""
             summoner = await self.request("GET", "/lol-summoner/v1/current-summoner")
             if isinstance(summoner, dict):
                 self.summoner_name = str(summoner.get("gameName") or summoner.get("displayName") or "")
@@ -2595,6 +2694,103 @@ async def league_ongoing_game():
     return result
 
 
+@router.get("/cooldown-timer/state")
+async def league_cooldown_timer_state():
+    settings = league_lab_service.settings
+    if not settings.cooldown_timer_enabled:
+        return {"enabled": False, "available": False, "players": [], "game_time": None}
+    try:
+        gameflow, spells, names = await asyncio.gather(
+            league_lab_service.request("GET", "/lol-gameflow/v1/session"),
+            league_lab_service.request("GET", "/lol-game-data/assets/v1/summoner-spells.json"),
+            _champion_names(),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    game_data = (gameflow or {}).get("gameData") or {}
+    queue = game_data.get("queue") or {}
+    mode = str(queue.get("gameMode") or "").upper()
+    ability_haste = {
+        "CLASSIC": 0,
+        "PRACTICETOOL": 0,
+        "ARAM": 70,
+        "URF": 300,
+        "ONEFORALL": 0,
+        "NEXUSBLITZ": 0,
+        "ULTBOOK": 0,
+        "KIWI": 70,
+    }.get(mode)
+    if str((gameflow or {}).get("phase") or league_lab_service.phase) != "InProgress" or ability_haste is None:
+        return {"enabled": True, "available": False, "players": [], "game_time": None, "game_mode": mode}
+    own_puuid = str(league_lab_service.current_summoner.get("puuid") or "")
+    team_one = [row for row in game_data.get("teamOne") or [] if isinstance(row, dict)]
+    team_two = [row for row in game_data.get("teamTwo") or [] if isinstance(row, dict)]
+    own_team = team_one if any(str(row.get("puuid") or "") == own_puuid for row in team_one) else team_two
+    enemies = team_two if own_team is team_one else team_one
+    selections = {
+        str(row.get("puuid") or row.get("playerPuuid") or ""): row
+        for row in game_data.get("playerChampionSelections") or []
+        if isinstance(row, dict)
+    }
+    position_order = {"TOP": 0, "JUNGLE": 1, "MIDDLE": 2, "MID": 2, "BOTTOM": 3, "UTILITY": 4}
+    players = []
+    for index, member in enumerate(enemies):
+        puuid = str(member.get("puuid") or member.get("playerPuuid") or "")
+        selection = selections.get(puuid) or {}
+        champion_id = int(selection.get("championId") or member.get("championId") or 0)
+        players.append({
+            "puuid": puuid,
+            "champion_id": champion_id,
+            "champion_name": names.get(champion_id, str(champion_id)),
+            "position": str(member.get("selectedPosition") or selection.get("selectedPosition") or "").upper(),
+            "spell1_id": int(selection.get("spell1Id") or member.get("spell1Id") or 0),
+            "spell2_id": int(selection.get("spell2Id") or member.get("spell2Id") or 0),
+            "source_index": index,
+        })
+    players.sort(key=lambda row: (position_order.get(row["position"], 99), row["source_index"]))
+    spell_rows = spells if isinstance(spells, list) else list(spells.values()) if isinstance(spells, dict) else []
+    spell_catalog = {
+        int(row["id"]): {
+            "id": int(row["id"]),
+            "name": str(row.get("name") or row["id"]),
+            "cooldown": float(row.get("cooldown") or 0),
+        }
+        for row in spell_rows
+        if isinstance(row, dict) and row.get("id")
+    }
+    game_time = None
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=1.5) as client:
+            response = await client.get("https://127.0.0.1:2999/liveclientdata/gamestats")
+        response.raise_for_status()
+        payload = response.json()
+        game_time = float(payload.get("gameTime")) if isinstance(payload, dict) and payload.get("gameTime") is not None else None
+    except (httpx.HTTPError, TypeError, ValueError):
+        pass
+    return {
+        "enabled": True,
+        "available": bool(players),
+        "game_mode": mode,
+        "ability_haste": ability_haste,
+        "timer_type": settings.cooldown_timer_type,
+        "reverse_adjustment": settings.cooldown_timer_reverse_adjustment,
+        "game_time": game_time,
+        "players": players,
+        "spells": spell_catalog,
+    }
+
+
+@router.post("/cooldown-timer/send")
+async def league_cooldown_timer_send(body: InGameTextSend):
+    if not league_lab_service.settings.cooldown_timer_enabled:
+        raise HTTPException(status_code=409, detail="请先启用敌方召唤师技能计时器")
+    try:
+        pid = await asyncio.to_thread(_send_text_to_foreground_league_game, body.text)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"sent": True, "pid": pid}
+
+
 @router.get("/champions")
 async def league_champion_catalog():
     champions = await _champion_catalog()
@@ -2608,6 +2804,19 @@ async def league_champion_icon(champion_id: int):
     try:
         content, media_type = await league_lab_service.request_bytes(
             f"/lol-game-data/assets/v1/champion-icons/{champion_id}.png"
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(content=content, media_type=media_type, headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.get("/assets/summoner-spells/{spell_id}.png")
+async def league_summoner_spell_icon(spell_id: int):
+    if spell_id <= 0:
+        raise HTTPException(status_code=404, detail="召唤师技能图标不存在")
+    try:
+        content, media_type = await league_lab_service.request_bytes(
+            f"/lol-game-data/assets/v1/summoner-spells/{spell_id}.png"
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

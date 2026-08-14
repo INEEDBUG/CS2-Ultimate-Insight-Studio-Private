@@ -87,6 +87,12 @@ export function getLeagueChampionIconUrl(championId) {
   return withDesktopSessionToken(url);
 }
 
+export function getLeagueSummonerSpellIconUrl(spellId) {
+  const id = encodeURIComponent(String(spellId || ""));
+  const url = API_BASE_URL ? `${API_BASE_URL}/api/league-lab/assets/summoner-spells/${id}.png` : `/api/league-lab/assets/summoner-spells/${id}.png`;
+  return withDesktopSessionToken(url);
+}
+
 export function getLeagueProfileIconUrl(profileIconId) {
   const id = encodeURIComponent(String(profileIconId ?? ""));
   const url = API_BASE_URL ? `${API_BASE_URL}/api/league-lab/assets/profile-icons/${id}.jpg` : `/api/league-lab/assets/profile-icons/${id}.jpg`;

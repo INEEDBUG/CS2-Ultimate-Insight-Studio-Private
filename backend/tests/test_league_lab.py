@@ -952,6 +952,69 @@ def test_skin_selector_only_exposes_owned_enabled_skins():
     assert result["skins"][-1]["is_chroma"] is True
 
 
+def test_cooldown_timer_state_orders_enemies_and_exposes_spell_cooldowns(monkeypatch):
+    service = league_lab.league_lab_service
+    service.settings = LeagueLabSettings(cooldown_timer_enabled=True, cooldown_timer_type="countdown")
+    service.phase = "InProgress"
+    service.current_summoner = {"puuid": "self"}
+
+    async def request(method, path, *, json_body=None, params=None):
+        if path == "/lol-gameflow/v1/session":
+            return {"phase": "InProgress", "gameData": {
+                "queue": {"gameMode": "CLASSIC"},
+                "teamOne": [{"puuid": "self", "selectedPosition": "MIDDLE"}],
+                "teamTwo": [
+                    {"puuid": "enemy-support", "selectedPosition": "UTILITY"},
+                    {"puuid": "enemy-top", "selectedPosition": "TOP"},
+                ],
+                "playerChampionSelections": [
+                    {"puuid": "enemy-support", "championId": 40, "spell1Id": 4, "spell2Id": 14},
+                    {"puuid": "enemy-top", "championId": 24, "spell1Id": 4, "spell2Id": 12},
+                ],
+            }}
+        if path == "/lol-game-data/assets/v1/summoner-spells.json":
+            return [{"id": 4, "name": "闪现", "cooldown": 300}, {"id": 14, "name": "点燃", "cooldown": 180}, {"id": 12, "name": "传送", "cooldown": 360}]
+        raise AssertionError(path)
+
+    async def names():
+        return {24: "贾克斯", 40: "迦娜"}
+
+    class FakeResponse:
+        def raise_for_status(self): return None
+        def json(self): return {"gameTime": 125.5}
+
+    class FakeClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_args): return None
+        async def get(self, _url): return FakeResponse()
+
+    monkeypatch.setattr(service, "request", request)
+    monkeypatch.setattr(league_lab, "_champion_names", names)
+    monkeypatch.setattr(league_lab.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+    result = asyncio.run(league_lab.league_cooldown_timer_state())
+
+    assert [row["puuid"] for row in result["players"]] == ["enemy-top", "enemy-support"]
+    assert result["spells"][4]["cooldown"] == 300
+    assert result["game_time"] == 125.5
+    assert result["ability_haste"] == 0
+
+
+def test_cooldown_timer_send_requires_opt_in_and_foreground_guard(monkeypatch):
+    service = league_lab.league_lab_service
+    service.settings = LeagueLabSettings(cooldown_timer_enabled=False)
+    try:
+        asyncio.run(league_lab.league_cooldown_timer_send(league_lab.InGameTextSend(text="闪现 10:00")))
+    except league_lab.HTTPException as exc:
+        assert exc.status_code == 409
+    else:
+        raise AssertionError("disabled timer must not inject input")
+
+    service.settings = LeagueLabSettings(cooldown_timer_enabled=True)
+    monkeypatch.setattr(league_lab, "_send_text_to_foreground_league_game", lambda text: 777 if text == "闪现 10:00" else 0)
+    result = asyncio.run(league_lab.league_cooldown_timer_send(league_lab.InGameTextSend(text="闪现 10:00")))
+    assert result == {"sent": True, "pid": 777}
+
+
 def test_skin_change_rejects_skin_outside_owned_snapshot(monkeypatch):
     league_lab.league_lab_service.champ_select = {
         "skin_selector": {"skins": [{"id": 22001}], "disabled": False}

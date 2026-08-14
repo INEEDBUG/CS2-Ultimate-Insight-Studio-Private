@@ -56,6 +56,7 @@ This document prevents the League integration from becoming a collection of unre
 - LeagueClientUx window repair parity: read the live zoom scale, resize both the native `RCLIENT` shell and `CefBrowserWindow`, then center the client; the action is manual and confirmed.
 - Card/subset champion-select parity: the server-provided subset list now gates automatic picks and bench swaps during `BAN_PICK`, and Arena's special `-3` bravery action is available as a first-class ordered pick choice.
 - Login automation parity for chat-ready state: after `/lol-chat/v1/me` remains available for two seconds, the app can restore the saved status message and displayed ranked queue/tier/division once per client connection. Manual application interrupts that login pass, apex tiers omit division, disconnects reset the state, and every write remains disabled by default behind the master automation switch.
+- LeagueAkari-style enemy summoner-spell timer: an independent transparent, always-on-top and non-focusable Tauri overlay follows supported `InProgress` modes, orders the enemy team by position, applies mode ability haste, supports countdown/countup and reversible wheel correction, and can send a generated game-clock callout only after an explicit double-right-click while `League of Legends.exe` is the foreground process. The feature and native input remain disabled by default.
 
 ### Partially implemented; upstream behavior is richer
 
@@ -64,14 +65,14 @@ This document prevents the League integration from becoming a collection of unre
 - Honor: strategy parity is implemented; the UI intentionally keeps the feature opt-in and disabled by default.
 - Invitations: per-type strategy, priority ordering, away gating and the complete upstream dynamic queue-type strategy catalog are implemented.
 - Match history: current and cross-player rows, Riot ID lookup, pagination, ranked/mastery summary, recently encountered players, local tags, basic filters, named presets, AND/OR composable rules over champion/mode/position/queue/KDA/combat/economy fields, SGP fallback, one-click 100-match SQLite collection, aggregate performance metrics, SGP collection challenges and expanded match cards exist; upstream-only predicates that require richer timeline/team payloads remain.
-- Mini window: phase-driven show/hide, safe manual close, dedicated `mini.html`, ARAM bench swap/reroll, owned-skin selection, respawn countdown, live ReadyCheck/pick-ban/matchmaking/phase-action countdowns and champ-select phase timer are implemented; remaining auxiliary cards remain.
+- Mini window: phase-driven show/hide, safe manual close, dedicated `mini.html`, ARAM bench swap/reroll, owned-skin selection, respawn countdown, live ReadyCheck/pick-ban/matchmaking/phase-action countdowns and champ-select phase timer are implemented. The independent spell-cooldown overlay is also implemented; remaining auxiliary cards remain.
 
 ### Not implemented yet
 
 - Saved named filter presets and a local AND/OR composable rule builder are implemented; predicates requiring richer timeline/team payloads remain (the durable SQLite collection workspace works now).
-- OP.GG and remaining specialized auxiliary overlay windows (an independent native real-time match window and Mini respawn timer now work).
+- OP.GG and remaining specialized auxiliary overlay windows (independent native real-time match, Mini respawn and summoner-spell timer windows now work).
 - Reward/mission/event claiming plus mutating loot and friend tools (the read-only overview works now; writes require separate safety review).
-- In-game preset messaging: explicit fixed-text presets plus generated recent-form, premade and jungle-path drafts for lobby/champion-select are implemented, along with manual chat availability/status-message/ranked-display tools and one-shot login restoration. Native keyboard injection during an active match remains.
+- In-game preset messaging: explicit fixed-text presets plus generated recent-form, premade and jungle-path drafts for lobby/champion-select are implemented, along with manual chat availability/status-message/ranked-display tools and one-shot login restoration. The spell-timer overlay can inject its generated callout only into a verified foreground League game; broader preset injection remains.
 - A configurable global terminate shortcut remains. Explicit foreground-only League game-process termination, LeagueClientUx window sizing/centering, streamer text masking and native Windows capture exclusion are implemented.
 
 ## Porting decisions

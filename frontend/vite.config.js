@@ -32,6 +32,7 @@ export default defineConfig({
         main: resolve(__dirname, "index.html"),
         mini: resolve(__dirname, "mini.html"),
         ongoing: resolve(__dirname, "ongoing.html"),
+        cooldownTimer: resolve(__dirname, "cd-timer.html"),
       },
       output: {
         manualChunks(id) {

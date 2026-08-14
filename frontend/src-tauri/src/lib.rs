@@ -78,8 +78,50 @@ fn open_league_ongoing(app: AppHandle) -> Result<(), String> {
     .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn open_league_cd_timer(app: AppHandle) -> Result<(), String> {
+    let lifecycle = app.state::<LeagueCdTimerLifecycle>();
+    lifecycle.manually_hidden.store(false, Ordering::SeqCst);
+    if let Some(window) = app.get_webview_window("league-cd-timer") {
+        window.show().map_err(|error| error.to_string())?;
+        window
+            .set_always_on_top(true)
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    let content_protected = app
+        .state::<LeaguePrivacyLifecycle>()
+        .content_protected
+        .load(Ordering::SeqCst);
+    WebviewWindowBuilder::new(
+        &app,
+        "league-cd-timer",
+        WebviewUrl::App("cd-timer.html".into()),
+    )
+    .title("Insight · League 技能计时器")
+    .inner_size(132.0, 252.0)
+    .min_inner_size(112.0, 220.0)
+    .resizable(false)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .focusable(false)
+    .skip_taskbar(true)
+    .shadow(false)
+    .content_protected(content_protected)
+    .build()
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
 #[derive(Default)]
 struct LeagueMiniLifecycle {
+    manually_hidden: AtomicBool,
+    context: Mutex<String>,
+}
+
+#[derive(Default)]
+struct LeagueCdTimerLifecycle {
     manually_hidden: AtomicBool,
     context: Mutex<String>,
 }
@@ -94,7 +136,7 @@ fn set_league_content_protection(app: AppHandle, enabled: bool) -> Result<(), St
     app.state::<LeaguePrivacyLifecycle>()
         .content_protected
         .store(enabled, Ordering::SeqCst);
-    for label in ["main", "league-mini", "league-ongoing"] {
+    for label in ["main", "league-mini", "league-ongoing", "league-cd-timer"] {
         if let Some(window) = app.get_webview_window(label) {
             window
                 .set_content_protected(enabled)
@@ -126,6 +168,30 @@ fn sync_league_mini(app: AppHandle, should_show: bool, context: String) -> Resul
         return Ok(());
     }
     open_league_mini(app.clone())
+}
+
+#[tauri::command]
+fn sync_league_cd_timer(app: AppHandle, should_show: bool, context: String) -> Result<(), String> {
+    let lifecycle = app.state::<LeagueCdTimerLifecycle>();
+    let mut saved_context = lifecycle
+        .context
+        .lock()
+        .map_err(|_| "cooldown timer lifecycle lock poisoned".to_string())?;
+    if *saved_context != context {
+        *saved_context = context;
+        lifecycle.manually_hidden.store(false, Ordering::SeqCst);
+    }
+    drop(saved_context);
+    if !should_show {
+        if let Some(window) = app.get_webview_window("league-cd-timer") {
+            window.hide().map_err(|error| error.to_string())?;
+        }
+        return Ok(());
+    }
+    if lifecycle.manually_hidden.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    open_league_cd_timer(app)
 }
 
 struct BackendProcess {
@@ -588,6 +654,7 @@ pub fn run() {
         .manage(BackendProcess::new().expect("failed to create desktop session token"))
         .manage(AppLifecycle::default())
         .manage(LeagueMiniLifecycle::default())
+        .manage(LeagueCdTimerLifecycle::default())
         .manage(LeaguePrivacyLifecycle::default())
         .invoke_handler(tauri::generate_handler![
             read_legacy_ui_state,
@@ -600,7 +667,9 @@ pub fn run() {
             quit_app,
             open_league_mini,
             open_league_ongoing,
+            open_league_cd_timer,
             sync_league_mini,
+            sync_league_cd_timer,
             set_league_content_protection
         ])
         .setup(|app| {
@@ -684,6 +753,18 @@ pub fn run() {
             api.prevent_close();
             let mini = handle.state::<LeagueMiniLifecycle>();
             mini.manually_hidden.store(true, Ordering::SeqCst);
+            if let Some(window) = handle.get_webview_window(&label) {
+                let _ = window.hide();
+            }
+        }
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { api, .. },
+            ..
+        } if label == "league-cd-timer" => {
+            api.prevent_close();
+            let lifecycle = handle.state::<LeagueCdTimerLifecycle>();
+            lifecycle.manually_hidden.store(true, Ordering::SeqCst);
             if let Some(window) = handle.get_webview_window(&label) {
                 let _ = window.hide();
             }
