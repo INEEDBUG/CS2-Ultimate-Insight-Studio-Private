@@ -63,10 +63,10 @@ This document prevents the League integration from becoming a collection of unre
 
 - Full cross-region Riot ID search through SGP; direct PUUID summoner fallback, match history and ranked-stat routing are implemented. Champion mastery remains LCU-only, matching current LeagueAkari behavior.
 - Ongoing-game jungle-path analysis (live team/profile cards, premade detection and champion-usage summaries work now).
-- Saved filter presets and the full upstream composable-filter language (the durable SQLite collection workspace works now).
+- Saved named filter presets are implemented with local persistence; the full upstream composable-filter language remains (the durable SQLite collection workspace works now).
 - OP.GG and remaining specialized auxiliary overlay windows (an independent native real-time match window and Mini respawn timer now work).
 - Reward/mission/event claiming plus mutating loot and friend tools (the read-only overview works now; writes require separate safety review).
-- In-game preset messaging: explicit fixed-text presets for lobby/champion-select, plus manual chat availability and status-message tools are implemented; native keyboard injection during an active match remains.
+- In-game preset messaging: explicit fixed-text presets for lobby/champion-select, plus manual chat availability and status-message tools are implemented; generated rating/jungle/premade presets and native keyboard injection during an active match remain.
 - Client window sizing, game-client process controls and streamer mode.
 
 ## Porting decisions
