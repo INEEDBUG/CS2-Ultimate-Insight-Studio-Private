@@ -102,8 +102,10 @@ describe("LeagueDetailedMatchCard", () => {
     expect(screen.getByText("查看地图位置")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "时间线" }));
+    expect(await screen.findByText("1:00 · 经济差 +300")).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: "玩家属性" }));
     expect(screen.getByRole("img", { name: "玩家属性时间线" })).toBeTruthy();
+    expect(screen.getByText("1:00 · 总金币 1,200")).toBeTruthy();
   });
 
   it("shows purchase, sale and evolved-skill build events with a player navigator", async () => {

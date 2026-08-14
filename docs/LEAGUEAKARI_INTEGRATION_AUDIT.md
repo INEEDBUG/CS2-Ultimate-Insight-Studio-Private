@@ -96,7 +96,7 @@ This table is stricter than the shard matrix below: a backend capability is not 
 | Runes | `符文` | all participants, official spell/perk artwork, catalog names/descriptions and augment IDs | Equivalent foundation; post-game computed description fidelity still needs real SGP fixtures |
 | Events | `事件` | chronological major-event and champion filters, actor/victim context, plate totals and coordinate previews | Equivalent foundation; official Riot map backgrounds remain license-gated |
 | Builds | `出装过程` | per-player navigator, skill/evolution order and timestamped purchase/sell/undo operations | Equivalent foundation; richer SGP spacer/anvil grouping remains |
-| Timeline | `时间线` | team-gold lines, economic-difference line and selectable per-player gold/level/XP/CS/damage series | Equivalent foundation; upstream hover labels and richer SGP stat groups remain |
+| Timeline | `时间线` | team-gold lines, economic-difference line and selectable per-player gold/level/XP/CS/damage series with native hover values | Equivalent foundation; richer SGP stat groups remain |
 | Encountered games | integrated encounter history | account-isolated shared games, pagination and local single-row removal | Equivalent with host layout |
 | Ongoing game | main and independent ongoing views | ten-player cards, configurable recent-match depth, champion usage, premade/local-tag and jungle-analysis visibility, configurable jungle sample depth, plus optional automatic routing at game start | Equivalent foundation; visual parity still needs real-window review |
 | Automation | League automation sections | gameflow, selection/ban, champion config and miscellaneous behavior | Equivalent; real Tencent state-machine acceptance pending |
