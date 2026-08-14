@@ -15,7 +15,9 @@ export default function LeagueMiniAutoManager() {
         const settings = status?.settings || {};
         const shouldShow = Boolean(settings.mini_enabled && settings.mini_auto_show && status?.mini_should_show);
         const context = `${status?.connected ? "connected" : "offline"}:${status?.phase || "None"}:${status?.champ_select?.is_spectating ? "spectating" : "playing"}`;
-        const signature = `${shouldShow}:${context}`;
+        const contentProtected = Boolean(settings.streamer_content_protection_enabled);
+        await invoke("set_league_content_protection", { enabled: contentProtected });
+        const signature = `${shouldShow}:${context}:${contentProtected}`;
         if (signature === lastSync.current) return;
         lastSync.current = signature;
         await invoke("sync_league_mini", { shouldShow, context });

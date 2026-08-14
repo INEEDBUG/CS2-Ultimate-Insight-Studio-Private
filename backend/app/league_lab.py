@@ -117,6 +117,7 @@ class LeagueLabSettings(BaseModel):
     respawn_timer_enabled: bool = False
     streamer_mode_enabled: bool = False
     streamer_mode_use_aliases: bool = False
+    streamer_content_protection_enabled: bool = False
 
 
 class ChampionLoadout(BaseModel):

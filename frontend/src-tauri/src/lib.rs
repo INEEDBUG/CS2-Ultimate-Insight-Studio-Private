@@ -33,6 +33,10 @@ fn open_league_mini(app: AppHandle) -> Result<(), String> {
         window.set_focus().map_err(|error| error.to_string())?;
         return Ok(());
     }
+    let content_protected = app
+        .state::<LeaguePrivacyLifecycle>()
+        .content_protected
+        .load(Ordering::SeqCst);
     WebviewWindowBuilder::new(&app, "league-mini", WebviewUrl::App("mini.html".into()))
         .title("Insight · League Mini")
         .inner_size(340.0, 480.0)
@@ -40,6 +44,7 @@ fn open_league_mini(app: AppHandle) -> Result<(), String> {
         .resizable(true)
         .decorations(true)
         .always_on_top(true)
+        .content_protected(content_protected)
         .build()
         .map(|_| ())
         .map_err(|error| error.to_string())
@@ -53,6 +58,10 @@ fn open_league_ongoing(app: AppHandle) -> Result<(), String> {
         window.set_focus().map_err(|error| error.to_string())?;
         return Ok(());
     }
+    let content_protected = app
+        .state::<LeaguePrivacyLifecycle>()
+        .content_protected
+        .load(Ordering::SeqCst);
     WebviewWindowBuilder::new(
         &app,
         "league-ongoing",
@@ -63,6 +72,7 @@ fn open_league_ongoing(app: AppHandle) -> Result<(), String> {
     .min_inner_size(980.0, 640.0)
     .resizable(true)
     .decorations(true)
+    .content_protected(content_protected)
     .build()
     .map(|_| ())
     .map_err(|error| error.to_string())
@@ -72,6 +82,26 @@ fn open_league_ongoing(app: AppHandle) -> Result<(), String> {
 struct LeagueMiniLifecycle {
     manually_hidden: AtomicBool,
     context: Mutex<String>,
+}
+
+#[derive(Default)]
+struct LeaguePrivacyLifecycle {
+    content_protected: AtomicBool,
+}
+
+#[tauri::command]
+fn set_league_content_protection(app: AppHandle, enabled: bool) -> Result<(), String> {
+    app.state::<LeaguePrivacyLifecycle>()
+        .content_protected
+        .store(enabled, Ordering::SeqCst);
+    for label in ["main", "league-mini", "league-ongoing"] {
+        if let Some(window) = app.get_webview_window(label) {
+            window
+                .set_content_protected(enabled)
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -558,6 +588,7 @@ pub fn run() {
         .manage(BackendProcess::new().expect("failed to create desktop session token"))
         .manage(AppLifecycle::default())
         .manage(LeagueMiniLifecycle::default())
+        .manage(LeaguePrivacyLifecycle::default())
         .invoke_handler(tauri::generate_handler![
             read_legacy_ui_state,
             backend_session_token,
@@ -569,7 +600,8 @@ pub fn run() {
             quit_app,
             open_league_mini,
             open_league_ongoing,
-            sync_league_mini
+            sync_league_mini,
+            set_league_content_protection
         ])
         .setup(|app| {
             let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;

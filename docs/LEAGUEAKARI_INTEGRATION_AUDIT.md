@@ -49,7 +49,7 @@ This document prevents the League integration from becoming a collection of unre
 - SGP match-history fallback for Tencent and supported global regions, using an on-demand in-memory entitlements token and exposing the active LCU/SGP source in the player center.
 - League Mini owned-skin selector with chroma support; options come from the current LCU inventory snapshot and unowned/disabled IDs are rejected server-side.
 - Visual rune and summoner-spell loadout editor backed by the current LCU catalog; perk selection no longer requires manually typing numeric IDs.
-- LeagueAkari-style streamer privacy mode across the main League lab, player center, Mini and independent ongoing-game window, with stable optional aliases and local-tag/PUUID masking.
+- LeagueAkari-style streamer privacy mode across the main League lab, player center, Mini and independent ongoing-game window, with stable optional aliases, local-tag/PUUID masking and optional native capture protection.
 
 ### Partially implemented; upstream behavior is richer
 
@@ -68,7 +68,7 @@ This document prevents the League integration from becoming a collection of unre
 - OP.GG and remaining specialized auxiliary overlay windows (an independent native real-time match window and Mini respawn timer now work).
 - Reward/mission/event claiming plus mutating loot and friend tools (the read-only overview works now; writes require separate safety review).
 - In-game preset messaging: explicit fixed-text presets for lobby/champion-select, plus manual chat availability and status-message tools are implemented; generated rating/jungle/premade presets and native keyboard injection during an active match remain.
-- Client window sizing and game-client process controls. Streamer text masking is implemented; native Windows capture exclusion remains a separate desktop-shell hardening task.
+- Client window sizing and game-client process controls. Streamer text masking and native Windows capture exclusion are implemented.
 
 ## Porting decisions
 
