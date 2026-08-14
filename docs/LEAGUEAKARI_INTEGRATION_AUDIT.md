@@ -53,7 +53,7 @@ This document prevents the League integration from becoming a collection of unre
 ### Partially implemented; upstream behavior is richer
 
 - Pick/ban: core upstream behavior is implemented; remaining work is exact upstream queue-group metadata refresh, subset-card modes, special vote actions and champion artwork/role metadata parity.
-- Champion config: saved loadouts plus LCU-backed champion artwork search, primary/secondary rune selection and named summoner-spell selection are implemented; mode/position-specific presets remain.
+- Champion config: saved loadouts plus LCU-backed champion artwork search, primary/secondary rune selection, named summoner-spell selection and LeagueAkari-equivalent normal/ranked-position/ARAM/URF/Nexus Blitz/Ultimate Spellbook routing with fallback are implemented.
 - Honor: strategy parity is implemented; the UI intentionally keeps the feature opt-in and disabled by default.
 - Invitations: per-type strategy, priority ordering, away gating and the complete upstream dynamic queue-type strategy catalog are implemented.
 - Match history: current and cross-player rows, Riot ID lookup, pagination, ranked/mastery summary, recently encountered players, local tags, result/mode/champion/position/minimum-kills/maximum-deaths/minimum-KDA filters, SGP fallback, one-click 100-match SQLite collection that survives restarts, aggregate KDA/participation/vision/damage challenge metrics and expanded match cards exist; the full upstream challenge catalog and composable-filter language remain.

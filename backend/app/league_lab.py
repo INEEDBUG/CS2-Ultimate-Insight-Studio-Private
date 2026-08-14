@@ -119,6 +119,7 @@ class LeagueLabSettings(BaseModel):
 
 class ChampionLoadout(BaseModel):
     champion_id: int = Field(gt=0)
+    config_key: str = Field(default="default", pattern=r"^(default|normal|aram|urf|nexusblitz|ultbook|ranked-default|ranked-(top|jungle|middle|bottom|utility))$")
     primary_style_id: int = Field(gt=0)
     sub_style_id: int = Field(gt=0)
     selected_perk_ids: list[int] = Field(default_factory=list)
@@ -765,7 +766,27 @@ class LeagueLabService:
         champion_id = await self.request("GET", "/lol-champ-select/v1/current-champion")
         if not isinstance(champion_id, int) or champion_id <= 0 or champion_id == self._configured_champion_id:
             return
-        loadout = next((item for item in self.settings.champion_loadouts if item.champion_id == champion_id), None)
+        session = await self.request("GET", "/lol-champ-select/v1/session")
+        try:
+            gameflow = await self.request("GET", "/lol-gameflow/v1/session")
+        except RuntimeError:
+            gameflow = {}
+        game_data = (gameflow or {}).get("gameData") or {} if isinstance(gameflow, dict) else {}
+        queue = game_data.get("queue") or {}
+        game_mode = str(queue.get("gameMode") or "").upper()
+        queue_type = str(queue.get("type") or "").upper()
+        position = self._position_for_session(session if isinstance(session, dict) else {})
+        if game_mode == "CLASSIC" and queue_type.startswith("RANKED_"):
+            config_keys = [f"ranked-{position}", "ranked-default", "default"]
+        elif game_mode == "CLASSIC":
+            config_keys = ["normal", "default"]
+        else:
+            mapped = {"ARAM": "aram", "KIWI": "aram", "URF": "urf", "NEXUSBLITZ": "nexusblitz", "ULTBOOK": "ultbook"}.get(game_mode)
+            config_keys = [mapped, "default"] if mapped else ["default"]
+        loadout = next(
+            (item for key in config_keys for item in self.settings.champion_loadouts if item.champion_id == champion_id and item.config_key == key),
+            None,
+        )
         if loadout is None:
             return
         await self.request("PATCH", "/lol-champ-select/v1/session/my-selection", json_body={
@@ -775,7 +796,7 @@ class LeagueLabService:
         pages = await self.request("GET", "/lol-perks/v1/pages")
         editable = next((page for page in (pages or []) if isinstance(page, dict) and page.get("isEditable")), None)
         page_body = {
-            "name": f"[Insight] Champion {champion_id}",
+            "name": f"[Insight] Champion {champion_id} - {loadout.config_key}",
             "primaryStyleId": loadout.primary_style_id,
             "subStyleId": loadout.sub_style_id,
             "selectedPerkIds": loadout.selected_perk_ids,

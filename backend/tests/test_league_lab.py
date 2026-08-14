@@ -99,6 +99,30 @@ def test_settings_are_persisted_without_lcu_credentials(tmp_path, monkeypatch):
     assert LeagueLabService().settings.invitation_strategy == "accept"
 
 
+def test_champion_config_prefers_ranked_position_loadout():
+    service = LeagueLabService()
+    service.settings = LeagueLabSettings(champion_loadouts=[
+        {"champion_id": 22, "config_key": "default", "primary_style_id": 8000, "sub_style_id": 8100, "selected_perk_ids": [8005], "spell1_id": 4, "spell2_id": 7},
+        {"champion_id": 22, "config_key": "ranked-jungle", "primary_style_id": 8100, "sub_style_id": 8300, "selected_perk_ids": [8112], "spell1_id": 11, "spell2_id": 4},
+    ])
+    writes = []
+
+    async def fake_request(method, path, *, json_body=None):
+        if path == "/lol-champ-select/v1/current-champion": return 22
+        if path == "/lol-champ-select/v1/session": return {"localPlayerCellId": 1, "myTeam": [{"cellId": 1, "assignedPosition": "JUNGLE"}]}
+        if path == "/lol-gameflow/v1/session": return {"gameData": {"queue": {"gameMode": "CLASSIC", "type": "RANKED_SOLO_5x5"}}}
+        if path == "/lol-perks/v1/pages": return [{"id": 9, "isEditable": True}]
+        writes.append((method, path, json_body))
+        return {}
+
+    service.request = fake_request
+    asyncio.run(service._run_champion_config())
+    assert ("PATCH", "/lol-champ-select/v1/session/my-selection", {"spell1Id": 11, "spell2Id": 4}) in writes
+    rune_write = next(body for method, path, body in writes if method == "PUT" and path == "/lol-perks/v1/pages/9")
+    assert rune_write["name"] == "[Insight] Champion 22 - ranked-jungle"
+    assert rune_write["selectedPerkIds"] == [8112]
+
+
 def test_ready_check_runs_auto_accept_once(monkeypatch):
     service = LeagueLabService()
     service.settings = LeagueLabSettings(
