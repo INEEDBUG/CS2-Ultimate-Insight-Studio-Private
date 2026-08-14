@@ -287,6 +287,33 @@ def test_full_champion_mastery_is_named_and_sorted(monkeypatch):
     ]
 
 
+def test_encountered_games_are_indexed_per_local_account_and_removable(tmp_path, monkeypatch):
+    path = tmp_path / "recent.json"
+    monkeypatch.setattr(league_lab, "_recent_players_path", lambda: path)
+    monkeypatch.setattr(league_lab.league_lab_service, "current_summoner", {"puuid": "self-player"})
+    match = {
+        "game_id": 9876,
+        "played_at": 123456,
+        "game_mode": "CLASSIC",
+        "queue_id": 420,
+        "participants": [
+            {"puuid": "self-player", "champion_id": 1, "kills": 10, "deaths": 2, "assists": 8, "win": True},
+            {"puuid": "target-player", "champion_id": 2, "kills": 3, "deaths": 7, "assists": 4, "win": False},
+        ],
+    }
+
+    league_lab._index_match_encounters([match], "self-player")
+    page = asyncio.run(league_lab.league_player_encounters("target-player"))
+
+    assert page["total"] == 1
+    assert page["games"][0]["target"]["kills"] == 3
+    assert page["games"][0]["self"]["kills"] == 10
+
+    removed = asyncio.run(league_lab.delete_league_player_encounter("target-player", "9876"))
+    assert removed["removed"] is True
+    assert asyncio.run(league_lab.league_player_encounters("target-player"))["total"] == 0
+
+
 def test_settings_are_persisted_without_lcu_credentials(tmp_path, monkeypatch):
     monkeypatch.setattr(LeagueLabService, "_settings_path", staticmethod(lambda: tmp_path / "league-lab.json"))
     service = LeagueLabService()

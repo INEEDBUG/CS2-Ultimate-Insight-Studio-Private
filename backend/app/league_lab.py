@@ -2106,6 +2106,13 @@ def _write_recent_players(rows: list[dict]) -> None:
     temp.replace(path)
 
 
+def _time_sort_value(value) -> int:
+    try:
+        return int(float(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _remember_recent_players(players: list[dict], game_id=None) -> None:
     existing = {str(row.get("puuid")): row for row in _read_recent_players() if row.get("puuid")}
     now = int(time.time() * 1000)
@@ -2115,6 +2122,25 @@ def _remember_recent_players(players: list[dict], game_id=None) -> None:
             continue
         summoner = player.get("summoner") or {}
         previous = existing.get(puuid) or {}
+        encounters = [row for row in (previous.get("encounters") or []) if isinstance(row, dict)]
+        self_puuid = str(league_lab_service.current_summoner.get("puuid") or "")
+        if game_id and self_puuid and puuid != self_puuid:
+            encounter = {
+                "game_id": game_id,
+                "self_puuid": self_puuid,
+                "seen_at": now,
+                "played_at": None,
+                "game_mode": league_lab_service.game_mode,
+                "target": {
+                    "team_id": player.get("team"),
+                    "champion_id": player.get("champion_id"),
+                    "champion_name": player.get("champion_name"),
+                },
+            }
+            encounters = [row for row in encounters if not (
+                str(row.get("game_id")) == str(game_id) and str(row.get("self_puuid") or "") == self_puuid
+            )]
+            encounters.insert(0, encounter)
         existing[puuid] = {
             **previous,
             "puuid": puuid,
@@ -2126,8 +2152,49 @@ def _remember_recent_players(players: list[dict], game_id=None) -> None:
             "team": player.get("team"),
             "champion_id": player.get("champion_id"),
             "champion_name": player.get("champion_name"),
+            "encounters": encounters[:50],
         }
     _write_recent_players(sorted(existing.values(), key=lambda row: int(row.get("last_seen_at") or 0), reverse=True))
+
+
+def _index_match_encounters(matches: list[dict], self_puuid: str) -> None:
+    if not self_puuid:
+        return
+    existing = {str(row.get("puuid")): row for row in _read_recent_players() if row.get("puuid")}
+    changed = False
+    for match in matches:
+        game_id = match.get("game_id")
+        if not game_id:
+            continue
+        participants = [row for row in (match.get("participants") or []) if isinstance(row, dict)]
+        own = next((row for row in participants if str(row.get("puuid") or "") == self_puuid), None)
+        for participant in participants:
+            puuid = str(participant.get("puuid") or "")
+            if not puuid or puuid == self_puuid:
+                continue
+            previous = existing.get(puuid) or {"puuid": puuid}
+            encounters = [row for row in (previous.get("encounters") or []) if isinstance(row, dict)]
+            entry = {
+                "game_id": game_id,
+                "self_puuid": self_puuid,
+                "seen_at": int(time.time() * 1000),
+                "played_at": match.get("played_at"),
+                "duration_seconds": match.get("duration_seconds"),
+                "game_mode": match.get("game_mode"),
+                "game_type": match.get("game_type"),
+                "queue_id": match.get("queue_id"),
+                "target": participant,
+                "self": own or {},
+            }
+            encounters = [row for row in encounters if not (
+                str(row.get("game_id")) == str(game_id) and str(row.get("self_puuid") or "") == self_puuid
+            )]
+            encounters.append(entry)
+            encounters.sort(key=lambda row: _time_sort_value(row.get("played_at") or row.get("seen_at")), reverse=True)
+            existing[puuid] = {**previous, "puuid": puuid, "encounters": encounters[:50]}
+            changed = True
+    if changed:
+        _write_recent_players(sorted(existing.values(), key=lambda row: int(row.get("last_seen_at") or 0), reverse=True))
 
 
 def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "") -> list[dict]:
@@ -2863,7 +2930,9 @@ async def league_match_history(limit: int = 20):
         names = await _champion_names()
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    normalized = _normalize_match_rows(payload, names)
+    current_puuid = str(league_lab_service.current_summoner.get("puuid") or "")
+    normalized = _normalize_match_rows(payload, names, current_puuid)
+    _index_match_encounters(normalized, current_puuid)
     return {"matches": normalized, "count": len(normalized)}
 
 
@@ -3021,7 +3090,50 @@ async def league_player_search_servers():
 async def recent_league_players(limit: int = 40):
     rows = _read_recent_players()[: max(1, min(limit, 200))]
     tags = _read_player_tags()
-    return {"players": [{**row, "tag": tags.get(str(row.get("puuid"))) or {}} for row in rows], "count": len(rows)}
+    public_rows = [{**{key: value for key, value in row.items() if key != "encounters"}, "tag": tags.get(str(row.get("puuid"))) or {}} for row in rows]
+    return {"players": public_rows, "count": len(public_rows)}
+
+
+@router.get("/players/{puuid}/encounters")
+async def league_player_encounters(puuid: str, page: int = 1, page_size: int = 10):
+    self_puuid = str(league_lab_service.current_summoner.get("puuid") or "")
+    target = next((row for row in _read_recent_players() if str(row.get("puuid") or "") == puuid), None)
+    rows = [
+        row for row in ((target or {}).get("encounters") or [])
+        if isinstance(row, dict) and (not self_puuid or str(row.get("self_puuid") or "") == self_puuid)
+    ]
+    rows.sort(key=lambda row: _time_sort_value(row.get("played_at") or row.get("seen_at")), reverse=True)
+    size = max(1, min(page_size, 30))
+    current_page = max(1, page)
+    start = (current_page - 1) * size
+    return {
+        "puuid": puuid,
+        "self_puuid": self_puuid,
+        "games": rows[start:start + size],
+        "page": current_page,
+        "page_size": size,
+        "total": len(rows),
+    }
+
+
+@router.delete("/players/{puuid}/encounters/{game_id}")
+async def delete_league_player_encounter(puuid: str, game_id: str):
+    self_puuid = str(league_lab_service.current_summoner.get("puuid") or "")
+    rows = _read_recent_players()
+    removed = False
+    for player in rows:
+        if str(player.get("puuid") or "") != puuid:
+            continue
+        before = [row for row in (player.get("encounters") or []) if isinstance(row, dict)]
+        after = [row for row in before if not (
+            str(row.get("game_id") or "") == game_id and (not self_puuid or str(row.get("self_puuid") or "") == self_puuid)
+        )]
+        player["encounters"] = after
+        removed = len(after) != len(before)
+        break
+    if removed:
+        _write_recent_players(rows)
+    return {"removed": removed, "puuid": puuid, "game_id": game_id}
 
 
 @router.get("/players/{puuid}")
@@ -3112,6 +3224,9 @@ async def _load_player_bundle(
         )
     except RuntimeError:
         pass
+    current_puuid = str(league_lab_service.current_summoner.get("puuid") or "")
+    if puuid == current_puuid:
+        _index_match_encounters(matches, current_puuid)
     tags = _read_player_tags().get(puuid) or {}
     if match_limit >= 100 and beg_index == 0 and matches:
         await _store_match_collection(puuid, matches)

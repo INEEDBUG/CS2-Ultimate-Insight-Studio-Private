@@ -116,6 +116,16 @@ export async function fetchRecentLeaguePlayers(limit = 40) {
   return data;
 }
 
+export async function fetchLeaguePlayerEncounters(puuid, page = 1, pageSize = 10) {
+  const { data } = await API.get(`/league-lab/players/${encodeURIComponent(puuid)}/encounters`, { params: { page, page_size: pageSize } });
+  return data;
+}
+
+export async function deleteLeaguePlayerEncounter(puuid, gameId) {
+  const { data } = await API.delete(`/league-lab/players/${encodeURIComponent(puuid)}/encounters/${encodeURIComponent(gameId)}`);
+  return data;
+}
+
 export async function saveLeaguePlayerTag(puuid, tag) {
   const { data } = await API.put(`/league-lab/players/${encodeURIComponent(puuid)}/tag`, tag);
   return data;
