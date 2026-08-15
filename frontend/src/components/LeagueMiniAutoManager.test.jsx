@@ -49,4 +49,27 @@ describe("LeagueMiniAutoManager", () => {
     }));
     view.unmount();
   });
+
+  it("retries a lifecycle sync that failed during desktop startup", async () => {
+    fetchLeagueLabStatus.mockResolvedValue({
+      connected: true,
+      phase: "None",
+      mini_should_show: false,
+      cooldown_timer_should_show: false,
+      opgg_should_show: false,
+      settings: { mini_enabled: true, mini_auto_show: true },
+    });
+    invoke.mockImplementationOnce(() => Promise.reject(new Error("desktop not ready")));
+    const view = render(<LeagueMiniAutoManager />);
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    await waitFor(
+      () => expect(invoke).toHaveBeenCalledWith("sync_league_mini", {
+        shouldShow: false,
+        context: "connected:None:playing",
+      }),
+      { timeout: 2500 },
+    );
+    view.unmount();
+  });
 });
