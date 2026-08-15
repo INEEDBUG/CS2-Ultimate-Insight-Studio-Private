@@ -1,6 +1,7 @@
 fn main() {
     println!("cargo:rerun-if-env-changed=CS2_LIBUNWIND_DLL");
-    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("gnullvm") {
+    let target = std::env::var("TARGET").unwrap_or_default();
+    if target.contains("gnullvm") {
         let source = std::env::var_os("CS2_LIBUNWIND_DLL")
             .map(std::path::PathBuf::from)
             .filter(|path| path.is_file())
