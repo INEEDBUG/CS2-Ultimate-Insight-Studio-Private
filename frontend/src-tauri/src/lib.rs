@@ -316,22 +316,16 @@ fn sync_league_opgg(
         lifecycle.manually_hidden.store(false, Ordering::SeqCst);
     }
     drop(saved_context);
-    if !enabled {
+    // Do not eagerly create this WebView while it should be hidden. Creating a
+    // dynamic WebView and immediately hiding it can race its first navigation
+    // on Windows, leaving a visible white window during normal lobby startup.
+    if !enabled || !should_show {
         if let Some(window) = app.get_webview_window("league-opgg") {
             window.hide().map_err(|error| error.to_string())?;
         }
         return Ok(());
     }
-    if app.get_webview_window("league-opgg").is_none() {
-        open_league_opgg(app.clone())?;
-        if !should_show {
-            if let Some(window) = app.get_webview_window("league-opgg") {
-                window.hide().map_err(|error| error.to_string())?;
-            }
-        }
-        return Ok(());
-    }
-    if should_show && !lifecycle.manually_hidden.load(Ordering::SeqCst) {
+    if !lifecycle.manually_hidden.load(Ordering::SeqCst) {
         open_league_opgg(app)?;
     }
     Ok(())

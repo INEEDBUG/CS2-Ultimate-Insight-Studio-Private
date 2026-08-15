@@ -117,4 +117,21 @@ describe("createDesktopUpdateCheck", () => {
     expect(update.download).toHaveBeenCalledOnce();
     expect(update.install).toHaveBeenCalledOnce();
   });
+
+  it("fails open when the update endpoint does not answer in time", async () => {
+    vi.useFakeTimers();
+    updaterMocks.check.mockImplementation(() => new Promise(() => {}));
+    const states = [];
+    const controller = createDesktopUpdateCheck((state) => states.push(state), {
+      checkTimeoutMs: 1000,
+    });
+
+    const run = controller.start();
+    await vi.advanceTimersByTimeAsync(1000);
+    await run;
+
+    expect(states.map((state) => state.status)).toEqual(["checking", "error"]);
+    expect(states.at(-1)?.error).toContain("检查更新超时");
+    vi.useRealTimers();
+  });
 });
