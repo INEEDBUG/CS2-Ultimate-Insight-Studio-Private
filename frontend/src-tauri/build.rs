@@ -8,11 +8,8 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var_os("CARGO_FEATURE_RUST_TEST_MANIFEST").is_some()
     {
-        embed_resource::compile_for_everything(
-            "windows/test-manifest.rc",
-            embed_resource::NONE,
-        )
-        .manifest_required()
-        .expect("failed to embed the Windows test manifest");
+        embed_resource::compile_for_everything("windows/test-manifest.rc", embed_resource::NONE)
+            .manifest_required()
+            .expect("failed to embed the Windows test manifest");
     }
 }

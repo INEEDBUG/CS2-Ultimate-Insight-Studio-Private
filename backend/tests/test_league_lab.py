@@ -250,6 +250,17 @@ def test_discovery_falls_back_to_cim_when_native_command_line_is_denied(monkeypa
     ]
 
 
+def test_status_distinguishes_elevated_client_from_missing_client(monkeypatch):
+    service = LeagueLabService()
+    monkeypatch.setattr(league_lab, "_league_client_window_is_present", lambda: True)
+
+    status = service.status()
+
+    assert status["connected"] is False
+    assert status["client_window_detected"] is True
+    assert status["requires_elevation"] is True
+
+
 def test_client_list_identifies_accounts_without_exposing_credentials(monkeypatch):
     clients = [
         league_lab.LcuCredentials(1111, "secret-one", "CN", "HN1", pid=101),

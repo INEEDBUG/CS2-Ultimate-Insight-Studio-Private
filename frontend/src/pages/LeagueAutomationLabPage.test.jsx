@@ -1,7 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
 import LeagueAutomationLabPage from "./LeagueAutomationLabPage";
 import { fetchLeagueClientInstallations, fetchLeagueClients, fetchLeagueLabStatus, fetchLeagueMatches, fetchLeagueOngoingGame, fetchLeagueReplay, saveLeagueLabSettings } from "../api/leagueLabApi";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn().mockResolvedValue(null) }));
 
 vi.mock("../api/leagueLabApi", () => ({
   fetchLeagueLabStatus: vi.fn(),
@@ -58,6 +61,23 @@ describe("LeagueAutomationLabPage", () => {
     expect(screen.getByLabelText("Mini 不透明度").value).toBe("1");
     expect(screen.getByLabelText("OP.GG 不透明度").value).toBe("1");
     expect(screen.getByRole("switch", { name: "Mini 显示皮肤选择器" })).toBeTruthy();
+  });
+
+  it("offers a confirmed administrator restart when an elevated WeGame client is visible", async () => {
+    fetchLeagueLabStatus.mockResolvedValueOnce({
+      ...status,
+      connected: false,
+      client_window_detected: true,
+      requires_elevation: true,
+      summoner_name: "",
+    });
+    vi.spyOn(window, "confirm").mockReturnValueOnce(true);
+
+    render(<LeagueAutomationLabPage />);
+    expect(await screen.findByText("已发现客户端，但权限不足")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "以管理员身份重启并连接" }));
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("restart_as_administrator"));
   });
 
   it("uses the detailed match card in the current-account history", async () => {

@@ -421,6 +421,38 @@ fn quit_app(handle: AppHandle) {
     request_app_exit(&handle);
 }
 
+#[tauri::command]
+fn restart_as_administrator(handle: AppHandle) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                "Start-Sleep -Milliseconds 900; Start-Process -FilePath $args[0] -Verb RunAs",
+            ])
+            .arg(executable)
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        request_app_exit(&handle);
+        return Ok(());
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = handle;
+        Err("管理员重启仅支持 Windows".to_string())
+    }
+}
+
 fn request_app_exit(handle: &AppHandle) {
     let lifecycle = handle.state::<AppLifecycle>();
     if lifecycle.quitting.swap(true, Ordering::SeqCst) {
@@ -810,6 +842,7 @@ pub fn run() {
             get_close_action,
             hide_to_tray,
             quit_app,
+            restart_as_administrator,
             open_league_mini,
             open_league_ongoing,
             open_league_cd_timer,
@@ -945,9 +978,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        close_action_name, league_window_defaults, new_session_token, parse_close_action,
-    };
+    use super::{close_action_name, league_window_defaults, new_session_token, parse_close_action};
 
     #[test]
     fn session_token_is_256_bit_hex() {

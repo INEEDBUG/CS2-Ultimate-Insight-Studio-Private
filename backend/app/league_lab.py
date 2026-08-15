@@ -558,6 +558,25 @@ def _read_windows_process_command_line(pid: int) -> str:
         kernel32.CloseHandle(handle)
 
 
+def _league_client_window_is_present() -> bool:
+    """Detect the logged-in League UX without opening the elevated process.
+
+    Tencent/WeGame commonly launches LeagueClientUx at a higher integrity
+    level. Windows then intentionally blocks command-line reads from this
+    process, but FindWindow remains a safe way to distinguish that state from
+    "the client is not running".
+    """
+    if os.name != "nt":
+        return False
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        user32.FindWindowW.restype = wintypes.HWND
+        return bool(user32.FindWindowW("RCLIENT", "League of Legends"))
+    except (AttributeError, OSError):
+        return False
+
+
 def _read_registry_string(root, key_path: str, value_name: str) -> str:
     try:
         import winreg
@@ -1121,6 +1140,7 @@ class LeagueLabService:
 
     def status(self) -> dict:
         credentials = self.credentials
+        client_window_detected = _league_client_window_is_present()
         now_mono = time.monotonic()
         countdowns: list[tuple[str, str, float]] = []
         if self._accept_due_at is not None and self._accept_due_at != float("inf"):
@@ -1148,6 +1168,8 @@ class LeagueLabService:
             }
         return {
             "connected": credentials is not None,
+            "client_window_detected": client_window_detected,
+            "requires_elevation": credentials is None and client_window_detected,
             "phase": self.phase,
             "game_mode": self.game_mode,
             "summoner_name": self.summoner_name,
