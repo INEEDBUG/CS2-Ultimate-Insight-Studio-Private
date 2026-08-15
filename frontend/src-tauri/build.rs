@@ -13,8 +13,16 @@ fn main() {
             .ancestors()
             .nth(3)
             .expect("unable to resolve Cargo profile directory from OUT_DIR");
-        std::fs::copy(&source, release_dir.join("libunwind.dll"))
-            .expect("failed to stage libunwind.dll beside the Tauri executable");
+        let destination = release_dir.join("libunwind.dll");
+        // A gnullvm build helper can load the already-staged runtime from the
+        // profile directory. Windows then locks that DLL for the lifetime of
+        // the helper, so overwriting it here makes every subsequent build fail
+        // with ERROR_SHARING_VIOLATION. The release wrapper validates the
+        // staged file after the build; this hook only needs to seed it once.
+        if !destination.is_file() {
+            std::fs::copy(&source, &destination)
+                .expect("failed to stage libunwind.dll beside the Tauri executable");
+        }
     }
 
     tauri_build::build();
