@@ -371,6 +371,10 @@ FunctionEnd
   !if /FileExists "${CS2_TAURI_RELEASE_DIR}\WebView2Loader.dll"
     File /a "/oname=WebView2Loader.dll" "${CS2_TAURI_RELEASE_DIR}\WebView2Loader.dll"
   !endif
+  ; LLVM-MinGW (gnullvm) also imports its unwind runtime dynamically.
+  !if /FileExists "${CS2_TAURI_RELEASE_DIR}\libunwind.dll"
+    File /a "/oname=libunwind.dll" "${CS2_TAURI_RELEASE_DIR}\libunwind.dll"
+  !endif
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
@@ -414,6 +418,7 @@ FunctionEnd
 
 !macro NSIS_HOOK_POSTUNINSTALL
   Delete "$INSTDIR\WebView2Loader.dll"
+  Delete "$INSTDIR\libunwind.dll"
   ; The generated uninstaller tries to remove $INSTDIR before this custom
   ; file is deleted. Retry non-recursively once the loader is gone.
   RmDir "$INSTDIR"
