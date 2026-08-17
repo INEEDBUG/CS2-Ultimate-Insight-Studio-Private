@@ -2221,6 +2221,60 @@ def _champion_catalog_path() -> Path:
     return get_data_dir() / "league-champion-catalog.json"
 
 
+_ddragon_catalog_cache: tuple[float, str, list[dict]] | None = None
+
+
+async def _ddragon_champion_catalog() -> tuple[str, list[dict]]:
+    """Return Riot Data Dragon metadata when the local LCU is unavailable."""
+    global _ddragon_catalog_cache
+    if _ddragon_catalog_cache and time.monotonic() - _ddragon_catalog_cache[0] < 3600:
+        return _ddragon_catalog_cache[1], _ddragon_catalog_cache[2]
+    try:
+        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+            versions_response = await client.get("https://ddragon.leagueoflegends.com/api/versions.json")
+            versions_response.raise_for_status()
+            versions = versions_response.json()
+            version = str(versions[0]) if isinstance(versions, list) and versions else ""
+            if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+                raise ValueError("invalid Data Dragon version")
+            catalog_response = await client.get(
+                f"https://ddragon.leagueoflegends.com/cdn/{version}/data/zh_CN/champion.json"
+            )
+            catalog_response.raise_for_status()
+            payload = catalog_response.json()
+    except (httpx.HTTPError, ValueError, IndexError, KeyError) as exc:
+        raise RuntimeError(f"Data Dragon 英雄目录请求失败: {type(exc).__name__}") from exc
+    rows = [
+        {
+            "id": int(row.get("key")),
+            "name": str(row.get("name") or row.get("id") or row.get("key")),
+            "alias": str(row.get("id") or ""),
+            "roles": [str(role).lower() for role in (row.get("tags") or [])],
+        }
+        for row in (payload.get("data") or {}).values()
+        if isinstance(row, dict) and str(row.get("key") or "").isdigit()
+    ]
+    _ddragon_catalog_cache = (time.monotonic(), version, rows)
+    return version, rows
+
+
+async def _ddragon_champion_icon(champion_id: int) -> tuple[bytes, str]:
+    version, rows = await _ddragon_champion_catalog()
+    champion = next((row for row in rows if int(row.get("id") or 0) == champion_id), None)
+    alias = str((champion or {}).get("alias") or "")
+    if not re.fullmatch(r"[A-Za-z0-9]+", alias):
+        raise RuntimeError("Data Dragon 英雄头像不存在")
+    try:
+        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+            response = await client.get(
+                f"https://ddragon.leagueoflegends.com/cdn/{version}/img/champion/{alias}.png"
+            )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Data Dragon 英雄头像请求失败: {type(exc).__name__}") from exc
+    return response.content, response.headers.get("content-type") or "image/png"
+
+
 async def _champion_catalog() -> list[dict]:
     rows = None
     try:
@@ -2230,6 +2284,11 @@ async def _champion_catalog() -> list[dict]:
             rows = json.loads(_champion_catalog_path().read_text(encoding="utf-8"))
         except (OSError, ValueError):
             rows = []
+        if not rows:
+            try:
+                _, rows = await _ddragon_champion_catalog()
+            except RuntimeError:
+                rows = []
     normalized = [
         {
             "id": int(row.get("id")),
@@ -2239,7 +2298,7 @@ async def _champion_catalog() -> list[dict]:
         }
         for row in (rows or []) if isinstance(row, dict) and int(row.get("id") or 0) > 0
     ]
-    if normalized and league_lab_service.credentials:
+    if normalized:
         path = _champion_catalog_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(normalized, ensure_ascii=False), encoding="utf-8")
@@ -4446,8 +4505,11 @@ async def league_champion_icon(champion_id: int):
         content, media_type = await league_lab_service.request_bytes(
             f"/lol-game-data/assets/v1/champion-icons/{champion_id}.png"
         )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError:
+        try:
+            content, media_type = await _ddragon_champion_icon(champion_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
     return Response(content=content, media_type=media_type, headers={"Cache-Control": "private, max-age=86400"})
 
 

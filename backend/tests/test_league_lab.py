@@ -1456,6 +1456,39 @@ def test_champion_icon_is_proxied_without_exposing_lcu_credentials(monkeypatch):
     assert response.headers["cache-control"] == "private, max-age=86400"
 
 
+def test_champion_catalog_falls_back_to_data_dragon_without_lcu(tmp_path, monkeypatch):
+    async def request(method, path, *, json_body=None, params=None):
+        raise RuntimeError("LCU unavailable")
+
+    async def ddragon_catalog():
+        return "16.16.1", [{"id": 22, "name": "Ashe", "alias": "Ashe", "roles": ["marksman"]}]
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    monkeypatch.setattr(league_lab, "_champion_catalog_path", lambda: tmp_path / "champions.json")
+    monkeypatch.setattr(league_lab, "_ddragon_champion_catalog", ddragon_catalog)
+
+    rows = asyncio.run(league_lab._champion_catalog())
+
+    assert rows == [{"id": 22, "name": "Ashe", "alias": "Ashe", "roles": ["marksman"]}]
+    assert json.loads((tmp_path / "champions.json").read_text(encoding="utf-8")) == rows
+
+
+def test_champion_icon_falls_back_to_data_dragon(monkeypatch):
+    async def request_bytes(path):
+        raise RuntimeError("LCU unavailable")
+
+    async def ddragon_icon(champion_id):
+        assert champion_id == 22
+        return b"public-png", "image/png"
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request_bytes", request_bytes)
+    monkeypatch.setattr(league_lab, "_ddragon_champion_icon", ddragon_icon)
+    response = asyncio.run(league_lab.league_champion_icon(22))
+
+    assert response.body == b"public-png"
+    assert response.media_type == "image/png"
+
+
 def test_profile_icon_falls_back_to_png(monkeypatch):
     calls = []
 
