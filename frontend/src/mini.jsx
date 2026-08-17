@@ -31,7 +31,9 @@ async function bootstrap() {
   );
 }
 
-const root = ReactDOM.createRoot(document.getElementById("root"));
+const rootElement = document.getElementById("root");
+rootElement.dataset.reactMounted = "true";
+const root = ReactDOM.createRoot(rootElement);
 root.render(
   <div className="grid h-screen place-items-center bg-[#111214] p-5 text-center text-sm text-zinc-300">
     <div><div className="mx-auto mb-3 h-6 w-6 animate-spin rounded-full border-2 border-emerald-400/20 border-t-emerald-400" /><div className="font-semibold">正在连接本机服务</div><div className="mt-1 text-xs text-zinc-500">Mini 面板会在连接完成后自动显示状态</div></div>
