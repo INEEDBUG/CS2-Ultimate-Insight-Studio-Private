@@ -3459,16 +3459,19 @@ async def update_league_lab_settings(body: LeagueLabSettings):
 
 @router.get("/matches")
 async def league_match_history(limit: int = 20):
+    requested_limit = max(1, min(limit, 40))
     try:
         payload = await league_lab_service.request(
             "GET", "/lol-match-history/v1/products/lol/current-summoner/matches",
-            params={"begIndex": 0, "endIndex": max(0, min(limit, 40) - 1)},
+            params={"begIndex": 0, "endIndex": requested_limit - 1},
         )
         names = await _champion_names()
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     current_puuid = str(league_lab_service.current_summoner.get("puuid") or "")
-    normalized = _normalize_match_rows(payload, names, current_puuid)
+    # Some Tencent LCU builds return one extra row even with an inclusive
+    # endIndex. Enforce the user-visible limit after normalization as well.
+    normalized = _normalize_match_rows(payload, names, current_puuid)[:requested_limit]
     _index_match_encounters(normalized, current_puuid)
     return {"matches": normalized, "count": len(normalized)}
 

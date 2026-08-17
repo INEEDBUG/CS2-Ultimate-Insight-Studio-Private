@@ -71,6 +71,12 @@ describe("LeagueDetailedMatchCard", () => {
     expect(onOpenPlayer).toHaveBeenCalledWith("ally");
   });
 
+  it("does not invent team shares from a current-player-only Tencent summary", () => {
+    render(<LeagueDetailedMatchCard match={{ ...match, participants: [match.participants[0]] }} />);
+    expect(screen.getByText("参团").parentElement.textContent).toContain("—");
+    expect(screen.getByText("伤害占比").parentElement.textContent).toContain("—");
+  });
+
   it("loads timeline details only when that tab is opened", async () => {
     render(<LeagueDetailedMatchCard match={match} />);
     fireEvent.click(screen.getByRole("button", { name: "展开战绩详情" }));

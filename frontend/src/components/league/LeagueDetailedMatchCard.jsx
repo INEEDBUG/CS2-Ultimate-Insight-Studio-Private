@@ -394,11 +394,14 @@ export default function LeagueDetailedMatchCard({ match, streamerMode = false, u
   const target = participants.find((player) => player.puuid && player.puuid === targetPuuid) || { ...match, puuid: targetPuuid };
   const teams = useMemo(() => [...new Set(participants.map((player) => player.team_id).filter((value) => value != null))].map((teamId) => ({ teamId, players: participants.filter((player) => player.team_id === teamId) })), [participants]);
   const ownTeam = participants.filter((player) => player.team_id === target.team_id);
+  // Tencent's match-history summary can contain only the current participant.
+  // A one-row "team" cannot prove either kill participation or team damage share.
+  const hasTeamContext = ownTeam.length > 1;
   const teamKills = ownTeam.reduce((sum, player) => sum + Number(player.kills || 0), 0);
   const teamDamage = ownTeam.reduce((sum, player) => sum + Number(player.damage || 0), 0);
   const kda = (Number(target.kills || 0) + Number(target.assists || 0)) / Math.max(1, Number(target.deaths || 0));
-  const kp = teamKills ? (Number(target.kills || 0) + Number(target.assists || 0)) / teamKills * 100 : 0;
-  const damageShare = teamDamage ? Number(target.damage || 0) / teamDamage * 100 : 0;
+  const kp = hasTeamContext && teamKills ? (Number(target.kills || 0) + Number(target.assists || 0)) / teamKills * 100 : null;
+  const damageShare = hasTeamContext && teamDamage ? Number(target.damage || 0) / teamDamage * 100 : null;
 
   const selectTab = async (nextTab) => {
     setTab(nextTab);
@@ -425,7 +428,7 @@ export default function LeagueDetailedMatchCard({ match, streamerMode = false, u
         <div className="relative h-14 w-14 shrink-0"><Icon src={getLeagueChampionIconUrl(match.champion_id)} title={match.champion_name} className="h-14 w-14" /><span className={`absolute -bottom-1 -right-1 rounded px-1.5 py-0.5 text-[9px] font-black ${match.win ? "bg-emerald-500 text-black" : "bg-rose-500 text-white"}`}>{match.win ? "胜" : "负"}</span></div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-start justify-between gap-2"><div><b className="text-sm">{match.champion_name || `英雄 ${match.champion_id}`}</b><span className="ml-2 text-[10px] text-cs2-text-muted">{match.position || match.role || "未知位置"}</span></div><span className="font-mono text-base font-black">{match.kills || 0}<i className="px-1 not-italic text-cs2-text-muted">/</i><span className="text-rose-300">{match.deaths || 0}</span><i className="px-1 not-italic text-cs2-text-muted">/</i>{match.assists || 0}</span></div>
-          <div className="mt-1 flex flex-wrap gap-x-3 text-[10px] text-cs2-text-muted"><span>KDA <b className="text-cs2-text-primary">{kda.toFixed(2)}</b></span><span>参团 <b className="text-cs2-text-primary">{kp.toFixed(0)}%</b></span><span>伤害占比 <b className="text-cs2-text-primary">{damageShare.toFixed(0)}%</b></span><span>补刀/分 <b className="text-cs2-text-primary">{match.duration_seconds ? (Number(match.cs || 0) / (Number(match.duration_seconds) / 60)).toFixed(1) : "—"}</b></span></div>
+          <div className="mt-1 flex flex-wrap gap-x-3 text-[10px] text-cs2-text-muted"><span>KDA <b className="text-cs2-text-primary">{kda.toFixed(2)}</b></span><span>参团 <b className="text-cs2-text-primary">{kp == null ? "—" : `${kp.toFixed(0)}%`}</b></span><span>伤害占比 <b className="text-cs2-text-primary">{damageShare == null ? "—" : `${damageShare.toFixed(0)}%`}</b></span><span>补刀/分 <b className="text-cs2-text-primary">{match.duration_seconds ? (Number(match.cs || 0) / (Number(match.duration_seconds) / 60)).toFixed(1) : "—"}</b></span></div>
           <div className="mt-2 flex flex-wrap items-center gap-1"><SpellIcons player={match} compact/><Loadout player={match} compact /></div>
           <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-cs2-text-muted"><span>{match.game_mode || "未知模式"}</span><span>·</span><Clock3 className="h-3 w-3"/><span>{formatDuration(match.duration_seconds)}</span><span>·</span><span>{formatPlayedAt(match.played_at)}</span><span>·</span><span>Game {match.game_id}</span></div>
         </div>
