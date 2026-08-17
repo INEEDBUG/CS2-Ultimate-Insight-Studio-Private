@@ -2,7 +2,7 @@
 
 Baseline reviewed: `LeagueAkari` dev branch at `cb236b6caf196e2505c7dfa6b34185020fd1e570`, plus the locally installed League Akari 1.5.1 shell. The only upstream change after the functional baseline `6e40999728f6408bddbb067fb89a81e086ae7d58` is documentation-only. The upstream remains MIT licensed and is credited in `THIRD_PARTY_LICENSES.md`.
 
-This document prevents the League integration from becoming a collection of unrelated toggles. It maps the upstream product into this project's Python/FastAPI + React/Tauri architecture and records what is actually implemented.
+This document prevents the League integration from becoming a collection of unrelated toggles. It maps the upstream product into this project's Python/FastAPI + React/Tauri architecture and records what is actually implemented. “Implemented” below means that the corresponding code path exists; it is not a claim that every account-affecting League state has passed live acceptance. The host is an integration with deliberate React/Tauri presentation differences, not a 1:1 clone of LeagueAkari. MIT attribution and the upstream notice remain required.
 
 ## Architecture reviewed
 
@@ -14,6 +14,24 @@ This document prevents the League integration from becoming a collection of unre
 - Live-game product: ongoing-game player cards, premade detection, champion usage, jungle-path analysis, queue filters and auxiliary windows.
 - Toolkit: lobby controls, client controls, in-game messages, chat presence/status, rewards, loot and friend tools.
 - Desktop shell: tray, window manager, main/mini/auxiliary windows, shortcuts, updater, storage migrations and streamer mode.
+
+## rc.40 本轮验收证据（2026-08-17）
+
+以下只记录本轮在本机候选版上的实测结果，不把尚未实际触发的游戏流程写成已验收：
+
+| 检查项 | 实测结果 | 边界 |
+| --- | --- | --- |
+| 本地候选版 | `2.5.14-rc.40` 已安装到 `D:\CS2-Ultimate-Insight-Studio` | 本轮未推送 GitHub，也未正式发布 |
+| Tencent 客户端连接 | 真实 Tencent `GZ100` 客户端连接成功，LCU 事件流在线 | 仅证明连接与事件订阅，不等于所有流程写操作已通过 |
+| 战绩读取 | 成功读取 20 场当前账号战绩 | 仅按本轮真实账号结果记录 |
+| Tencent current-player-only 摘要 | 在缺少全队上下文时不再伪造参团率和伤害占比，界面显示 `—` | 不推断缺失的队伍统计 |
+| 空闲进行中对局 | `available: false`，`query_stage: idle` | 只验证无对局时的只读状态 |
+| 账号写入安全开关 | 总账号写入开关及 ARAM pick 子开关均为关闭 | 未开启任何自动接受、选人、配置、点赞或其他写操作 |
+| 辅助窗口 | Mini、OP.GG、cooldown 窗口的读取/显示路径已验证 | 本轮不宣称所有窗口和所有游戏阶段均已验收 |
+| Mini 窗口持久化 | Mini 关闭后立即落盘，强制重启后可恢复 | 仅记录已验证的 Mini 几何/可见性行为 |
+| 更新器 | 更新安装前显式落盘已验证 | 不等于已完成签名发布或无需用户确认的正式升级策略 |
+| 自动化测试 | 后端 `111`、League 前端 `10`、updater `7`、Rust `3` 通过 | 测试通过不替代真实 Tencent 状态机验收 |
+| 安装包签名 | 安装包仍未签名 | Windows SmartScreen/发布信任链仍需单独处理 |
 
 ## Current integration status
 
@@ -116,8 +134,9 @@ This table is stricter than the shard matrix below: a backend capability is not 
 
 ### Explicit remaining gaps
 
-- Real Tencent/WeGame acceptance is still required for ReadyCheck, ChampSelect, EndOfGame, Lobby roster analysis, friend spectating and every auxiliary-window lifecycle. Mocked LCU tests are not counted as that acceptance.
-- Native window-size/position persistence is implemented and awaits installed-candidate restart validation across the four upstream-equivalent auxiliary windows (Mini, ongoing game, OP.GG and cooldown timer).
+- Real Tencent/WeGame acceptance is still required for the account-affecting ReadyCheck, ChampSelect, InProgress and EndOfGame write operations. The rc.40 connection and event-stream result does not count as acceptance of those writes; mocked LCU tests are not counted as that acceptance.
+- Lobby roster analysis and friend spectating still require a real, explicitly authorized live-state acceptance.
+- Mini close/persistence and the read/display paths for Mini, OP.GG and cooldown have been exercised in rc.40, but that evidence does not establish complete lifecycle parity for every auxiliary window or every game phase.
 - Loot crafting/redeeming remains deliberately excluded because the reviewed upstream handler is incomplete.
 
 ## Shard-to-host traceability matrix
@@ -168,4 +187,4 @@ This is the completion checklist against the authoritative registration list in 
 4. Live assistant: ongoing-game analysis, premade/team insights and phase-specific Mini window.
 5. Optional toolkit: only individually reviewed, clearly labeled and opt-in modules.
 
-The formal release remains blocked until the locally installed release candidate is exercised against ReadyCheck, ChampSelect and EndOfGame on the user's Tencent account.
+The formal release remains blocked: the installed candidate is unsigned, and ReadyCheck, ChampSelect, InProgress and EndOfGame account-affecting write operations have not been live-accepted on the user's Tencent account. No “1:1 complete” claim is authorized by this audit.
