@@ -4197,6 +4197,19 @@ async def league_ongoing_game():
         gameflow = await league_lab_service.request("GET", "/lol-gameflow/v1/session")
         names = await _champion_names()
     except RuntimeError as exc:
+        idle_phases = {"", "None", "Matchmaking", "PreEndOfGame", "WaitingForStats", "EndOfGame"}
+        live_phase = str(league_lab_service.phase or "")
+        if live_phase in idle_phases:
+            return {
+                "phase": live_phase or "None",
+                "query_stage": "idle",
+                "queue": {},
+                "game_id": None,
+                "players": [],
+                "available": False,
+                "show_match_history_item_border": settings.ongoing_show_match_history_item_border,
+                "order_player_by": settings.ongoing_order_player_by,
+            }
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     game_data = (gameflow or {}).get("gameData") or {}
     live_phase = str((gameflow or {}).get("phase") or league_lab_service.phase or "")

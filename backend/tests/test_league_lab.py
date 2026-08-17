@@ -2238,6 +2238,48 @@ def test_ongoing_game_reads_lobby_filters_current_queue_and_sorts(monkeypatch):
     assert any(path == "/lol-lobby/v2/lobby" for _, path, _ in calls)
 
 
+def test_ongoing_game_returns_empty_model_when_idle_session_is_unavailable(monkeypatch):
+    async def request(method, path, *, json_body=None, params=None):
+        assert method == "GET"
+        assert path == "/lol-gameflow/v1/session"
+        raise RuntimeError("LCU request failed: HTTPStatusError")
+
+    settings = LeagueLabSettings(
+        ongoing_show_match_history_item_border=True,
+        ongoing_order_player_by="win-rate",
+    )
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", settings)
+    monkeypatch.setattr(league_lab.league_lab_service, "phase", "None")
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+
+    result = asyncio.run(league_lab.league_ongoing_game())
+
+    assert result == {
+        "phase": "None",
+        "query_stage": "idle",
+        "queue": {},
+        "game_id": None,
+        "players": [],
+        "available": False,
+        "show_match_history_item_border": True,
+        "order_player_by": "win-rate",
+    }
+
+
+def test_ongoing_game_keeps_active_phase_failures_visible(monkeypatch):
+    async def request(method, path, *, json_body=None, params=None):
+        raise RuntimeError("LCU request failed: HTTPStatusError")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", LeagueLabSettings())
+    monkeypatch.setattr(league_lab.league_lab_service, "phase", "ChampSelect")
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+
+    with pytest.raises(league_lab.HTTPException) as exc_info:
+        asyncio.run(league_lab.league_ongoing_game())
+
+    assert exc_info.value.status_code == 409
+
+
 def test_opgg_proxy_uses_fixed_origin_and_cache(monkeypatch):
     calls = []
 
