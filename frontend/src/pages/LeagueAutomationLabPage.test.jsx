@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import LeagueAutomationLabPage from "./LeagueAutomationLabPage";
@@ -83,10 +83,24 @@ describe("LeagueAutomationLabPage", () => {
   it("uses the detailed match card in the current-account history", async () => {
     render(<LeagueAutomationLabPage />);
     await screen.findByText("已连接：Tester");
-    fireEvent.click(screen.getByRole("button", { name: "我的战绩" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "我的战绩" }));
+    });
     await waitFor(() => expect(fetchLeagueMatches).toHaveBeenCalledWith(20));
     expect(await screen.findByRole("button", { name: "展开战绩详情" })).toBeTruthy();
     expect(screen.getByRole("switch", { name: "结算后自动刷新战绩" })).toBeTruthy();
+  });
+
+  it("returns the League page scroll container to the top when switching tabs", async () => {
+    const scrollTo = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollTo", { configurable: true, value: scrollTo });
+    render(<LeagueAutomationLabPage />);
+    await screen.findByText("已连接：Tester");
+    scrollTo.mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: "我的战绩" }));
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "instant" });
   });
 
   it("exposes configurable ongoing-game analysis controls", async () => {
