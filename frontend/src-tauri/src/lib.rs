@@ -25,7 +25,6 @@ use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 use std::os::windows::process::CommandExt;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-type LeagueWindowOpener = fn(AppHandle) -> Result<(), String>;
 
 fn league_window_defaults(kind: &str) -> Option<(&'static str, f64, f64)> {
     match kind {
@@ -38,11 +37,11 @@ fn league_window_defaults(kind: &str) -> Option<(&'static str, f64, f64)> {
 }
 
 #[tauri::command]
-fn open_league_mini(app: AppHandle) -> Result<(), String> {
-    show_league_mini(app, true)
+async fn open_league_mini(app: AppHandle) -> Result<(), String> {
+    show_league_mini(app, true).await
 }
 
-fn show_league_mini(app: AppHandle, request_focus: bool) -> Result<(), String> {
+async fn show_league_mini(app: AppHandle, request_focus: bool) -> Result<(), String> {
     let mini = app.state::<LeagueMiniLifecycle>();
     if request_focus {
         mini.manually_hidden.store(false, Ordering::SeqCst);
@@ -74,7 +73,7 @@ fn show_league_mini(app: AppHandle, request_focus: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn open_league_ongoing(app: AppHandle) -> Result<(), String> {
+async fn open_league_ongoing(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("league-ongoing") {
         window.show().map_err(|error| error.to_string())?;
         window.unminimize().map_err(|error| error.to_string())?;
@@ -102,7 +101,7 @@ fn open_league_ongoing(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn open_league_cd_timer(app: AppHandle) -> Result<(), String> {
+async fn open_league_cd_timer(app: AppHandle) -> Result<(), String> {
     let lifecycle = app.state::<LeagueCdTimerLifecycle>();
     lifecycle.manually_hidden.store(false, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window("league-cd-timer") {
@@ -138,7 +137,7 @@ fn open_league_cd_timer(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn open_league_opgg(app: AppHandle) -> Result<(), String> {
+async fn open_league_opgg(app: AppHandle) -> Result<(), String> {
     let lifecycle = app.state::<LeagueOpggLifecycle>();
     lifecycle.manually_hidden.store(false, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window("league-opgg") {
@@ -165,15 +164,15 @@ fn open_league_opgg(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn toggle_league_aux_window(
+async fn toggle_league_aux_window(
     app: AppHandle,
     kind: String,
     visible: Option<bool>,
 ) -> Result<(), String> {
-    let (label, open): (&str, LeagueWindowOpener) = match kind.as_str() {
-        "ongoing" => ("league-ongoing", open_league_ongoing),
-        "opgg" => ("league-opgg", open_league_opgg),
-        "cooldown" => ("league-cd-timer", open_league_cd_timer),
+    let label = match kind.as_str() {
+        "ongoing" => "league-ongoing",
+        "opgg" => "league-opgg",
+        "cooldown" => "league-cd-timer",
         _ => return Err("unsupported League auxiliary window".to_string()),
     };
     let current_visible = app
@@ -182,7 +181,12 @@ fn toggle_league_aux_window(
         .unwrap_or(false);
     let should_show = visible.unwrap_or(!current_visible);
     if should_show {
-        open(app)
+        match kind.as_str() {
+            "ongoing" => open_league_ongoing(app).await,
+            "opgg" => open_league_opgg(app).await,
+            "cooldown" => open_league_cd_timer(app).await,
+            _ => unreachable!("League auxiliary window kind was validated above"),
+        }
     } else if let Some(window) = app.get_webview_window(label) {
         window.hide().map_err(|error| error.to_string())
     } else {
@@ -252,17 +256,22 @@ fn set_league_content_protection(app: AppHandle, enabled: bool) -> Result<(), St
 }
 
 #[tauri::command]
-fn sync_league_mini(app: AppHandle, should_show: bool, context: String) -> Result<(), String> {
+async fn sync_league_mini(
+    app: AppHandle,
+    should_show: bool,
+    context: String,
+) -> Result<(), String> {
     let mini = app.state::<LeagueMiniLifecycle>();
-    let mut saved_context = mini
-        .context
-        .lock()
-        .map_err(|_| "mini lifecycle lock poisoned".to_string())?;
-    if *saved_context != context {
-        *saved_context = context;
-        mini.manually_hidden.store(false, Ordering::SeqCst);
+    {
+        let mut saved_context = mini
+            .context
+            .lock()
+            .map_err(|_| "mini lifecycle lock poisoned".to_string())?;
+        if *saved_context != context {
+            *saved_context = context;
+            mini.manually_hidden.store(false, Ordering::SeqCst);
+        }
     }
-    drop(saved_context);
     if !should_show {
         if let Some(window) = app.get_webview_window("league-mini") {
             window.hide().map_err(|error| error.to_string())?;
@@ -272,21 +281,26 @@ fn sync_league_mini(app: AppHandle, should_show: bool, context: String) -> Resul
     if mini.manually_hidden.load(Ordering::SeqCst) {
         return Ok(());
     }
-    show_league_mini(app, false)
+    show_league_mini(app, false).await
 }
 
 #[tauri::command]
-fn sync_league_cd_timer(app: AppHandle, should_show: bool, context: String) -> Result<(), String> {
+async fn sync_league_cd_timer(
+    app: AppHandle,
+    should_show: bool,
+    context: String,
+) -> Result<(), String> {
     let lifecycle = app.state::<LeagueCdTimerLifecycle>();
-    let mut saved_context = lifecycle
-        .context
-        .lock()
-        .map_err(|_| "cooldown timer lifecycle lock poisoned".to_string())?;
-    if *saved_context != context {
-        *saved_context = context;
-        lifecycle.manually_hidden.store(false, Ordering::SeqCst);
+    {
+        let mut saved_context = lifecycle
+            .context
+            .lock()
+            .map_err(|_| "cooldown timer lifecycle lock poisoned".to_string())?;
+        if *saved_context != context {
+            *saved_context = context;
+            lifecycle.manually_hidden.store(false, Ordering::SeqCst);
+        }
     }
-    drop(saved_context);
     if !should_show {
         if let Some(window) = app.get_webview_window("league-cd-timer") {
             window.hide().map_err(|error| error.to_string())?;
@@ -296,26 +310,27 @@ fn sync_league_cd_timer(app: AppHandle, should_show: bool, context: String) -> R
     if lifecycle.manually_hidden.load(Ordering::SeqCst) {
         return Ok(());
     }
-    open_league_cd_timer(app)
+    open_league_cd_timer(app).await
 }
 
 #[tauri::command]
-fn sync_league_opgg(
+async fn sync_league_opgg(
     app: AppHandle,
     enabled: bool,
     should_show: bool,
     context: String,
 ) -> Result<(), String> {
     let lifecycle = app.state::<LeagueOpggLifecycle>();
-    let mut saved_context = lifecycle
-        .context
-        .lock()
-        .map_err(|_| "OP.GG lifecycle lock poisoned".to_string())?;
-    if *saved_context != context {
-        *saved_context = context;
-        lifecycle.manually_hidden.store(false, Ordering::SeqCst);
+    {
+        let mut saved_context = lifecycle
+            .context
+            .lock()
+            .map_err(|_| "OP.GG lifecycle lock poisoned".to_string())?;
+        if *saved_context != context {
+            *saved_context = context;
+            lifecycle.manually_hidden.store(false, Ordering::SeqCst);
+        }
     }
-    drop(saved_context);
     // Do not eagerly create this WebView while it should be hidden. Creating a
     // dynamic WebView and immediately hiding it can race its first navigation
     // on Windows, leaving a visible white window during normal lobby startup.
@@ -326,7 +341,7 @@ fn sync_league_opgg(
         return Ok(());
     }
     if !lifecycle.manually_hidden.load(Ordering::SeqCst) {
-        open_league_opgg(app)?;
+        open_league_opgg(app).await?;
     }
     Ok(())
 }
