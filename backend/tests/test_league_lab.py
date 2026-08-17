@@ -331,7 +331,7 @@ def test_select_client_uses_exact_running_pid(monkeypatch):
     assert service.summoner_name == "Selected"
 
 
-def test_detected_client_launcher_uses_argument_array_without_shell(tmp_path, monkeypatch):
+def test_detected_riot_client_launcher_uses_argument_array_without_shell(tmp_path, monkeypatch):
     executable = tmp_path / "RiotClientServices.exe"
     executable.write_bytes(b"fixture")
 
@@ -367,6 +367,41 @@ def test_detected_client_launcher_uses_argument_array_without_shell(tmp_path, mo
         "--launch-patchline=live",
     ]
     assert "shell" not in captured["kwargs"]
+
+
+def test_detected_tencent_client_launcher_uses_detached_windows_shell(tmp_path, monkeypatch):
+    executable = tmp_path / "Tencent League" / "Launcher" / "Client.exe"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"fixture")
+
+    async def installations():
+        return {
+            "tcls": {
+                "kind": "tcls",
+                "label": "Tencent TCLS",
+                "path": str(executable),
+                "args": [],
+            }
+        }
+
+    captured = {}
+
+    class FakeProcess:
+        def poll(self):
+            return None
+
+    def popen(args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return FakeProcess()
+
+    monkeypatch.setattr(league_lab, "detect_client_installations", installations)
+    monkeypatch.setattr(league_lab.subprocess, "Popen", popen)
+    result = asyncio.run(league_lab.launch_detected_client("tcls"))
+
+    assert result == {"started": True, "kind": "tcls", "label": "Tencent TCLS"}
+    assert captured["args"] == subprocess.list2cmdline([str(executable.resolve())])
+    assert captured["kwargs"]["shell"] is True
 
 
 def test_replay_download_prepares_metadata_then_starts_rofl_download(monkeypatch):

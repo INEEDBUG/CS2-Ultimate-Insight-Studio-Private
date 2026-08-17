@@ -669,15 +669,29 @@ async def launch_detected_client(kind: str) -> dict:
 
     def launch() -> None:
         creation_flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        process = subprocess.Popen(
-            [executable, *(target.get("args") or [])],
-            cwd=str(Path(executable).parent),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-            creationflags=creation_flags,
-        )
+        command = [executable, *(target.get("args") or [])]
+        popen_options = {
+            "cwd": str(Path(executable).parent),
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "close_fds": True,
+            "creationflags": creation_flags,
+        }
+        # Tencent's TCLS and WeGame launchers are shell entry points rather
+        # than ordinary long-running executables. LeagueAkari intentionally
+        # starts these three surfaces through a detached Windows shell; a
+        # direct CreateProcess call can return successfully without leaving a
+        # client process behind. RiotClientServices remains an argument-array
+        # launch so its fixed product flags never pass through a shell.
+        if kind in {"tcls", "wegame-lol", "wegame"}:
+            process = subprocess.Popen(
+                subprocess.list2cmdline(command),
+                shell=True,
+                **popen_options,
+            )
+        else:
+            process = subprocess.Popen(command, **popen_options)
         process.poll()
 
     try:
