@@ -1,14 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LeagueDetailedMatchCard from "./LeagueDetailedMatchCard";
-import { fetchLeagueLoadoutCatalog, fetchLeagueMatchDetails, fetchLeagueReplay } from "../../api/leagueLabApi";
+import { fetchLeagueLoadoutCatalog, fetchLeagueMatchDetails } from "../../api/leagueLabApi";
 
 vi.mock("../../api/leagueLabApi", () => ({
   deleteLeaguePlayerEncounter: vi.fn(),
   downloadLeagueReplay: vi.fn(),
   fetchLeagueLoadoutCatalog: vi.fn(),
   fetchLeagueMatchDetails: vi.fn(),
-  fetchLeagueReplay: vi.fn(),
   watchLeagueReplay: vi.fn(),
 }));
 
@@ -41,7 +40,6 @@ const match = {
 describe("LeagueDetailedMatchCard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    fetchLeagueReplay.mockResolvedValue({ enabled: false });
     fetchLeagueMatchDetails.mockResolvedValue({
       source: "sgp", map_id: 11, frame_count: 2, event_count: 5,
       participants: [{ participant_id: 1, team_id: 100, game_name: "自己" }, { participant_id: 6, team_id: 200, game_name: "对手" }],
@@ -75,6 +73,10 @@ describe("LeagueDetailedMatchCard", () => {
     render(<LeagueDetailedMatchCard match={{ ...match, participants: [match.participants[0]] }} />);
     expect(screen.getByText("参团").parentElement.textContent).toContain("—");
     expect(screen.getByText("伤害占比").parentElement.textContent).toContain("—");
+    fireEvent.click(screen.getByRole("button", { name: "展开战绩详情" }));
+    expect(screen.queryByText("180%")).toBeNull();
+    expect(screen.queryByText("100%")).toBeNull();
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(4);
   });
 
   it("loads timeline details only when that tab is opened", async () => {

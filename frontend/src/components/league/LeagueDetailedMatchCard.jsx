@@ -60,6 +60,7 @@ function Loadout({ player, compact = false }) {
 }
 
 function TeamTable({ players, targetPuuid, streamerMode, useAliases, onOpenPlayer }) {
+  const hasTeamContext = players.length > 1;
   const teamKills = players.reduce((sum, player) => sum + Number(player.kills || 0), 0);
   const teamDamage = players.reduce((sum, player) => sum + Number(player.damage || 0), 0);
   return <div className="overflow-x-auto rounded-xl border border-cs2-border-subtle">
@@ -68,16 +69,16 @@ function TeamTable({ players, targetPuuid, streamerMode, useAliases, onOpenPlaye
     </div>
     {players.map((player, index) => {
       const highlighted = player.puuid && player.puuid === targetPuuid;
-      const kp = teamKills ? Math.round((Number(player.kills || 0) + Number(player.assists || 0)) / teamKills * 100) : 0;
-      const damageShare = teamDamage ? Math.round(Number(player.damage || 0) / teamDamage * 100) : 0;
+      const kp = hasTeamContext && teamKills ? Math.round((Number(player.kills || 0) + Number(player.assists || 0)) / teamKills * 100) : null;
+      const damageShare = hasTeamContext && teamDamage ? Math.round(Number(player.damage || 0) / teamDamage * 100) : null;
       return <div key={player.puuid || player.participant_id || index} className={`grid grid-cols-[minmax(180px,1fr)_100px_72px_72px_88px_minmax(110px,auto)] items-center gap-2 border-b border-cs2-border-subtle px-3 py-2 text-xs last:border-b-0 ${highlighted ? "bg-cyan-400/[.08]" : ""}`}>
         <button type="button" disabled={!player.puuid} onClick={() => player.puuid && onOpenPlayer?.(player.puuid)} className="flex min-w-0 items-center gap-2 text-left disabled:cursor-default">
           <Icon src={getLeagueChampionIconUrl(player.champion_id)} title={player.champion_name} className="h-8 w-8" />
           <span className="min-w-0"><b className="block truncate">{playerName(player, index, streamerMode, useAliases)}</b><span className="text-[10px] text-cs2-text-muted">{player.position || player.role || player.champion_name}</span></span>
         </button>
         <span className="text-center font-mono font-bold"><span>{player.kills || 0}</span><span className="text-cs2-text-muted"> / </span><span className="text-rose-300">{player.deaths || 0}</span><span className="text-cs2-text-muted"> / </span><span>{player.assists || 0}</span></span>
-        <span className="text-right font-mono">{kp}%</span>
-        <span className="text-right"><b>{formatNumber(player.damage)}</b><small className="block text-[9px] text-cs2-text-muted">{damageShare}%</small></span>
+        <span className="text-right font-mono">{kp == null ? "—" : `${kp}%`}</span>
+        <span className="text-right"><b>{formatNumber(player.damage)}</b><small className="block text-[9px] text-cs2-text-muted">{damageShare == null ? "—" : `${damageShare}%`}</small></span>
         <span className="text-right"><b>{formatNumber(player.cs)}</b><small className="block text-[9px] text-cs2-text-muted">{formatNumber(player.gold)}g</small></span>
         <Loadout player={player} compact />
       </div>;
