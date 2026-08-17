@@ -658,6 +658,34 @@ async def detect_client_installations() -> dict[str, dict]:
     return await asyncio.to_thread(_detect_client_installations_sync)
 
 
+def _shell_execute_windows(executable: str, args: list[str]) -> None:
+    """Launch a Windows shell entry point and fail on ShellExecute error codes."""
+    if os.name != "nt":
+        raise OSError("Windows shell launch is unavailable on this platform")
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    shell32.ShellExecuteW.argtypes = [
+        wintypes.HWND,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        wintypes.LPCWSTR,
+        ctypes.c_int,
+    ]
+    shell32.ShellExecuteW.restype = wintypes.HINSTANCE
+    parameters = subprocess.list2cmdline(args) if args else None
+    result = shell32.ShellExecuteW(
+        None,
+        "open",
+        executable,
+        parameters,
+        str(Path(executable).parent),
+        1,
+    )
+    result_value = ctypes.cast(result, ctypes.c_void_p).value or 0
+    if result_value <= 32:
+        raise OSError(f"ShellExecuteW failed with code {result_value}")
+
+
 async def launch_detected_client(kind: str) -> dict:
     installations = await detect_client_installations()
     target = installations.get(kind)
@@ -668,8 +696,16 @@ async def launch_detected_client(kind: str) -> dict:
         raise RuntimeError("客户端安装路径已失效，请重新检测")
 
     def launch() -> None:
-        creation_flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         command = [executable, *(target.get("args") or [])]
+        # Tencent's TCLS and WeGame executables are Windows shell entry points.
+        # Direct CreateProcess and detached cmd launches can both return success
+        # while the login program never appears; ShellExecuteW is the same
+        # launch path that Windows Explorer and Start-Process use successfully.
+        if kind in {"tcls", "wegame-lol", "wegame"}:
+            _shell_execute_windows(executable, list(target.get("args") or []))
+            return
+
+        creation_flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         popen_options = {
             "cwd": str(Path(executable).parent),
             "stdin": subprocess.DEVNULL,
@@ -678,20 +714,9 @@ async def launch_detected_client(kind: str) -> dict:
             "close_fds": True,
             "creationflags": creation_flags,
         }
-        # Tencent's TCLS and WeGame launchers are shell entry points rather
-        # than ordinary long-running executables. LeagueAkari intentionally
-        # starts these three surfaces through a detached Windows shell; a
-        # direct CreateProcess call can return successfully without leaving a
-        # client process behind. RiotClientServices remains an argument-array
-        # launch so its fixed product flags never pass through a shell.
-        if kind in {"tcls", "wegame-lol", "wegame"}:
-            process = subprocess.Popen(
-                subprocess.list2cmdline(command),
-                shell=True,
-                **popen_options,
-            )
-        else:
-            process = subprocess.Popen(command, **popen_options)
+        # RiotClientServices remains an argument-array launch so its fixed
+        # product flags never pass through a shell.
+        process = subprocess.Popen(command, **popen_options)
         process.poll()
 
     try:

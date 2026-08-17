@@ -369,7 +369,7 @@ def test_detected_riot_client_launcher_uses_argument_array_without_shell(tmp_pat
     assert "shell" not in captured["kwargs"]
 
 
-def test_detected_tencent_client_launcher_uses_detached_windows_shell(tmp_path, monkeypatch):
+def test_detected_tencent_client_launcher_uses_windows_shell_execute(tmp_path, monkeypatch):
     executable = tmp_path / "Tencent League" / "Launcher" / "Client.exe"
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b"fixture")
@@ -386,22 +386,16 @@ def test_detected_tencent_client_launcher_uses_detached_windows_shell(tmp_path, 
 
     captured = {}
 
-    class FakeProcess:
-        def poll(self):
-            return None
-
-    def popen(args, **kwargs):
+    def shell_execute(path, args):
+        captured["path"] = path
         captured["args"] = args
-        captured["kwargs"] = kwargs
-        return FakeProcess()
 
     monkeypatch.setattr(league_lab, "detect_client_installations", installations)
-    monkeypatch.setattr(league_lab.subprocess, "Popen", popen)
+    monkeypatch.setattr(league_lab, "_shell_execute_windows", shell_execute)
     result = asyncio.run(league_lab.launch_detected_client("tcls"))
 
     assert result == {"started": True, "kind": "tcls", "label": "Tencent TCLS"}
-    assert captured["args"] == subprocess.list2cmdline([str(executable.resolve())])
-    assert captured["kwargs"]["shell"] is True
+    assert captured == {"path": str(executable.resolve()), "args": []}
 
 
 def test_replay_download_prepares_metadata_then_starts_rofl_download(monkeypatch):
