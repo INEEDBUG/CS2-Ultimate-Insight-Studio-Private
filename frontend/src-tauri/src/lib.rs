@@ -211,6 +211,16 @@ fn reset_league_window_position(app: AppHandle, kind: String) -> Result<(), Stri
     Ok(())
 }
 
+fn save_league_window_state_best_effort(app: &AppHandle) {
+    let _ = app.save_window_state(StateFlags::POSITION | StateFlags::SIZE);
+}
+
+#[tauri::command]
+fn persist_desktop_window_state(app: AppHandle) -> Result<(), String> {
+    app.save_window_state(StateFlags::POSITION | StateFlags::SIZE)
+        .map_err(|error| error.to_string())
+}
+
 #[derive(Default)]
 struct LeagueMiniLifecycle {
     manually_hidden: AtomicBool,
@@ -864,6 +874,7 @@ pub fn run() {
             open_league_opgg,
             toggle_league_aux_window,
             reset_league_window_position,
+            persist_desktop_window_state,
             sync_league_mini,
             sync_league_cd_timer,
             sync_league_opgg,
@@ -953,6 +964,7 @@ pub fn run() {
             if let Some(window) = handle.get_webview_window(&label) {
                 let _ = window.hide();
             }
+            save_league_window_state_best_effort(handle);
         }
         RunEvent::WindowEvent {
             label,
@@ -965,6 +977,7 @@ pub fn run() {
             if let Some(window) = handle.get_webview_window(&label) {
                 let _ = window.hide();
             }
+            save_league_window_state_best_effort(handle);
         }
         RunEvent::WindowEvent {
             label,
@@ -977,6 +990,14 @@ pub fn run() {
             if let Some(window) = handle.get_webview_window(&label) {
                 let _ = window.hide();
             }
+            save_league_window_state_best_effort(handle);
+        }
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { .. },
+            ..
+        } if label == "league-ongoing" => {
+            save_league_window_state_best_effort(handle);
         }
         RunEvent::ExitRequested { code, api, .. } => {
             // The last window closing must not tear down the process while the

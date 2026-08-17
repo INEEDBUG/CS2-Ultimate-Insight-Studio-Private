@@ -1,5 +1,6 @@
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { invoke } from "@tauri-apps/api/core";
 
 /** Tauri 桌面壳注入 IPC 对象；浏览器 / Vite dev 页面无此对象。 */
 export function isTauriDesktop() {
@@ -143,6 +144,7 @@ export function createDesktopUpdateCheck(
 
     emit({ status: "installing", ...base });
     try {
+      await invoke("persist_desktop_window_state");
       await update.install();
       // Windows 上 install() 成功启动 NSIS 后，Tauri updater 会直接退出当前进程。
       // 其他平台或测试环境若返回，则显式重启以载入新版本。
