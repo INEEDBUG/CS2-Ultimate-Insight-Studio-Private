@@ -26,7 +26,7 @@ This document prevents the League integration from becoming a collection of unre
 | 战绩读取 | 成功读取 20 场当前账号战绩 | 仅按本轮真实账号结果记录 |
 | Tencent current-player-only 摘要 | 在缺少全队上下文时不再伪造参团率和伤害占比，界面显示 `—` | 不推断缺失的队伍统计 |
 | 空闲进行中对局 | `available: false`，`query_stage: idle` | 只验证无对局时的只读状态 |
-| 账号写入安全开关 | 总账号写入开关及 ARAM pick 子开关均为关闭 | 未开启任何自动接受、选人、配置、点赞或其他写操作 |
+| 账号写入安全开关 | 手动账号写入共享默认关闭的 toolkit gate；自动写入共享 automation master + feature gate | 未开启任何自动接受、选人、配置、点赞或其他写操作 |
 | 辅助窗口 | Mini、OP.GG、cooldown 窗口的读取/显示路径已验证 | 本轮不宣称所有窗口和所有游戏阶段均已验收 |
 | Mini 窗口持久化 | Mini 关闭后立即落盘，强制重启后可恢复 | 仅记录已验证的 Mini 几何/可见性行为 |
 | 更新器 | 更新安装前显式落盘已验证 | 不等于已完成签名发布或无需用户确认的正式升级策略 |
@@ -60,7 +60,7 @@ This document prevents the League integration from becoming a collection of unre
 - Riot ID (`game name#tag`) cross-player lookup through the local LCU alias endpoint, paginated match history and durable recently encountered player indexing.
 - Live-game recent-form and current-champion usage summaries, plus LeagueAkari-style premade inference from repeated same-team match history.
 - Client toolkit overview plus LeagueAkari-equivalent mission (`SELECT_REWARDS`), reward-grant (`PENDING_SELECTION`) and Event Hub claim flows, and selected-friend deletion. The implementation re-reads live LCU state immediately before every write, never preselects or randomly chooses a reward, requires a default-off account-write master switch and exact confirmation phrase, and deletes only explicitly selected friend IDs.
-- LeagueAkari client/lobby/profile toolkit parity: eligible/unavailable queue discovery, revalidated queue-lobby creation, explicit lobby leave, Strawberry champion slot/map/difficulty controls, profile background skin/augment selection, banner accent, prestige-crest removal, challenge-token clearing and account-scope emote clearing. Every account write shares the default-off toolkit gate, exact confirmation phrase and live catalog/lobby revalidation.
+- LeagueAkari client/lobby/profile toolkit parity: eligible/unavailable queue discovery, revalidated queue-lobby creation, explicit lobby leave, Strawberry champion slot/map/difficulty controls, profile background skin/augment selection, banner accent, prestige-crest removal, challenge-token clearing and account-scope emote clearing. Manual account writes share the default-off toolkit gate (and the applicable exact confirmation/live revalidation); automatic writes use the automation master plus their individual feature gate.
 - Friend-tool parity: grouped/searchable Riot IDs, selected-only deletion, background enrichment of last-match and friendship-start dates through LCU/SGP, and one-click routing into the integrated player center. Date enrichment is read-only and intentionally does not delay the toolkit overview.
 - Multi-client/startup parity: every readable `LeagueClientUx` process is enumerated with account, region and phase metadata; the user can bind the lab to an exact PID without exposing credentials. Tencent TCLS, the per-installation WeGame launcher, standalone WeGame and Riot Client are detected using LeagueAkari-compatible registry/file rules and are launched only from an explicit user click.
 - Match-replay parity: current and searched-player match cards read LCU replay availability, create the required version/queue/game-end metadata, show live `.rofl` download progress and hand a completed replay back to League for playback. Download and playback are always explicit button actions.
@@ -134,6 +134,9 @@ This table is stricter than the shard matrix below: a backend capability is not 
 
 ### Explicit remaining gaps
 
+- The current parity candidate adds a normalized `auto_select` evidence contract covering the ten upstream move types, delayed plans, expected pick/ban/swap candidates, trades and actionability. Mini now exposes ReadyCheck, matchmaking, auto-select plans and manual champion-swap decisions; manual account writes remain behind the default-off toolkit gate while automatic writes require the master switch, feature switch, enabled profile and a fresh compatible phase.
+- Game ID preview now loads summary data first and fetches full details only on demand, reusing the detailed match card. Ongoing-game player cards and the player center now expose expandable recent matches, richer metrics/tags and dedicated overview/history/mastery/challenge/encounter views without fabricating unavailable values.
+- Candidate verification for this batch: backend `895 passed`, frontend `743 passed`, Tauri library `3 passed`, and the frontend production build completed successfully. These are offline/code-level results only and do not replace live Tencent state-machine acceptance.
 - Real Tencent/WeGame acceptance is still required for the account-affecting ReadyCheck, ChampSelect, InProgress and EndOfGame write operations. The rc.40 connection and event-stream result does not count as acceptance of those writes; mocked LCU tests are not counted as that acceptance.
 - Lobby roster analysis and friend spectating still require a real, explicitly authorized live-state acceptance.
 - Mini close/persistence and the read/display paths for Mini, OP.GG and cooldown have been exercised in rc.40, but that evidence does not establish complete lifecycle parity for every auxiliary window or every game phase.

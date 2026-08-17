@@ -1,49 +1,142 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LeagueInGamePresetTools from "./LeagueInGamePresetTools";
-import { sendLeagueInGamePreset } from "../../api/leagueLabApi";
+import {
+  cancelLeagueInGameSend,
+  fetchLeagueLabStatus,
+  fetchLeagueOngoingGame,
+  sendLeagueInGameLines,
+  sendLeagueInGamePreset,
+} from "../../api/leagueLabApi";
 
-vi.mock("../../api/leagueLabApi", () => ({ sendLeagueInGamePreset: vi.fn() }));
+vi.mock("../../api/leagueLabApi", () => ({
+  cancelLeagueInGameSend: vi.fn(),
+  fetchLeagueLabStatus: vi.fn(),
+  fetchLeagueOngoingGame: vi.fn(),
+  sendLeagueInGameLines: vi.fn(),
+  sendLeagueInGamePreset: vi.fn(),
+}));
 
-const baseSettings={
-  toolkit_account_actions_enabled:false,
-  in_game_send_enabled:false,
-  in_game_send_interval_ms:250,
-  in_game_fixed_presets:[{id:"hello",title:"问候",shortcut:"Ctrl+Alt+H",content:"你好"}],
+const baseSettings = {
+  toolkit_account_actions_enabled: false,
+  in_game_send_enabled: false,
+  in_game_send_interval_ms: 250,
+  in_game_fixed_presets: [{ id: "hello", title: "问候", shortcut: "Ctrl+Alt+H", content: "你好" }],
 };
 
-describe("LeagueInGamePresetTools",()=>{
-  beforeEach(()=>{vi.clearAllMocks();window.prompt=vi.fn();window.confirm=vi.fn();});
+const renderTools = (settings = baseSettings, overrides = {}) => render(
+  <LeagueInGamePresetTools
+    settings={settings}
+    busy={false}
+    onSettingsUpdate={vi.fn()}
+    onBusyChange={vi.fn()}
+    onError={vi.fn()}
+    {...overrides}
+  />,
+);
 
-  it("keeps the send action disabled while either safety switch is off",()=>{
-    render(<LeagueInGamePresetTools settings={baseSettings} busy={false} onSettingsUpdate={vi.fn()} onBusyChange={vi.fn()} onError={vi.fn()}/>);
-    expect(screen.getByRole("button",{name:"发送 问候"}).disabled).toBe(true);
+describe("LeagueInGamePresetTools", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.prompt = vi.fn();
+    window.confirm = vi.fn();
+    window.localStorage.clear();
   });
 
-  it("requires the exact phrase before manually sending the selected preset",async()=>{
-    sendLeagueInGamePreset.mockResolvedValue({sent:true});
+  it("keeps the send action disabled while either safety switch is off", () => {
+    renderTools();
+    fireEvent.click(screen.getByRole("tab", { name: "固定文字" }));
+    expect(screen.getByRole("button", { name: "发送 问候" }).disabled).toBe(true);
+  });
+
+  it("requires the exact phrase before manually sending the selected preset", async () => {
+    sendLeagueInGamePreset.mockResolvedValue({ sent: true });
     window.prompt.mockReturnValueOnce("错误").mockReturnValueOnce("我确认发送");
-    const props={settings:{...baseSettings,toolkit_account_actions_enabled:true,in_game_send_enabled:true},busy:false,onSettingsUpdate:vi.fn(),onBusyChange:vi.fn(),onError:vi.fn()};
-    render(<LeagueInGamePresetTools {...props}/>);
-    fireEvent.click(screen.getByRole("button",{name:"发送 问候"}));
+    const settings = { ...baseSettings, toolkit_account_actions_enabled: true, in_game_send_enabled: true };
+    renderTools(settings);
+    fireEvent.click(screen.getByRole("tab", { name: "固定文字" }));
+    fireEvent.click(screen.getByRole("button", { name: "发送 问候" }));
     expect(sendLeagueInGamePreset).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button",{name:"发送 问候"}));
-    await waitFor(()=>expect(sendLeagueInGamePreset).toHaveBeenCalledWith("hello","manual","我确认发送"));
+    fireEvent.click(screen.getByRole("button", { name: "发送 问候" }));
+    await waitFor(() => expect(sendLeagueInGamePreset).toHaveBeenCalledWith("hello", "manual", "我确认发送"));
   });
 
-  it("persists fixed presets in the user-selected order",async()=>{
-    const onSettingsUpdate=vi.fn().mockResolvedValue({});
-    const settings={...baseSettings,toolkit_account_actions_enabled:true,in_game_fixed_presets:[
-      {id:"first",title:"第一条",shortcut:null,content:"一"},
-      {id:"second",title:"第二条",shortcut:null,content:"二"},
-    ]};
-    render(<LeagueInGamePresetTools settings={settings} busy={false} onSettingsUpdate={onSettingsUpdate} onBusyChange={vi.fn()} onError={vi.fn()}/>);
-
-    fireEvent.click(screen.getByRole("button",{name:"上移 第二条"}));
-
-    await waitFor(()=>expect(onSettingsUpdate).toHaveBeenCalledWith({in_game_fixed_presets:[
+  it("persists fixed presets in the user-selected order", async () => {
+    const onSettingsUpdate = vi.fn().mockResolvedValue({});
+    const settings = {
+      ...baseSettings,
+      toolkit_account_actions_enabled: true,
+      in_game_fixed_presets: [
+        { id: "first", title: "第一条", shortcut: null, content: "一" },
+        { id: "second", title: "第二条", shortcut: null, content: "二" },
+      ],
+    };
+    renderTools(settings, { onSettingsUpdate });
+    fireEvent.click(screen.getByRole("tab", { name: "固定文字" }));
+    fireEvent.click(screen.getByRole("button", { name: "上移 第二条" }));
+    await waitFor(() => expect(onSettingsUpdate).toHaveBeenCalledWith({ in_game_fixed_presets: [
       settings.in_game_fixed_presets[1],
       settings.in_game_fixed_presets[0],
-    ]}));
+    ] }));
+  });
+
+  it("starts with all generated display metrics disabled and exposes four preset tabs", () => {
+    renderTools();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Rating", "打野画像", "组排关系", "固定文字"]);
+    expect(screen.getByRole("tab", { name: "Rating" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("checkbox", { name: "胜率" }).checked).toBe(false);
+    expect(screen.getByRole("checkbox", { name: "显示当前英雄" }).checked).toBe(false);
+  });
+
+  it("loads players on demand, supports manual target selection, and previews only selected payload data", async () => {
+    fetchLeagueOngoingGame.mockResolvedValue({ players: [
+      { puuid: "alice-puuid", team: 100, summoner: { gameName: "Alice" }, champion_name: "Ahri", recent: { matches: 4, wins: 3, average_kda: 2.5 } },
+      { puuid: "bob-puuid", team: 200, summoner: { gameName: "Bob" }, champion_name: "Braum", recent: { matches: 4, wins: 1, average_kda: 0.8 } },
+    ] });
+    fetchLeagueLabStatus.mockResolvedValue({ current_summoner: { puuid: "alice-puuid" } });
+    renderTools();
+
+    expect(fetchLeagueOngoingGame).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "读取当前玩家" }));
+    await waitFor(() => expect(fetchLeagueOngoingGame).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByRole("combobox", { name: "Rating目标范围" }), { target: { value: "selected" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 Alice" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "胜率" }));
+    fireEvent.click(screen.getByRole("button", { name: "生成预览" }));
+
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Rating生成预览" }).value).toContain("Alice：胜率 75%"));
+    expect(screen.getByRole("textbox", { name: "Rating生成预览" }).value).not.toContain("Bob");
+  });
+
+  it("sends the generated preview only after the exact confirmation and can cancel an active send", async () => {
+    fetchLeagueOngoingGame.mockResolvedValue({ players: [
+      { puuid: "alice-puuid", team: 100, summoner: { gameName: "Alice" }, recent: { matches: 2, wins: 2, average_kda: 1.5 } },
+    ] });
+    fetchLeagueLabStatus.mockResolvedValue({ current_summoner: { puuid: "alice-puuid" } });
+    sendLeagueInGameLines.mockResolvedValue({ sent: true });
+    cancelLeagueInGameSend.mockResolvedValue({ cancelled: true });
+    window.prompt.mockReturnValue("我确认发送");
+    const settings = { ...baseSettings, toolkit_account_actions_enabled: true, in_game_send_enabled: true };
+    renderTools(settings);
+    fireEvent.click(screen.getByRole("button", { name: "读取当前玩家" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "生成预览" }).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("checkbox", { name: "胜率" }));
+    fireEvent.click(screen.getByRole("button", { name: "生成预览" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Rating生成预览" }).value).toContain("Alice"));
+    fireEvent.click(screen.getByRole("button", { name: "发送预览" }));
+    await waitFor(() => expect(sendLeagueInGameLines).toHaveBeenCalledWith(["Alice：胜率 100%"], "我确认发送", "manual", "rating", "all"));
+    fireEvent.click(screen.getByRole("button", { name: "取消发送", exact: true }));
+    await waitFor(() => expect(cancelLeagueInGameSend).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps an empty premade preview when the payload has no premade grouping", async () => {
+    fetchLeagueOngoingGame.mockResolvedValue({ players: [{ puuid: "solo", team: 100, summoner: { gameName: "Solo" } }] });
+    fetchLeagueLabStatus.mockResolvedValue({ current_summoner: { puuid: "solo" } });
+    renderTools();
+    fireEvent.click(screen.getByRole("tab", { name: "组排关系" }));
+    fireEvent.click(screen.getByRole("button", { name: "读取当前玩家" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "生成预览" }).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "生成预览" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "组排关系生成预览" }).value).toBe(""));
   });
 });

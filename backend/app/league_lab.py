@@ -273,11 +273,13 @@ class OpggRuneApply(BaseModel):
     primary_rune_ids: list[int] = Field(min_length=1, max_length=8)
     secondary_rune_ids: list[int] = Field(default_factory=list, max_length=4)
     stat_mod_ids: list[int] = Field(default_factory=list, max_length=4)
+    source: Literal["manual", "automation"] = "manual"
 
 
 class OpggSpellApply(BaseModel):
     spell_ids: list[int] = Field(min_length=2, max_length=2)
     flash_position: Literal["auto", "d", "f"] = "auto"
+    source: Literal["manual", "automation"] = "manual"
 
 
 class OpggItemGroup(BaseModel):
@@ -294,6 +296,7 @@ class OpggItemSetApply(BaseModel):
     tier: str = Field(default="all", max_length=24)
     version: str = Field(default="", max_length=24)
     groups: list[OpggItemGroup] = Field(min_length=1, max_length=24)
+    source: Literal["manual", "automation"] = "manual"
 
 
 class GameSettingsFileModeUpdate(BaseModel):
@@ -349,6 +352,10 @@ class SearchHistoryPinBody(BaseModel):
 
 class ChampSelectDodgeRequest(BaseModel):
     confirmation: Literal["我确认秒退"]
+
+
+class TerminateGameClientRequest(BaseModel):
+    confirmation: Literal["我确认结束游戏"]
 
 
 class AutoSelectTemporaryDisableBody(BaseModel):
@@ -883,6 +890,10 @@ class LeagueLabService:
         self._handled_invitations: set[str] = set()
         self._handled_champion_actions: set[str] = set()
         self._champion_action_due_at: dict[str, float] = {}
+        # Delayed auto-select work is kept as a read-only, JSON-safe plan.  It
+        # mirrors LeagueAkari's delayed task state without making the status
+        # endpoint responsible for (or capable of) executing an LCU write.
+        self._delayed_action_plan: dict[str, dict] = {}
         self._handled_trades: set[str] = set()
         self._bench_candidate_since: dict[int, float] = {}
         self.auto_select_temporarily_disabled = False
@@ -896,6 +907,13 @@ class LeagueLabService:
         self._chat_ready_since: float | None = None
         self._chat_ready_automation_done = False
         self.champ_select: dict = {}
+        # Read-only lifecycle snapshots used by the status surface.  These are
+        # intentionally kept separate from the action scheduler so that a
+        # missing optional LCU endpoint cannot create or trigger an account
+        # write.
+        self.ready_check: dict | None = None
+        self.matchmaking_search: dict | None = None
+        self.ongoing_champion_swap: dict | None = None
         self.respawn_timer: dict = {"available": False, "dead": False, "time_left": 0.0, "total_time": 0.0}
         self._last_discovery_at = 0.0
         self._selected_client_pid = 0
@@ -922,6 +940,7 @@ class LeagueLabService:
             self._accept_due_at = None
             self._handled_champion_actions.clear()
             self._champion_action_due_at.clear()
+            self._delayed_action_plan.clear()
             self._configured_champion_id = 0
             self.champ_select = {}
         return settings
@@ -978,8 +997,18 @@ class LeagueLabService:
             self._phase_action_due_at = None
             self._accept_due_at = None
             self._champion_action_due_at.clear()
+            self._delayed_action_plan.clear()
+            self._handled_champion_actions.clear()
+            self._handled_trades.clear()
+            self._bench_candidate_since.clear()
             self._matchmaking_due_at = None
             self._matchmaking_status = "idle"
+            self.ready_check = None
+            self.matchmaking_search = None
+            self.ongoing_champion_swap = None
+            if self.phase != "ChampSelect":
+                self.champ_select = {}
+                self.auto_select_temporarily_disabled = False
             self._reset_chat_ready_automation()
             if credentials:
                 self._event_task = asyncio.create_task(self._run_event_stream(credentials), name="league-lcu-events")
@@ -1181,6 +1210,22 @@ class LeagueLabService:
         credentials = self.credentials
         client_window_detected = _league_client_window_is_present()
         now_mono = time.monotonic()
+
+        def public_due(kind: str, label: str, due_at: float | None, *, action_id: str | None = None) -> dict | None:
+            """Expose a monotonic scheduler deadline without leaking its clock."""
+            if due_at is None or due_at == float("inf"):
+                return None
+            remaining = max(0.0, due_at - now_mono)
+            payload = {
+                "kind": kind,
+                "label": label,
+                "due_at": time.time() + remaining,
+                "remaining_seconds": round(remaining, 2),
+            }
+            if action_id:
+                payload["action_id"] = action_id
+            return payload
+
         countdowns: list[tuple[str, str, float]] = []
         if self._accept_due_at is not None and self._accept_due_at != float("inf"):
             countdowns.append(("ready-check", "自动接受对局", self._accept_due_at))
@@ -1205,6 +1250,130 @@ class LeagueLabService:
                 "due_at": time.time() + max(0.0, due_at - now_mono),
                 "remaining_seconds": round(max(0.0, due_at - now_mono), 2),
             }
+
+        phase_due = None
+        if self._phase_action_due_at is not None and not self._phase_action_done and phase_action_enabled:
+            phase_label = "自动重连" if self.phase == "Reconnect" else "自动返回房间"
+            phase_due = public_due("phase-action", phase_label, self._phase_action_due_at)
+        champion_due = [
+            item
+            for action_id, due_at in sorted(self._champion_action_due_at.items())
+            if (item := public_due("champion-action", "自动选择 / 禁用英雄", due_at, action_id=action_id)) is not None
+        ]
+        for item in champion_due:
+            metadata = self._delayed_action_plan.get(str(item.get("action_id")))
+            if metadata:
+                item.update({key: value for key, value in metadata.items() if key not in {"due_at", "remaining_seconds"}})
+                item["kind"] = "champion-action"
+                item["label"] = "自动选择 / 禁用英雄"
+        # Preserve the original ``champion_due`` shape while enriching it with
+        # LeagueAkari-style move/action metadata.  Bench swaps and champion
+        # trades live in the same public delayed plan so the UI can explain a
+        # pending operation without guessing from the countdown label.
+        delayed_action_plan: list[dict] = []
+        for action_id, due_at in sorted(self._champion_action_due_at.items()):
+            entry = dict(self._delayed_action_plan.get(action_id) or {})
+            entry.setdefault("kind", "champion-action")
+            entry.setdefault("label", "自动选择 / 禁用英雄")
+            entry.setdefault("action_id", action_id)
+            entry["due_at"] = time.time() + max(0.0, due_at - now_mono)
+            entry["remaining_seconds"] = round(max(0.0, due_at - now_mono), 2)
+            delayed_action_plan.append(entry)
+        for action_id, entry in sorted(self._delayed_action_plan.items()):
+            if action_id in self._champion_action_due_at:
+                continue
+            due_at = entry.get("due_at")
+            if not isinstance(due_at, (int, float)):
+                delayed_action_plan.append(dict(entry))
+                continue
+            public_entry = dict(entry)
+            public_entry["due_at"] = time.time() + max(0.0, float(due_at) - now_mono)
+            public_entry["remaining_seconds"] = round(max(0.0, float(due_at) - now_mono), 2)
+            delayed_action_plan.append(public_entry)
+
+        champ_state = self.champ_select if isinstance(self.champ_select, dict) else {}
+        current_pickable = list(champ_state.get("current_pickable_champion_ids") or [])
+        current_bannable = list(champ_state.get("current_bannable_champion_ids") or [])
+        pickable_available = bool(champ_state.get("current_pickable_ids_available"))
+        bannable_available = bool(champ_state.get("current_bannable_ids_available"))
+        default_profile = self.settings.auto_select_profiles.get("default") or AutoSelectProfile()
+        local_cell = champ_state.get("local_player_cell_id")
+        local_member = next(
+            (
+                member
+                for member in (champ_state.get("my_team") or [])
+                if str(member.get("cell_id")) == str(local_cell)
+            ),
+            {},
+        )
+        position = str(local_member.get("assigned_position") or "default")
+        pick_candidates = (
+            self._profile_candidates(default_profile.pick.champions, position)
+            if default_profile.pick.enabled
+            else list(self.settings.auto_pick_champion_ids)
+        )
+        ban_candidates = (
+            self._profile_candidates(default_profile.ban.champions, position)
+            if default_profile.ban.enabled
+            else list(self.settings.auto_ban_champion_ids)
+        )
+
+        def expected_rows(candidates: list[int], available: list[int], available_flag: bool, action_type: str) -> list[dict]:
+            available_set = set(available)
+            if not available_flag:
+                return [{"id": int(champion_id), "status": "unknown"} for champion_id in candidates]
+            status_name = "pickable" if action_type == "pick" else "bannable"
+            unavailable_name = "unpickable" if action_type == "pick" else "unbannable"
+            return [
+                {"id": int(champion_id), "status": status_name if champion_id in available_set else unavailable_name}
+                for champion_id in candidates
+            ]
+
+        subset = list(champ_state.get("subset_champion_ids") or [])
+        bench = list(champ_state.get("bench_champions") or [])
+        scoped_bench = subset if subset and champ_state.get("timer_phase") == "BAN_PICK" else bench
+        expected_swaps = [
+            {"id": int(champion_id), "status": "swappable" if champion_id in scoped_bench and champion_id in set(current_pickable) else "unswappable"}
+            for champion_id in pick_candidates
+        ] if champ_state.get("bench_enabled") else []
+        delayed_by_kind = {
+            "delayed_pick": next((item for item in delayed_action_plan if item.get("action_type") == "pick"), None),
+            "delayed_ban": next((item for item in delayed_action_plan if item.get("action_type") == "ban"), None),
+            "delayed_bench_swap": next((item for item in delayed_action_plan if item.get("kind") == "bench-swap"), None),
+            "delayed_trade": next((item for item in delayed_action_plan if item.get("kind") == "champion-swap"), None),
+        }
+        auto_select_public = {
+            "schema_version": 1,
+            "enabled": bool(self.settings.automation_enabled and self.settings.auto_select_enabled),
+            "temporarily_disabled": bool(self.auto_select_temporarily_disabled),
+            "move": champ_state.get("auto_select_move"),
+            "current_action": champ_state.get("active_action"),
+            "first_unfinished_pick_action": champ_state.get("first_unfinished_pick_action"),
+            "expected_picks": expected_rows(pick_candidates, current_pickable, pickable_available, "pick"),
+            "expected_bans": expected_rows(ban_candidates, current_bannable, bannable_available, "ban"),
+            "expected_swaps": expected_swaps,
+            "current_pickable_ids": current_pickable,
+            "current_bannable_ids": current_bannable,
+            "subset": {
+                "ids": subset,
+                "available": bool(champ_state.get("subset_champion_ids_available")),
+            },
+            "scoped_bench": scoped_bench,
+            "actionability": {
+                "trades": list(champ_state.get("trades") or []),
+                "current_action": bool(champ_state.get("active_action")),
+                "current_pickable_ids_available": pickable_available,
+                "current_bannable_ids_available": bannable_available,
+            },
+            **delayed_by_kind,
+            "config": {
+                "master_enabled": bool(self.settings.automation_enabled),
+                "feature_enabled": bool(self.settings.auto_select_enabled),
+                "profiles": {key: value.model_dump() for key, value in self.settings.auto_select_profiles.items()},
+                "legacy_pick_ids": list(self.settings.auto_pick_champion_ids),
+                "legacy_ban_ids": list(self.settings.auto_ban_champion_ids),
+            },
+        }
         return {
             "connected": credentials is not None,
             "client_window_detected": client_window_detected,
@@ -1220,13 +1389,25 @@ class LeagueLabService:
             "last_error": self.last_error,
             "last_action": self.last_action,
             "last_action_at": self.last_action_at or None,
+            "ready_check": self.ready_check,
+            "matchmaking_search": self.matchmaking_search,
+            "ongoing_champion_swap": self.ongoing_champion_swap,
             "champ_select": self.champ_select,
+            "auto_select": auto_select_public,
             "auto_select_temporarily_disabled": self.auto_select_temporarily_disabled,
             "event_stream_connected": self._event_connected,
             "last_event_at": self._last_event_at or None,
             "matchmaking_status": self._matchmaking_status,
             "matchmaking_due_at": (time.time() + max(0.0, self._matchmaking_due_at - time.monotonic())) if self._matchmaking_due_at else None,
             "action_countdown": action_countdown,
+            "action_plan": {
+                "accept_due": public_due("ready-check", "自动接受对局", self._accept_due_at)
+                if self.phase == "ReadyCheck" else None,
+                "phase_due": phase_due,
+                "champion_due": champion_due,
+                "delayed": delayed_action_plan,
+            },
+            "delayed_action_plan": delayed_action_plan,
             "respawn_timer": self.respawn_timer,
             "cooldown_timer_should_show": self.settings.cooldown_timer_enabled and self.phase == "InProgress" and self.game_mode in {"CLASSIC", "PRACTICETOOL", "ARAM", "URF", "ONEFORALL", "NEXUSBLITZ", "ULTBOOK", "KIWI"},
             "opgg_should_show": self.settings.opgg_window_enabled and self.settings.opgg_auto_show and self.phase == "ChampSelect",
@@ -1238,6 +1419,19 @@ class LeagueLabService:
         try:
             phase = await self.request("GET", "/lol-gameflow/v1/gameflow-phase")
             self.phase = str(phase or "")
+            self.ready_check = None
+            self.matchmaking_search = None
+            self.ongoing_champion_swap = None
+            if self.phase != "ChampSelect":
+                self.champ_select = {}
+                self.auto_select_temporarily_disabled = False
+
+            async def optional(path: str):
+                try:
+                    return await self.request("GET", path)
+                except RuntimeError:
+                    return None
+
             if self.phase in {"ChampSelect", "InProgress"}:
                 gameflow = await self.request("GET", "/lol-gameflow/v1/session")
                 self.game_mode = str((((gameflow or {}).get("gameData") or {}).get("queue") or {}).get("gameMode") or "").upper()
@@ -1257,7 +1451,22 @@ class LeagueLabService:
             self.last_error = ""
             if self.phase == "ChampSelect":
                 session = await self.request("GET", "/lol-champ-select/v1/session")
-                self.champ_select = self._normalize_champ_select(session)
+                self.ongoing_champion_swap = await optional("/lol-champ-select/v1/ongoing-champion-swap")
+                # These are read-only snapshots.  Some client builds do not
+                # expose one or more routes, so absence must degrade to an
+                # explicit unavailable list rather than creating a write.
+                pickable_ids = await optional("/lol-champ-select/v1/pickable-champion-ids")
+                bannable_ids = await optional("/lol-champ-select/v1/bannable-champion-ids")
+                subset_ids = None
+                if isinstance(session, dict) and session.get("allowSubsetChampionPicks"):
+                    subset_ids = await optional("/lol-lobby-team-builder/champ-select/v1/subset-champion-list")
+                self.champ_select = self._normalize_champ_select(
+                    session,
+                    self.ongoing_champion_swap,
+                    pickable_ids=pickable_ids,
+                    bannable_ids=bannable_ids,
+                    subset_ids=subset_ids,
+                )
                 try:
                     skin_info, skin_rows = await asyncio.gather(
                         self.request("GET", "/lol-champ-select/v1/skin-selector-info"),
@@ -1266,9 +1475,10 @@ class LeagueLabService:
                     self.champ_select["skin_selector"] = _normalize_skin_selector(skin_info, skin_rows)
                 except RuntimeError:
                     self.champ_select["skin_selector"] = {"available": False, "skins": []}
-            else:
-                self.champ_select = {}
-                self.auto_select_temporarily_disabled = False
+            elif self.phase == "ReadyCheck":
+                self.ready_check = _normalize_ready_check(await optional("/lol-matchmaking/v1/ready-check"))
+            elif self.phase in {"Lobby", "Matchmaking"}:
+                self.matchmaking_search = _normalize_matchmaking_search(await optional("/lol-matchmaking/v1/search"))
         except RuntimeError:
             return
 
@@ -1306,24 +1516,158 @@ class LeagueLabService:
         self.last_action_at = time.time()
 
     @staticmethod
-    def _normalize_champ_select(session) -> dict:
+    def _normalize_champ_select(
+        session,
+        ongoing_swap=None,
+        *,
+        pickable_ids=None,
+        bannable_ids=None,
+        subset_ids=None,
+    ) -> dict:
+        # Adapted from LeagueAkari's MIT-licensed auto-select computed state;
+        # keep the upstream attribution in sync with THIRD_PARTY_LICENSES.md.
         if not isinstance(session, dict):
             return {}
-        members = []
-        for member in session.get("myTeam") or []:
-            if isinstance(member, dict):
-                members.append({
-                    "cell_id": member.get("cellId"),
-                    "champion_id": member.get("championId") or member.get("championPickIntent"),
-                    "assigned_position": member.get("assignedPosition") or "",
-                    "summoner_id": member.get("summonerId"),
-                })
+
         local_cell = session.get("localPlayerCellId")
-        local_member = next((item for item in (session.get("myTeam") or []) if item.get("cellId") == local_cell), {})
+
+        def same_cell(left, right) -> bool:
+            return left is not None and right is not None and str(left) == str(right)
+
+        def normalize_member(member, *, is_local: bool = False) -> dict | None:
+            if not isinstance(member, dict):
+                return None
+            return {
+                "cell_id": member.get("cellId"),
+                "champion_id": member.get("championId") or member.get("championPickIntent"),
+                "champion_pick_intent": member.get("championPickIntent"),
+                "assigned_position": member.get("assignedPosition") or "",
+                "summoner_id": member.get("summonerId"),
+                "puuid": member.get("puuid"),
+                "game_name": member.get("gameName") or member.get("summonerName") or member.get("displayName") or "",
+                "tag_line": member.get("tagLine") or "",
+                "profile_icon_id": member.get("profileIconId") or member.get("profileIcon"),
+                "is_local": is_local or same_cell(member.get("cellId"), local_cell),
+            }
+
+        all_members = []
+        member_by_cell: dict[str, dict] = {}
+        for team_key in ("myTeam", "theirTeam"):
+            for raw_member in session.get(team_key) or []:
+                member = normalize_member(raw_member)
+                if not member or member.get("cell_id") is None:
+                    continue
+                key = str(member["cell_id"])
+                if key not in member_by_cell:
+                    member_by_cell[key] = member
+                    all_members.append(member)
+        local_member = next((member for member in all_members if same_cell(member.get("cell_id"), local_cell)), None)
+        if local_member is None:
+            raw_local = next((item for item in session.get("myTeam") or [] if isinstance(item, dict) and same_cell(item.get("cellId"), local_cell)), {})
+            local_member = normalize_member(raw_local, is_local=True) or {}
+
         timer = session.get("timer") or {}
+
+        def normalize_ids(values) -> list[int]:
+            if not isinstance(values, (list, tuple, set)):
+                return []
+            normalized: list[int] = []
+            for value in values:
+                try:
+                    champion_id = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if champion_id not in normalized:
+                    normalized.append(champion_id)
+            return normalized
+
+        current_pickable_ids = normalize_ids(pickable_ids)
+        current_bannable_ids = normalize_ids(bannable_ids)
+        subset_champion_ids = normalize_ids(subset_ids)
+
+        # LeagueAkari's computed state deliberately scopes actions to the
+        # first action group which is not completely finished.  Looking at all
+        # ``isInProgress`` actions can make a stale pick/ban race a new LCU
+        # phase, so retain both the scoped group and the first unfinished pick
+        # for the read-only status surface and the guarded executor below.
+        action_groups = [group for group in (session.get("actions") or []) if isinstance(group, list)]
+        current_group_index = next(
+            (
+                index
+                for index, group in enumerate(action_groups)
+                if group and not all(bool(action.get("completed")) for action in group if isinstance(action, dict))
+            ),
+            -1,
+        )
+
+        def normalize_action(action) -> dict | None:
+            if not isinstance(action, dict):
+                return None
+            try:
+                champion_id = int(action.get("championId") or 0)
+            except (TypeError, ValueError):
+                champion_id = 0
+            return {
+                "id": action.get("id"),
+                "type": action.get("type"),
+                "champion_id": champion_id,
+                "completed": bool(action.get("completed")),
+                "in_progress": bool(action.get("isInProgress")),
+                "actor_cell_id": action.get("actorCellId"),
+                "is_local": same_cell(action.get("actorCellId"), local_cell),
+            }
+
+        scoped_group = action_groups[current_group_index] if current_group_index >= 0 else []
+        current_actions = [
+            normalized
+            for action in scoped_group
+            if (normalized := normalize_action(action)) is not None
+            and normalized["is_local"]
+        ]
+        active_action = next((action for action in current_actions if not action["completed"]), None)
+        first_unfinished_pick_action = next(
+            (
+                normalized
+                for group in action_groups
+                for action in group
+                if (normalized := normalize_action(action)) is not None
+                and normalized["is_local"]
+                and normalized["type"] == "pick"
+                and not normalized["completed"]
+            ),
+            None,
+        )
+        is_picking_now = active_action is not None and active_action.get("type") == "pick"
+        is_banning_now = active_action is not None and active_action.get("type") == "ban"
+        is_voting_now = active_action is not None and active_action.get("type") == "vote"
+        is_pick_intenting = bool(
+            str(timer.get("phase") or "") == "PLANNING"
+            or (first_unfinished_pick_action and not is_picking_now and not is_banning_now)
+        )
+        champion_shown = bool(active_action and active_action.get("champion_id"))
+        if is_pick_intenting:
+            auto_select_move = "pick-intent"
+        elif is_picking_now:
+            auto_select_move = (
+                "complete-subset-pick" if champion_shown else "show-subset-pick"
+            ) if session.get("allowSubsetChampionPicks") else (
+                "complete-pick" if champion_shown else "show-pick"
+            )
+        elif is_banning_now:
+            auto_select_move = "complete-ban" if champion_shown else "show-ban"
+        elif is_voting_now:
+            auto_select_move = "vote"
+        elif session.get("benchEnabled") and local_member.get("champion_id"):
+            auto_select_move = (
+                "subset-bench-swap"
+                if session.get("allowSubsetChampionPicks") and str(timer.get("phase") or "") == "BAN_PICK"
+                else "bench-swap"
+            )
+        else:
+            auto_select_move = None
         my_actions = []
         for group in session.get("actions") or []:
-            action = next((item for item in (group or []) if isinstance(item, dict) and item.get("actorCellId") == local_cell), None)
+            action = next((item for item in (group or []) if isinstance(item, dict) and same_cell(item.get("actorCellId"), local_cell)), None)
             if action:
                 my_actions.append({
                     "id": action.get("id"),
@@ -1332,20 +1676,121 @@ class LeagueLabService:
                     "completed": bool(action.get("completed")),
                     "in_progress": bool(action.get("isInProgress")),
                 })
+
+        # Keep this in lockstep with the existing automatic trade handler;
+        # ``SENT`` is a locally initiated request and is not safe to accept or
+        # decline through the incoming-trade endpoint.
+        actionable_states = {"AVAILABLE", "PENDING", "RECEIVED"}
+        trades = []
+        for raw_trade in session.get("trades") or []:
+            if not isinstance(raw_trade, dict) or raw_trade.get("id") is None:
+                continue
+            trade_id = raw_trade.get("id")
+            state = str(raw_trade.get("state") or "")
+            requester_cell = raw_trade.get("requesterCellId") or raw_trade.get("initiatorCellId")
+            responder_cell = raw_trade.get("responderCellId") or raw_trade.get("otherCellId")
+            explicit_local = raw_trade.get("initiatedByLocalPlayer")
+            if explicit_local is not None:
+                initiated_by_local = bool(explicit_local)
+                initiator_cell = local_cell if initiated_by_local else requester_cell
+                other_cell = responder_cell or raw_trade.get("cellId")
+                if not initiated_by_local and initiator_cell is None:
+                    initiator_cell = raw_trade.get("cellId")
+                if initiated_by_local and other_cell is None and requester_cell is not None and not same_cell(requester_cell, local_cell):
+                    other_cell = requester_cell
+            elif requester_cell is not None:
+                initiated_by_local = same_cell(requester_cell, local_cell)
+                initiator_cell = requester_cell
+                other_cell = responder_cell or (local_cell if not initiated_by_local else raw_trade.get("cellId"))
+            else:
+                # The current LCU session generally exposes only ``cellId``;
+                # for an incoming request it identifies the remote player.
+                other_cell = raw_trade.get("cellId") if not same_cell(raw_trade.get("cellId"), local_cell) else None
+                initiated_by_local = same_cell(raw_trade.get("cellId"), local_cell)
+                initiator_cell = local_cell if initiated_by_local else raw_trade.get("cellId")
+
+            initiator = member_by_cell.get(str(initiator_cell)) if initiator_cell is not None else None
+            other_player = member_by_cell.get(str(other_cell)) if other_cell is not None else None
+            actionable = state.upper() in actionable_states
+            reason = "available" if actionable else ("missing-state" if not state else "state-not-actionable")
+            trades.append({
+                "id": trade_id,
+                "state": state,
+                "initiator_cell_id": initiator_cell,
+                "initiator": initiator,
+                "initiated_by_local_player": initiated_by_local,
+                "other_player": other_player,
+                "other_player_cell_id": other_cell,
+                "actionable": actionable,
+                "can_accept": actionable,
+                "can_decline": actionable,
+                "actionability": {
+                    "actionable": actionable,
+                    "can_accept": actionable,
+                    "can_decline": actionable,
+                    "reason": reason,
+                },
+            })
+
+        normalized_ongoing_swap = None
+        if isinstance(ongoing_swap, dict):
+            ongoing_id = ongoing_swap.get("id")
+            ongoing_state = str(ongoing_swap.get("state") or "")
+            ongoing_actionable = ongoing_state.upper() == "RECEIVED" and ongoing_id is not None
+            normalized_ongoing_swap = {
+                "id": ongoing_id,
+                "state": ongoing_swap.get("state"),
+                "actionable": ongoing_actionable,
+                "can_accept": ongoing_actionable,
+                "can_decline": ongoing_actionable,
+                "initiated_by_local_player": bool(ongoing_swap.get("initiatedByLocalPlayer")),
+                "other_summoner_index": ongoing_swap.get("otherSummonerIndex"),
+                "requester_champion_id": ongoing_swap.get("requesterChampionId"),
+                "responder_champion_id": ongoing_swap.get("responderChampionId"),
+                "requester_champion_name": ongoing_swap.get("requesterChampionName"),
+                "responder_champion_name": ongoing_swap.get("responderChampionName"),
+            }
+
+        remaining_ms = int(timer.get("adjustedTimeLeftInPhase") or timer.get("timeLeftInPhase") or 0)
+        my_team_cells = {
+            str(item.get("cell_id"))
+            for raw_member in session.get("myTeam") or []
+            for item in [normalize_member(raw_member)]
+            if item and item.get("cell_id") is not None
+        }
         return {
             "local_player_cell_id": session.get("localPlayerCellId"),
-            "current_champion_id": local_member.get("championId") or local_member.get("championPickIntent"),
-            "my_team": members,
+            "current_champion_id": local_member.get("champion_id"),
+            "my_team": [member for member in all_members if str(member.get("cell_id")) in my_team_cells],
+            "all_players": all_members,
             "bench_enabled": bool(session.get("benchEnabled")),
             "bench_champions": [int(item.get("championId")) for item in (session.get("benchChampions") or []) if isinstance(item, dict) and item.get("championId")],
             "rerolls_remaining": int(session.get("rerollsRemaining") or 0),
             "allow_rerolling": bool(session.get("allowRerolling")),
             "allow_subset_champion_picks": bool(session.get("allowSubsetChampionPicks")),
             "timer_phase": str(timer.get("phase") or ""),
-            "timer_adjusted_time_left_ms": int(timer.get("adjustedTimeLeftInPhase") or timer.get("timeLeftInPhase") or 0),
-            "timer_deadline_at": time.time() + max(0, int(timer.get("adjustedTimeLeftInPhase") or timer.get("timeLeftInPhase") or 0)) / 1000,
+            "timer_adjusted_time_left_ms": remaining_ms,
+            "timer_deadline_at": time.time() + max(0, remaining_ms) / 1000,
             "is_spectating": bool(session.get("isSpectating")),
             "my_actions": my_actions,
+            "current_action_group_index": current_group_index,
+            "current_actions": current_actions,
+            "active_action": active_action,
+            "first_unfinished_pick_action": first_unfinished_pick_action,
+            "is_pick_intenting": is_pick_intenting,
+            "is_picking_now": is_picking_now,
+            "is_banning_now": is_banning_now,
+            "is_voting_now": is_voting_now,
+            "auto_select_move": auto_select_move,
+            "current_session_champion_id": local_member.get("champion_id"),
+            "current_pickable_champion_ids": current_pickable_ids,
+            "current_bannable_champion_ids": current_bannable_ids,
+            "current_pickable_ids_available": pickable_ids is not None,
+            "current_bannable_ids_available": bannable_ids is not None,
+            "subset_champion_ids": subset_champion_ids,
+            "subset_champion_ids_available": subset_ids is not None,
+            "trades": trades,
+            "ongoing_champion_swap": normalized_ongoing_swap,
         }
 
     @staticmethod
@@ -1386,6 +1831,51 @@ class LeagueLabService:
         fallback = list(pool.get("default") or [])
         return list(dict.fromkeys(positioned + fallback))
 
+    def _set_delayed_action_plan(
+        self,
+        action_id: str,
+        *,
+        kind: str,
+        label: str,
+        due_at: float,
+        **metadata,
+    ) -> None:
+        """Record a delayed action without making the plan executable by itself."""
+        self._delayed_action_plan[str(action_id)] = {
+            "action_id": str(action_id),
+            "kind": kind,
+            "label": label,
+            "due_at": due_at,
+            **metadata,
+        }
+
+    def _clear_delayed_action_plan(self, action_id: str) -> None:
+        self._delayed_action_plan.pop(str(action_id), None)
+
+    @staticmethod
+    def _phase_calibrated_delay_seconds(session: dict, configured_seconds: float) -> float:
+        """Cap a delay at the current LCU phase timer, like LeagueAkari.
+
+        The LCU fixture does not consistently expose the internal timer epoch,
+        therefore this deliberately implements the proven safe part (never
+        scheduling past the remaining phase) and leaves elapsed-time
+        calibration to a future fixture with a stable schema.
+        """
+        try:
+            configured = max(0.0, float(configured_seconds))
+        except (TypeError, ValueError):
+            configured = 0.0
+        timer = session.get("timer") if isinstance(session, dict) else None
+        if not isinstance(timer, dict):
+            return configured
+        try:
+            remaining_ms = float(timer.get("adjustedTimeLeftInPhase") or timer.get("timeLeftInPhase") or 0)
+        except (TypeError, ValueError):
+            return configured
+        if remaining_ms <= 0:
+            return configured
+        return max(0.0, min(configured, remaining_ms / 1000.0))
+
     async def _active_auto_select_profile(self, session: dict) -> tuple[str, AutoSelectProfile]:
         try:
             gameflow = await self.request("GET", "/lol-gameflow/v1/session")
@@ -1395,7 +1885,15 @@ class LeagueLabService:
         return group, self.settings.auto_select_profiles.get(group) or self.settings.auto_select_profiles.get("default") or AutoSelectProfile()
 
     async def _run_auto_select(self) -> None:
-        if self.auto_select_temporarily_disabled:
+        # This method is intentionally safe when called directly by a test or
+        # a future event handler: no automation master/feature/profile gate,
+        # no ChampSelect phase, and no candidate ID means no LCU write.
+        if (
+            self.auto_select_temporarily_disabled
+            or not self.settings.automation_enabled
+            or not self.settings.auto_select_enabled
+            or self.phase != "ChampSelect"
+        ):
             return
         session = await self.request("GET", "/lol-champ-select/v1/session")
         if not isinstance(session, dict):
@@ -1410,27 +1908,44 @@ class LeagueLabService:
                 subset_champion_ids = {int(value) for value in (subset or [])}
             except (RuntimeError, TypeError, ValueError):
                 subset_champion_ids = set()
+        normalized = self._normalize_champ_select(
+            session,
+            self.ongoing_champion_swap,
+            subset_ids=subset_champion_ids if session.get("allowSubsetChampionPicks") else None,
+        )
+        move = normalized.get("auto_select_move")
+        active_action = normalized.get("active_action")
+        first_unfinished_pick = normalized.get("first_unfinished_pick_action")
+        action = active_action
+        if move == "pick-intent" and first_unfinished_pick:
+            action = first_unfinished_pick
         teammate_intents = {
             int(member.get("championPickIntent"))
             for member in (session.get("myTeam") or [])
             if member.get("cellId") != local_cell and int(member.get("championPickIntent") or 0) > 0
         }
-        for action_group in session.get("actions") or []:
-            for action in action_group or []:
-                if not isinstance(action, dict) or action.get("actorCellId") != local_cell or not action.get("isInProgress"):
-                    continue
-                action_type = action.get("type")
-                configured = profile.pick if action_type == "pick" else profile.ban
-                legacy_candidates = self.settings.auto_pick_champion_ids if action_type == "pick" else self.settings.auto_ban_champion_ids
-                candidates = self._profile_candidates(configured.champions, position) if configured.enabled else list(legacy_candidates)
-                action_key = f"{action_type}:{action.get('id')}"
-                if action_type not in {"pick", "ban"} or not candidates or action_key in self._handled_champion_actions:
-                    continue
+        # LeagueAkari executes only the current local action.  A fixture may
+        # expose a planning pick before the active pick group, hence the
+        # separate ``action`` fallback above.
+        action_type = action.get("type") if isinstance(action, dict) else None
+        if action_type in {"pick", "ban"} and isinstance(action, dict):
+            configured = profile.pick if action_type == "pick" else profile.ban
+            legacy_candidates = self.settings.auto_pick_champion_ids if action_type == "pick" else self.settings.auto_ban_champion_ids
+            candidates = self._profile_candidates(configured.champions, position) if configured.enabled else list(legacy_candidates)
+            action_key = f"{action_type}:{action.get('id')}"
+            allowed_moves = {
+                "pick": {"pick-intent", "show-pick", "complete-pick", "show-subset-pick", "complete-subset-pick"},
+                "ban": {"show-ban", "complete-ban"},
+            }
+            if candidates and action_key not in self._handled_champion_actions and move in allowed_moves[action_type]:
                 available_path = "/lol-champ-select/v1/pickable-champion-ids" if action_type == "pick" else "/lol-champ-select/v1/bannable-champion-ids"
                 available = await self.request("GET", available_path)
-                if action_type == "pick" and profile.pick.enabled and not profile.pick.ignore_intent:
+                if action_type == "pick" and configured.enabled and not configured.ignore_intent:
                     candidates = [value for value in candidates if value not in teammate_intents]
-                available_ids = {int(value) for value in (available or [])}
+                try:
+                    available_ids = {int(value) for value in (available or [])}
+                except (TypeError, ValueError):
+                    available_ids = set()
                 if action_type == "pick" and session.get("allowSubsetChampionPicks"):
                     available_ids &= subset_champion_ids
                 champion_id = next(
@@ -1441,41 +1956,134 @@ class LeagueLabService:
                     ),
                     None,
                 )
-                if champion_id is None:
-                    continue
-                delay = configured.delay_seconds if configured.enabled else self.settings.champion_action_delay_seconds
-                strategy = configured.strategy if configured.enabled else ("show-and-lock-in" if self.settings.champion_lock_in else "just-show")
-                due_at = self._champion_action_due_at.get(action_key)
-                if due_at is None:
-                    if action_type == "pick" and profile.pick.enabled and profile.pick.show_intent and strategy != "lock-in-immediately":
-                        await self.request("PATCH", f"/lol-champ-select/v1/session/actions/{action.get('id')}", json_body={"championId": champion_id, "type": action_type, "completed": False})
-                    due_at = time.monotonic() + delay
-                    self._champion_action_due_at[action_key] = due_at
-                if time.monotonic() < due_at:
-                    continue
-                if strategy != "just-show":
-                    await self.request("PATCH", f"/lol-champ-select/v1/session/actions/{action.get('id')}", json_body={"championId": champion_id, "type": action_type, "completed": True})
-                self._champion_action_due_at.pop(action_key, None)
-                self._handled_champion_actions.add(action_key)
-                self.last_action = f"[{group}] 已自动{'选择' if action_type == 'pick' else '禁用'}英雄 {champion_id}"
-                self.last_action_at = time.time()
+                if champion_id is not None:
+                    delay_config = configured.delay_seconds if configured.enabled else self.settings.champion_action_delay_seconds
+                    delay = self._phase_calibrated_delay_seconds(session, delay_config)
+                    strategy = configured.strategy if configured.enabled else ("show-and-lock-in" if self.settings.champion_lock_in else "just-show")
+                    active_champion_id = int(action.get("champion_id") or 0)
+
+                    # An already displayed champion is final for just-show;
+                    # never replace a user's manual choice.
+                    if move in {"complete-pick", "complete-subset-pick", "complete-ban"} and strategy == "just-show" and active_champion_id:
+                        self._champion_action_due_at.pop(action_key, None)
+                        self._clear_delayed_action_plan(action_key)
+                        self._handled_champion_actions.add(action_key)
+                    elif strategy == "lock-in-immediately" and move in {"complete-pick", "complete-subset-pick", "complete-ban"} and active_champion_id == champion_id and action_key in self._champion_action_due_at:
+                        # Ignore the short LCU transition from shown -> locked.
+                        return
+                    else:
+                        is_intent = move == "pick-intent"
+                        if is_intent and (not configured.enabled or not configured.show_intent or active_champion_id):
+                            self._champion_action_due_at.pop(action_key, None)
+                            self._clear_delayed_action_plan(action_key)
+                        else:
+                            completed = (
+                                not is_intent
+                                and (
+                                    # The legacy ID-list settings predate the
+                                    # upstream two-step show/lock state.  Keep
+                                    # their established one-call lock-in
+                                    # behavior for backwards compatibility.
+                                    (not configured.enabled and self.settings.champion_lock_in)
+                                    or
+                                    move in {"show-subset-pick", "complete-subset-pick"}
+                                    or strategy == "lock-in-immediately"
+                                    or (strategy == "show-and-lock-in" and move in {"complete-pick", "complete-ban"})
+                                )
+                            )
+                            due_at = self._champion_action_due_at.get(action_key)
+                            if due_at is None:
+                                due_at = time.monotonic() + delay
+                                self._champion_action_due_at[action_key] = due_at
+                                self._set_delayed_action_plan(
+                                    action_key,
+                                    kind="champion-action",
+                                    label="自动选择 / 禁用英雄",
+                                    due_at=due_at,
+                                    action_type=action_type,
+                                    move=move,
+                                    champion_id=champion_id,
+                                    completed=completed,
+                                    delay_seconds=round(delay, 3),
+                                )
+                            else:
+                                plan = self._delayed_action_plan.get(action_key)
+                                if plan:
+                                    plan.update({"move": move, "champion_id": champion_id, "completed": completed})
+                            if time.monotonic() >= due_at:
+                                body = {"championId": champion_id}
+                                if not is_intent:
+                                    body.update({"type": action_type, "completed": completed})
+                                await self.request(
+                                    "PATCH",
+                                    f"/lol-champ-select/v1/session/actions/{action.get('id')}",
+                                    json_body=body,
+                                )
+                                self._champion_action_due_at.pop(action_key, None)
+                                self._clear_delayed_action_plan(action_key)
+                                if completed or strategy == "just-show":
+                                    self._handled_champion_actions.add(action_key)
+                                self.last_action = f"[{group}] 已自动{'预选' if is_intent else ('选择' if action_type == 'pick' else '禁用')}英雄 {champion_id}"
+                                self.last_action_at = time.time()
 
         if profile.pick.enabled and profile.pick.bench_handle_trade_enabled:
-            await self._run_trade_handling(session, self._profile_candidates(profile.pick.champions, position))
+            await self._run_trade_handling(session, self._profile_candidates(profile.pick.champions, position), profile.pick, normalized)
         if profile.pick.enabled and session.get("benchEnabled"):
-            await self._run_bench_swap(session, profile.pick, position, subset_champion_ids)
+            await self._run_bench_swap(session, profile.pick, position, subset_champion_ids, normalized)
 
-    async def _run_trade_handling(self, session: dict, expected: list[int]) -> None:
+    async def _run_trade_handling(self, session: dict, expected: list[int], profile: PickProfile | None = None, normalized: dict | None = None) -> None:
+        if self.phase != "ChampSelect":
+            return
+        if not self.settings.automation_enabled or not self.settings.auto_select_enabled:
+            return
+        profile = profile or PickProfile()
+        if not profile.enabled or not profile.bench_handle_trade_enabled:
+            return
+        # The modern endpoint represents the incoming swap independently of
+        # the session's legacy ``trades`` array.  Only RECEIVED swaps are
+        # automatically actionable; other states remain status-only.
+        ongoing = self.ongoing_champion_swap
+        if not isinstance(ongoing, dict) and isinstance((normalized or {}).get("ongoing_champion_swap"), dict):
+            ongoing = (normalized or {}).get("ongoing_champion_swap")
+        if isinstance(ongoing, dict) and str(ongoing.get("state") or "").upper() == "RECEIVED" and ongoing.get("id") is not None:
+            trade_id = str(ongoing.get("id"))
+            requester_champion = int(ongoing.get("requesterChampionId") or ongoing.get("requester_champion_id") or 0)
+            current_champion = int((normalized or {}).get("current_session_champion_id") or 0)
+            try:
+                requester_index = expected.index(requester_champion)
+            except ValueError:
+                requester_index = -1
+            try:
+                current_index = expected.index(current_champion)
+            except ValueError:
+                current_index = -1
+            operation = "accept" if requester_index >= 0 and (current_index < 0 or (profile.bench_select_first_available_champion and requester_index < current_index)) else "decline"
+            action_key = f"trade:{trade_id}:{operation}"
+            if action_key not in self._handled_trades:
+                due_at = self._delayed_action_plan.get(action_key, {}).get("due_at")
+                if due_at is None:
+                    delay = self._phase_calibrated_delay_seconds({}, profile.delay_seconds)
+                    due_at = time.monotonic() + delay
+                    self._set_delayed_action_plan(action_key, kind="champion-swap", label="自动处理换英雄", due_at=due_at, trade_id=trade_id, operation=operation, champion_id=requester_champion, delay_seconds=round(delay, 3))
+                if time.monotonic() >= due_at:
+                    await self.request("POST", f"/lol-champ-select/v1/session/champion-swaps/{quote(trade_id, safe='')}/{operation}")
+                    self._handled_trades.add(action_key)
+                    self._clear_delayed_action_plan(action_key)
+                    self.last_action = f"已{('接受' if operation == 'accept' else '拒绝')}英雄交换：{requester_champion}"
+                    self.last_action_at = time.time()
+            return
         for trade in session.get("trades") or []:
             trade_id = str(trade.get("id") or "") if isinstance(trade, dict) else ""
             if not trade_id or trade_id in self._handled_trades or trade.get("state") not in {"AVAILABLE", "PENDING", "RECEIVED"}:
+                continue
+            if bool(trade.get("initiatedByLocalPlayer")):
                 continue
             requester_cell = trade.get("requesterCellId")
             requester = next((item for item in (session.get("myTeam") or []) if item.get("cellId") == requester_cell), {})
             requester_champion = int(requester.get("championId") or 0)
             if requester_champion not in expected:
                 continue
-            await self.request("POST", f"/lol-champ-select/v1/session/trades/{trade_id}/accept")
+            await self.request("POST", f"/lol-champ-select/v1/session/champion-swaps/{quote(trade_id, safe='')}/accept")
             self._handled_trades.add(trade_id)
             self.last_action = f"已接受英雄交换：{requester_champion}"
             self.last_action_at = time.time()
@@ -1486,7 +2094,14 @@ class LeagueLabService:
         profile: PickProfile,
         position: str,
         subset_champion_ids: set[int] | None = None,
+        normalized: dict | None = None,
     ) -> None:
+        if self.phase != "ChampSelect":
+            return
+        if not self.settings.automation_enabled or not self.settings.auto_select_enabled:
+            return
+        if not profile.enabled:
+            return
         expected = self._profile_candidates(profile.champions, position)
         bench = [
             int(item.get("championId"))
@@ -1500,16 +2115,28 @@ class LeagueLabService:
             candidate = bench[0]
         if candidate is None:
             self._bench_candidate_since.clear()
+            self._clear_delayed_action_plan("bench-swap")
             return
         started = self._bench_candidate_since.setdefault(candidate, time.monotonic())
-        if time.monotonic() - started < profile.bench_swap_accumulated_delay_seconds:
+        delay = max(0.0, float(profile.bench_swap_accumulated_delay_seconds) - (time.monotonic() - started))
+        move = (normalized or {}).get("auto_select_move") or ("subset-bench-swap" if session.get("allowSubsetChampionPicks") else "bench-swap")
+        due_at = time.monotonic() + delay
+        self._set_delayed_action_plan("bench-swap", kind="bench-swap", label="自动从备战席换取英雄", due_at=due_at, move=move, champion_id=candidate, delay_seconds=round(delay, 3))
+        if delay > 0:
             return
         await self.request("POST", f"/lol-champ-select/v1/session/bench/swap/{candidate}")
         self._bench_candidate_since.clear()
+        self._clear_delayed_action_plan("bench-swap")
         self.last_action = f"已从备战席换取英雄 {candidate}"
         self.last_action_at = time.time()
 
     async def _run_champion_config(self) -> None:
+        if (
+            self.phase != "ChampSelect"
+            or not self.settings.automation_enabled
+            or not self.settings.auto_champion_config_enabled
+        ):
+            return
         champion_id = await self.request("GET", "/lol-champ-select/v1/current-champion")
         if not isinstance(champion_id, int) or champion_id <= 0 or champion_id == self._configured_champion_id:
             return
@@ -1562,6 +2189,12 @@ class LeagueLabService:
         self.last_action_at = time.time()
 
     async def _run_auto_honor(self) -> None:
+        if (
+            self.phase not in {"PreEndOfGame", "EndOfGame"}
+            or not self.settings.automation_enabled
+            or not self.settings.auto_honor_enabled
+        ):
+            return
         ballot = await self.request("GET", "/lol-honor-v2/v1/ballot/")
         if not isinstance(ballot, dict):
             return
@@ -1588,21 +2221,30 @@ class LeagueLabService:
         lobby_allies = [item for item in allies if str(item.get("puuid")) in lobby_puuids]
         other_allies = [item for item in allies if str(item.get("puuid")) not in lobby_puuids]
         if strategy == "only-lobby-member":
-            eligible = lobby_allies
+            pools = (lobby_allies,)
         elif strategy == "all-member":
-            eligible = allies
+            pools = (lobby_allies, other_allies)
         elif strategy == "all-member-including-opponent":
-            eligible = allies + opponents
+            pools = (lobby_allies, other_allies, opponents)
         else:
-            eligible = lobby_allies + other_allies + opponents
-        candidates = random.sample(eligible, min(votes, len(eligible))) if eligible else []
+            pools = (lobby_allies, other_allies, opponents)
+        # Match the upstream honor-controller priority: lobby allies first,
+        # then non-lobby allies, then opponents. Randomness only applies
+        # within the currently selected priority tier.
+        candidates = []
+        remaining_votes = max(votes, 0)
+        for pool in pools:
+            if remaining_votes <= 0:
+                break
+            selected = random.sample(pool, min(remaining_votes, len(pool))) if pool else []
+            candidates.extend(selected)
+            remaining_votes -= len(selected)
         if not candidates:
             self._honored_game_id = game_id
             return
-        categories = ("COOL", "HEART", "SHOTCALLER")
         for index, player in enumerate(candidates):
             await self.request("POST", "/lol-honor/v1/honor", json_body={
-                "honorType": categories[index % len(categories)], "recipientPuuid": player.get("puuid"),
+                "honorType": "HEART", "recipientPuuid": player.get("puuid"),
             })
         await self.request("POST", "/lol-honor/v1/ballot")
         self._honored_game_id = game_id
@@ -1611,7 +2253,11 @@ class LeagueLabService:
 
     async def _run_auto_matchmaking(self) -> None:
         settings = self.settings
-        if not settings.auto_matchmaking_enabled or self.phase not in {"Lobby", "Matchmaking"}:
+        if (
+            not settings.automation_enabled
+            or not settings.auto_matchmaking_enabled
+            or self.phase not in {"Lobby", "Matchmaking"}
+        ):
             self._matchmaking_due_at = None
             self._matchmaking_status = "idle"
             return
@@ -1642,6 +2288,7 @@ class LeagueLabService:
             search = await self.request("GET", "/lol-matchmaking/v1/search")
         except RuntimeError:
             search = None
+        self.matchmaking_search = _normalize_matchmaking_search(search)
         if isinstance(search, dict) and (search.get("isCurrentlyInQueue") or search.get("searchState") == "Searching"):
             self._matchmaking_status = "searching"
             penalty = float(((search.get("lowPriorityData") or {}).get("penaltyTime")) or 0)
@@ -1671,7 +2318,11 @@ class LeagueLabService:
             self._matchmaking_status = "searching"
 
     async def _run_aram_team_side(self) -> None:
-        if not self.settings.auto_send_aram_team_side_enabled or self.phase != "ChampSelect":
+        if (
+            not self.settings.automation_enabled
+            or not self.settings.auto_send_aram_team_side_enabled
+            or self.phase != "ChampSelect"
+        ):
             if self.phase != "ChampSelect":
                 self._aram_side_sent_context = ""
             return
@@ -1721,6 +2372,8 @@ class LeagueLabService:
 
     async def _run_lobby_automation(self) -> None:
         settings = self.settings
+        if not settings.automation_enabled or self.phase != "Lobby":
+            return
         if settings.auto_skip_leader_enabled and self.phase == "Lobby":
             try:
                 lobby = await self.request("GET", "/lol-lobby/v2/lobby")
@@ -1770,6 +2423,11 @@ class LeagueLabService:
         self._handled_invitations.add(invite_id)
 
     async def apply_status_message(self, message: str, *, automated: bool = False) -> None:
+        if automated and (
+            not self.settings.automation_enabled
+            or not self.settings.auto_set_status_message_enabled
+        ):
+            return
         if not automated:
             self._interrupt_chat_ready_automation()
         await self.request("PUT", "/lol-chat/v1/me", json_body={"statusMessage": message})
@@ -1777,6 +2435,11 @@ class LeagueLabService:
         self.last_action_at = time.time()
 
     async def apply_ranked_status(self, ranked_status: RankedStatusUpdate, *, automated: bool = False) -> None:
+        if automated and (
+            not self.settings.automation_enabled
+            or not self.settings.auto_set_ranked_status_enabled
+        ):
+            return
         if not automated:
             self._interrupt_chat_ready_automation()
         ranked = ranked_status.model_dump()
@@ -1830,6 +2493,8 @@ class LeagueLabService:
         await self._run_chat_ready_automation()
         if not settings.automation_enabled:
             self._accept_due_at = None
+            self._champion_action_due_at.clear()
+            self._delayed_action_plan.clear()
             return
 
         if phase != self._acted_phase:
@@ -1862,6 +2527,7 @@ class LeagueLabService:
         else:
             self._handled_champion_actions.clear()
             self._champion_action_due_at.clear()
+            self._delayed_action_plan.clear()
             self._handled_trades.clear()
             self._bench_candidate_since.clear()
             self._configured_champion_id = 0
@@ -1920,6 +2586,67 @@ def _normalize_skin_selector(info, rows) -> dict:
         "selected_skin_id": int((info or {}).get("selectedSkinId") or 0),
         "champion_id": int((info or {}).get("selectedChampionId") or 0),
         "skins": [row for row in options if row["id"] > 0],
+    }
+
+
+def _normalize_ready_check(payload) -> dict | None:
+    """Keep useful, read-only ReadyCheck evidence in a stable shape."""
+    if not isinstance(payload, dict):
+        return None
+    state = str(payload.get("state") or "")
+    player_response = str(payload.get("playerResponse") or payload.get("player_response") or "")
+    timer = payload.get("timer")
+    normalized_timer = None
+    if isinstance(timer, dict):
+        normalized_timer = {
+            "type": timer.get("type"),
+            "total_seconds": timer.get("totalSeconds"),
+            "remaining_seconds": timer.get("remainingSeconds"),
+        }
+    state_upper = state.upper()
+    response_upper = player_response.upper()
+    available = state_upper in {"INPROGRESS", "PENDING", "READY"}
+    return {
+        "state": state,
+        "player_response": player_response,
+        "decliner_ids": [value for value in (payload.get("declinerIds") or payload.get("decliner_ids") or [])],
+        "dodge_warning": payload.get("dodgeWarning") or payload.get("dodge_warning"),
+        "suppress_ux": bool(payload.get("suppressUx") if "suppressUx" in payload else payload.get("suppress_ux")),
+        "timer": normalized_timer,
+        "available": available,
+        "can_accept": available and response_upper not in {"ACCEPTED", "DECLINED"},
+        "can_decline": available and response_upper not in {"ACCEPTED", "DECLINED"},
+    }
+
+
+def _normalize_matchmaking_search(payload) -> dict | None:
+    """Expose queue/search evidence without coupling the UI to LCU casing."""
+    if not isinstance(payload, dict):
+        return None
+    low_priority = payload.get("lowPriorityData") or payload.get("low_priority_data") or {}
+    errors = []
+    for item in payload.get("errors") or []:
+        if not isinstance(item, dict):
+            continue
+        errors.append({
+            "code": item.get("code"),
+            "message": item.get("message"),
+            "penalty_time_remaining": item.get("penaltyTimeRemaining"),
+            "penalty_time": item.get("penaltyTime"),
+        })
+    return {
+        "is_currently_in_queue": bool(payload.get("isCurrentlyInQueue") if "isCurrentlyInQueue" in payload else payload.get("is_currently_in_queue")),
+        "search_state": str(payload.get("searchState") or payload.get("search_state") or ""),
+        "time_in_queue": payload.get("timeInQueue") if "timeInQueue" in payload else payload.get("time_in_queue"),
+        "estimated_queue_time": payload.get("estimatedQueueTime") if "estimatedQueueTime" in payload else payload.get("estimated_queue_time"),
+        "queue_id": payload.get("queueId") if "queueId" in payload else payload.get("queue_id"),
+        "lobby_id": payload.get("lobbyId") if "lobbyId" in payload else payload.get("lobby_id"),
+        "errors": errors,
+        "low_priority_data": {
+            "penalty_time": low_priority.get("penaltyTime"),
+            "penalty_time_remaining": low_priority.get("penaltyTimeRemaining"),
+        },
+        "ready_check": _normalize_ready_check(payload.get("readyCheck") or payload.get("ready_check")),
     }
 
 
@@ -3720,6 +4447,7 @@ async def league_player_friends():
 
 @router.post("/players/friends/{puuid}/spectate")
 async def spectate_league_friend(puuid: str):
+    _require_toolkit_account_actions()
     try:
         payload = await league_lab_service.request("GET", "/lol-chat/v1/friends")
         friend = next((row for row in (payload or []) if (
@@ -3728,6 +4456,10 @@ async def spectate_league_friend(puuid: str):
         public = _public_league_friend(friend or {})
         if not friend or not public["spectatable"]:
             raise HTTPException(status_code=409, detail="该好友当前不可观战")
+        await _require_live_phase({
+            "None", "Lobby", "Matchmaking", "ReadyCheck", "ChampSelect",
+            "PreEndOfGame", "EndOfGame", "WaitingForStats", "Reconnect",
+        })
         await league_lab_service.request(
             "POST",
             "/lol-spectator/v1/spectate/launch",
@@ -4731,6 +5463,7 @@ async def league_opgg_champion(
 
 @router.post("/opgg/apply-spells")
 async def league_opgg_apply_spells(body: OpggSpellApply):
+    _require_opgg_apply_access(body.source, "opgg_auto_apply_spells")
     spell1, spell2 = (int(value) for value in body.spell_ids)
     if spell1 <= 0 or spell2 <= 0:
         raise HTTPException(status_code=422, detail="召唤师技能 ID 无效")
@@ -4743,7 +5476,10 @@ async def league_opgg_apply_spells(body: OpggSpellApply):
                 spell1, spell2 = spell2, spell1
         elif spell1 == old2 or spell2 == old1:
             spell1, spell2 = spell2, spell1
+        await _require_live_phase("ChampSelect")
         await league_lab_service.request("PATCH", "/lol-champ-select/v1/session/my-selection", json_body={"spell1Id": spell1, "spell2Id": spell2})
+    except HTTPException:
+        raise
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"applied": True, "spell1_id": spell1, "spell2_id": spell2}
@@ -4751,6 +5487,7 @@ async def league_opgg_apply_spells(body: OpggSpellApply):
 
 @router.post("/opgg/apply-runes")
 async def league_opgg_apply_runes(body: OpggRuneApply):
+    _require_opgg_apply_access(body.source, "opgg_auto_apply_runes")
     selected = [int(value) for value in [*body.primary_rune_ids, *body.secondary_rune_ids, *body.stat_mod_ids] if int(value) > 0]
     if not selected:
         raise HTTPException(status_code=422, detail="符文配置为空")
@@ -4766,13 +5503,18 @@ async def league_opgg_apply_runes(body: OpggRuneApply):
         editable = next((page for page in (pages or []) if isinstance(page, dict) and page.get("isEditable")), None)
         if editable and editable.get("id") is not None:
             page_id = editable["id"]
+            await _require_live_phase("ChampSelect")
             await league_lab_service.request("PUT", f"/lol-perks/v1/pages/{page_id}", json_body=page_body)
         else:
+            await _require_live_phase("ChampSelect")
             created = await league_lab_service.request("POST", "/lol-perks/v1/pages", json_body=page_body)
             page_id = created.get("id") if isinstance(created, dict) else None
         if page_id is None:
             raise RuntimeError("LCU 未返回可用符文页")
+        await _require_live_phase("ChampSelect")
         await league_lab_service.request("PUT", "/lol-perks/v1/currentpage", json_body=page_id)
+    except HTTPException:
+        raise
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"applied": True, "page_id": page_id, "name": page_body["name"]}
@@ -4932,6 +5674,34 @@ async def league_friend_metadata():
 def _require_toolkit_account_actions() -> None:
     if not league_lab_service.settings.toolkit_account_actions_enabled:
         raise HTTPException(status_code=403, detail="账号写入工具默认关闭，请先在工具箱中明确启用")
+
+
+async def _require_live_phase(expected: str | set[str] | tuple[str, ...]) -> str:
+    """Require a fresh LCU gameflow phase immediately before an account write.
+
+    The cached ``LeagueLabService.phase`` is intentionally not used here: the
+    manual action routes are allowed to write only when the current LCU state
+    still permits the operation.  Tests can provide a fake ``request`` method
+    without starting a real League client.
+    """
+    expected_phases = {expected} if isinstance(expected, str) else set(expected)
+    try:
+        phase = str(await league_lab_service.request("GET", "/lol-gameflow/v1/gameflow-phase") or "")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=f"无法确认当前游戏阶段：{exc}") from exc
+    if phase not in expected_phases:
+        readable = "、".join(sorted(expected_phases))
+        raise HTTPException(status_code=409, detail=f"当前游戏阶段为 {phase or '未知'}，此操作仅允许在 {readable} 阶段执行")
+    return phase
+
+
+def _require_opgg_apply_access(source: str, feature: str) -> None:
+    """Separate explicit manual writes from opt-in automatic OP.GG writes."""
+    if source == "automation":
+        if not league_lab_service.settings.automation_enabled or not getattr(league_lab_service.settings, feature, False):
+            raise HTTPException(status_code=403, detail="OP.GG 自动写入需要同时开启自动化总开关和对应功能开关")
+        return
+    _require_toolkit_account_actions()
 
 
 def _unique_nonempty(values: list[str], label: str) -> list[str]:
@@ -5518,6 +6288,7 @@ async def _league_recommended_items_dir() -> Path:
 
 @router.post("/opgg/apply-items")
 async def league_opgg_apply_items(body: OpggItemSetApply):
+    _require_opgg_apply_access(body.source, "opgg_auto_apply_items")
     safe_parts = [body.champion_id, body.mode, body.region, body.tier, body.position, body.version or "latest"]
     uid = "insight-opgg-" + "-".join(re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(part)) for part in safe_parts)
     item_set = {
@@ -5631,6 +6402,7 @@ async def league_game_settings_file_status():
 
 @router.put("/toolkit/game-settings-file")
 async def league_game_settings_file_update(body: GameSettingsFileModeUpdate):
+    _require_toolkit_account_actions()
     try:
         path = await _league_game_settings_path()
         os.chmod(path, stat.S_IREAD if body.mode == "readonly" else stat.S_IREAD | stat.S_IWRITE)
@@ -5695,7 +6467,8 @@ async def league_update_ranked_status(body: RankedStatusUpdate):
 
 
 @router.post("/toolkit/terminate-game-client")
-async def league_terminate_game_client():
+async def league_terminate_game_client(body: TerminateGameClientRequest):
+    _require_toolkit_account_actions()
     try:
         pid = await asyncio.to_thread(_terminate_foreground_league_game_client)
     except RuntimeError as exc:
@@ -5832,35 +6605,109 @@ async def league_send_chat_message(body: ChatMessageSend):
     return {"sent": True, "phase": league_lab_service.phase, "line_count": len(lines)}
 
 
+@router.post("/actions/cancel-auto-accept")
+async def cancel_auto_accept():
+    """Cancel only the current local auto-accept deadline.
+
+    This route deliberately does not use the account-write gate and never
+    calls the LCU.  It is a local automation control, not a ReadyCheck
+    response; the user can still explicitly choose accept/decline afterwards.
+    """
+    if league_lab_service.phase == "ReadyCheck":
+        # ``inf`` is the scheduler's terminal sentinel for this phase.  A
+        # phase transition resets it, while the current loop will not create a
+        # new deadline after the user cancels it.
+        league_lab_service._accept_due_at = float("inf")
+    else:
+        league_lab_service._accept_due_at = None
+    league_lab_service.last_action = "已取消本次自动接受"
+    league_lab_service.last_action_at = time.time()
+    return league_lab_service.status()
+
+
 @router.post("/actions/{action}")
-async def run_league_lab_action(action: Literal["accept", "play-again", "reconnect", "start-matchmaking", "stop-matchmaking"]):
+async def run_league_lab_action(action: Literal["accept", "decline-ready-check", "play-again", "reconnect", "start-matchmaking", "stop-matchmaking"]):
     endpoints = {
         "accept": ("接受对局", "/lol-matchmaking/v1/ready-check/accept"),
+        "decline-ready-check": ("拒绝对局", "/lol-matchmaking/v1/ready-check/decline"),
         "play-again": ("返回房间", "/lol-lobby/v2/play-again"),
         "reconnect": ("重新连接", "/lol-gameflow/v1/reconnect"),
         "start-matchmaking": ("开始匹配", "/lol-lobby/v2/lobby/matchmaking/search"),
         "stop-matchmaking": ("停止匹配", "/lol-lobby/v2/lobby/matchmaking/search"),
     }
     label, path = endpoints[action]
+    _require_toolkit_account_actions()
+    allowed_phases = {
+        "accept": {"ReadyCheck"},
+        "decline-ready-check": {"ReadyCheck"},
+        "play-again": {"PreEndOfGame", "EndOfGame", "WaitingForStats"},
+        "reconnect": {"Reconnect"},
+        "start-matchmaking": {"Lobby"},
+        "stop-matchmaking": {"Matchmaking"},
+    }
     try:
+        await _require_live_phase(allowed_phases[action])
         method = "DELETE" if action == "stop-matchmaking" else "POST"
         await league_lab_service._record_action(label, method, path)
+    except HTTPException:
+        raise
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return league_lab_service.status()
+
+
+async def _league_champ_select_trade_action(trade_id: str, operation: Literal["accept", "decline"]):
+    """Perform one explicit champion-swap action after a fresh session check."""
+    _require_toolkit_account_actions()
+    await _require_live_phase("ChampSelect")
+    try:
+        session = await league_lab_service.request("GET", "/lol-champ-select/v1/session")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=f"无法读取最新英雄选择会话：{exc}") from exc
+    normalized = LeagueLabService._normalize_champ_select(session)
+    trade = next(
+        (item for item in normalized.get("trades") or [] if str(item.get("id")) == str(trade_id)),
+        None,
+    )
+    if trade is None:
+        raise HTTPException(status_code=409, detail="换英雄请求不存在或已过期")
+    if not trade.get("actionable"):
+        raise HTTPException(status_code=409, detail=f"换英雄请求当前不可操作（状态：{trade.get('state') or '未知'}）")
+    path = f"/lol-champ-select/v1/session/champion-swaps/{quote(str(trade_id), safe='')}/{operation}"
+    try:
+        await league_lab_service.request("POST", path)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    league_lab_service.last_action = f"已{('接受' if operation == 'accept' else '拒绝')}换英雄请求"
+    league_lab_service.last_action_at = time.time()
+    return league_lab_service.status()
+
+
+@router.post("/champ-select/trades/{trade_id}/accept")
+async def league_champ_select_trade_accept(trade_id: str):
+    return await _league_champ_select_trade_action(trade_id, "accept")
+
+
+@router.post("/champ-select/trades/{trade_id}/decline")
+async def league_champ_select_trade_decline(trade_id: str):
+    return await _league_champ_select_trade_action(trade_id, "decline")
 
 
 @router.post("/champ-select/bench/swap/{champion_id}")
 async def league_bench_swap(champion_id: int):
     if champion_id <= 0:
         raise HTTPException(status_code=422, detail="无效英雄 ID")
+    _require_toolkit_account_actions()
     try:
+        await _require_live_phase("ChampSelect")
         await league_lab_service._record_action(
             f"已从备战席换取英雄 {champion_id}",
             "POST",
             f"/lol-champ-select/v1/session/bench/swap/{champion_id}",
         )
         await league_lab_service._refresh_state()
+    except HTTPException:
+        raise
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return league_lab_service.status()
@@ -5905,21 +6752,28 @@ async def league_champ_select_dodge(body: ChampSelectDodgeRequest):
 
 @router.post("/champ-select/reroll")
 async def league_champ_select_reroll():
+    _require_toolkit_account_actions()
     try:
+        await _require_live_phase("ChampSelect")
         await league_lab_service._record_action(
             "已使用一次重随",
             "POST",
             "/lol-champ-select/v1/session/my-selection/reroll",
         )
         await league_lab_service._refresh_state()
+    except HTTPException:
+        raise
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return league_lab_service.status()
 
 
 @router.post("/champ-select/skin/{skin_id}")
 async def league_champ_select_skin(skin_id: int):
     if skin_id <= 0:
         raise HTTPException(status_code=422, detail="无效的皮肤 ID")
+    _require_toolkit_account_actions()
+    await _require_live_phase("ChampSelect")
     selector = league_lab_service.champ_select.get("skin_selector") or {}
     allowed = {int(row.get("id") or 0) for row in selector.get("skins") or []}
     if skin_id not in allowed:

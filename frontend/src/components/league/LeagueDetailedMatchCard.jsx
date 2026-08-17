@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Clock3, Map as MapIcon } from "lucide-react";
 import {
   getLeagueChampionIconUrl,
@@ -8,6 +8,7 @@ import {
 } from "../../api/api";
 import { fetchLeagueLoadoutCatalog, fetchLeagueMatchDetails } from "../../api/leagueLabApi";
 import { maskLeagueName } from "../../utils/leagueStreamerMode";
+import { formatLeagueTimestamp, leagueWinState } from "../../utils/leagueDisplay";
 import LeagueMatchReplayActions from "./LeagueMatchReplayActions";
 
 const TABS = [
@@ -20,18 +21,14 @@ const TABS = [
 ];
 
 function formatNumber(value) {
-  return Number(value || 0).toLocaleString("zh-CN");
+  if (value == null || value === "") return "—";
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toLocaleString("zh-CN") : "—";
 }
 
 function formatDuration(value) {
   const seconds = Math.max(0, Number(value || 0));
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
-}
-
-function formatPlayedAt(value) {
-  const numeric = Number(value);
-  const date = Number.isFinite(numeric) && numeric > 0 ? new Date(numeric) : new Date(value);
-  return Number.isNaN(date.getTime()) ? "比赛时间未知" : date.toLocaleString("zh-CN", { hour12: false });
 }
 
 function playerName(player, index, streamerMode, useAliases) {
@@ -76,7 +73,7 @@ function TeamTable({ players, targetPuuid, streamerMode, useAliases, onOpenPlaye
           <Icon src={getLeagueChampionIconUrl(player.champion_id)} title={player.champion_name} className="h-8 w-8" />
           <span className="min-w-0"><b className="block truncate">{playerName(player, index, streamerMode, useAliases)}</b><span className="text-[10px] text-cs2-text-muted">{player.position || player.role || player.champion_name}</span></span>
         </button>
-        <span className="text-center font-mono font-bold"><span>{player.kills || 0}</span><span className="text-cs2-text-muted"> / </span><span className="text-rose-300">{player.deaths || 0}</span><span className="text-cs2-text-muted"> / </span><span>{player.assists || 0}</span></span>
+        <span className="text-center font-mono font-bold"><span>{player.kills ?? "—"}</span><span className="text-cs2-text-muted"> / </span><span className="text-rose-300">{player.deaths ?? "—"}</span><span className="text-cs2-text-muted"> / </span><span>{player.assists ?? "—"}</span></span>
         <span className="text-right font-mono">{kp == null ? "—" : `${kp}%`}</span>
         <span className="text-right"><b>{formatNumber(player.damage)}</b><small className="block text-[9px] text-cs2-text-muted">{damageShare == null ? "—" : `${damageShare}%`}</small></span>
         <span className="text-right"><b>{formatNumber(player.cs)}</b><small className="block text-[9px] text-cs2-text-muted">{formatNumber(player.gold)}g</small></span>
@@ -384,13 +381,19 @@ function TimelineTab({ details, participants, streamerMode, useAliases, hideStat
   return <section className="space-y-3 text-xs">{hideStats ? null : <div className="grid gap-2 sm:grid-cols-3"><Stat icon={MapIcon} label="数据源" value={String(details.source || "LCU").toUpperCase()}/><Stat label="时间线帧" value={formatNumber(details.frame_count)}/><Stat label="事件数量" value={formatNumber(details.event_count)}/></div>}<div className="flex flex-wrap gap-1">{[["difference", "经济差"], ["teams", "队伍经济"], ["player", "玩家属性"]].map(([id, label]) => <button key={id} type="button" onClick={() => setSection(id)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${section === id ? "bg-violet-400/15 text-violet-200" : "text-cs2-text-muted hover:bg-white/5"}`}>{label}</button>)}</div>{section === "difference" ? <DifferenceTimeline details={details}/> : null}{section === "teams" ? <TeamGoldTimeline details={details}/> : null}{section === "player" ? <PlayerStatsTimeline details={details} participants={participants} streamerMode={streamerMode} useAliases={useAliases}/> : null}</section>;
 }
 
-export default function LeagueDetailedMatchCard({ match, streamerMode = false, useAliases = false, onOpenPlayer, onError }) {
+export default function LeagueDetailedMatchCard({ match, streamerMode = false, useAliases = false, onOpenPlayer, onError, initialDetails = null }) {
   const [expanded, setExpanded] = useState(false);
   const [tab, setTab] = useState("summary");
-  const [matchDetails, setMatchDetails] = useState(null);
+  const [matchDetails, setMatchDetails] = useState(initialDetails);
   const [perkMap, setPerkMap] = useState(new Map());
   const [detailsBusy, setDetailsBusy] = useState(false);
+  const detailsRequest = useRef(null);
+  const perksRequest = useRef(null);
+  const disposed = useRef(false);
   const participants = Array.isArray(match.participants) ? match.participants : [];
+  const matchKey = `${match.game_id ?? "unknown"}|${match.source || "auto"}`;
+  const matchKeyRef = useRef(matchKey);
+  matchKeyRef.current = matchKey;
   const targetPuuid = match.participant_puuid || participants.find((player) => Number(player.champion_id) === Number(match.champion_id) && Number(player.team_id) === Number(match.team_id))?.puuid;
   const target = participants.find((player) => player.puuid && player.puuid === targetPuuid) || { ...match, puuid: targetPuuid };
   const teams = useMemo(() => [...new Set(participants.map((player) => player.team_id).filter((value) => value != null))].map((teamId) => ({ teamId, players: participants.filter((player) => player.team_id === teamId) })), [participants]);
@@ -403,35 +406,81 @@ export default function LeagueDetailedMatchCard({ match, streamerMode = false, u
   const kda = (Number(target.kills || 0) + Number(target.assists || 0)) / Math.max(1, Number(target.deaths || 0));
   const kp = hasTeamContext && teamKills ? (Number(target.kills || 0) + Number(target.assists || 0)) / teamKills * 100 : null;
   const damageShare = hasTeamContext && teamDamage ? Number(target.damage || 0) / teamDamage * 100 : null;
+  const matchWin = leagueWinState(match.win);
+
+  useEffect(() => {
+    disposed.current = false;
+    return () => { disposed.current = true; detailsRequest.current = null; perksRequest.current = null; };
+  }, []);
+  useEffect(() => {
+    setMatchDetails(initialDetails);
+    setDetailsBusy(false);
+    detailsRequest.current = null;
+  }, [matchKey, initialDetails]);
+
+  const ensurePerks = async () => {
+    if (perkMap.size) return perkMap;
+    if (perksRequest.current) return perksRequest.current;
+    const promise = (async () => {
+      try {
+        const catalog = await fetchLeagueLoadoutCatalog();
+        const next = new Map((catalog?.perks || catalog?.styles?.flatMap((style) => style.perks || []) || []).map((perk) => [Number(perk.id), perk]));
+        if (!disposed.current) setPerkMap(next);
+        return next;
+      } catch (error) {
+        if (!disposed.current) onError?.(error?.response?.data?.detail || "符文目录读取失败");
+        return new Map();
+      } finally {
+        perksRequest.current = null;
+      }
+    })();
+    perksRequest.current = promise;
+    return promise;
+  };
+
+  const ensureDetails = async () => {
+    if (matchDetails) return matchDetails;
+    if (!match.game_id) return null;
+    if (detailsRequest.current?.key === matchKey) return detailsRequest.current.promise;
+    setDetailsBusy(true);
+    const promise = (async () => {
+      try {
+        const next = await fetchLeagueMatchDetails(match.game_id, match.source || "auto");
+        if (!disposed.current && matchKeyRef.current === matchKey) setMatchDetails(next && typeof next === "object" ? next : null);
+        return next;
+      } catch (error) {
+        if (!disposed.current && matchKeyRef.current === matchKey) onError?.(error?.response?.data?.detail || "对局详情读取失败");
+        return null;
+      } finally {
+        if (detailsRequest.current?.key === matchKey) {
+          detailsRequest.current = null;
+          if (!disposed.current && matchKeyRef.current === matchKey) setDetailsBusy(false);
+        }
+      }
+    })();
+    detailsRequest.current = { key: matchKey, promise };
+    return promise;
+  };
 
   const selectTab = async (nextTab) => {
     setTab(nextTab);
     if (nextTab === "runes" && !perkMap.size) {
-      try {
-        const catalog = await fetchLeagueLoadoutCatalog();
-        setPerkMap(new Map((catalog.perks || catalog.styles?.flatMap((style) => style.perks || []) || []).map((perk) => [Number(perk.id), perk])));
-      } catch (error) {
-        onError?.(error?.response?.data?.detail || "符文目录读取失败");
-      }
+      await ensurePerks();
     }
-    if (!["events", "builds", "timeline"].includes(nextTab) || matchDetails || detailsBusy || !match.game_id) return;
-    setDetailsBusy(true);
-    try { setMatchDetails(await fetchLeagueMatchDetails(match.game_id, match.source || "auto")); }
-    catch (error) { onError?.(error?.response?.data?.detail || "对局详情读取失败"); }
-    finally { setDetailsBusy(false); }
+    if (["events", "builds", "timeline"].includes(nextTab)) await ensureDetails();
   };
 
   const GoldTimeline = ({ details }) => <TimelineTab details={details} participants={participants} streamerMode={streamerMode} useAliases={useAliases} hideStats/>;
 
-  return <article className={`overflow-hidden rounded-2xl border ${match.win ? "border-emerald-400/25 bg-emerald-400/[.045]" : "border-rose-400/25 bg-rose-400/[.045]"}`}>
+  return <article className={`overflow-hidden rounded-2xl border ${matchWin === true ? "border-emerald-400/25 bg-emerald-400/[.045]" : matchWin === false ? "border-rose-400/25 bg-rose-400/[.045]" : "border-cs2-border-subtle bg-cs2-bg-elevated"}`}>
     <div className="flex min-h-[118px] items-stretch">
       <div className="flex min-w-0 flex-1 gap-3 p-3">
-        <div className="relative h-14 w-14 shrink-0"><Icon src={getLeagueChampionIconUrl(match.champion_id)} title={match.champion_name} className="h-14 w-14" /><span className={`absolute -bottom-1 -right-1 rounded px-1.5 py-0.5 text-[9px] font-black ${match.win ? "bg-emerald-500 text-black" : "bg-rose-500 text-white"}`}>{match.win ? "胜" : "负"}</span></div>
+        <div className="relative h-14 w-14 shrink-0"><Icon src={getLeagueChampionIconUrl(match.champion_id)} title={match.champion_name} className="h-14 w-14" /><span className={`absolute -bottom-1 -right-1 rounded px-1.5 py-0.5 text-[9px] font-black ${matchWin === true ? "bg-emerald-500 text-black" : matchWin === false ? "bg-rose-500 text-white" : "bg-white/15 text-cs2-text-muted"}`}>{matchWin === true ? "胜" : matchWin === false ? "负" : "未知"}</span></div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-start justify-between gap-2"><div><b className="text-sm">{match.champion_name || `英雄 ${match.champion_id}`}</b><span className="ml-2 text-[10px] text-cs2-text-muted">{match.position || match.role || "未知位置"}</span></div><span className="font-mono text-base font-black">{match.kills || 0}<i className="px-1 not-italic text-cs2-text-muted">/</i><span className="text-rose-300">{match.deaths || 0}</span><i className="px-1 not-italic text-cs2-text-muted">/</i>{match.assists || 0}</span></div>
           <div className="mt-1 flex flex-wrap gap-x-3 text-[10px] text-cs2-text-muted"><span>KDA <b className="text-cs2-text-primary">{kda.toFixed(2)}</b></span><span>参团 <b className="text-cs2-text-primary">{kp == null ? "—" : `${kp.toFixed(0)}%`}</b></span><span>伤害占比 <b className="text-cs2-text-primary">{damageShare == null ? "—" : `${damageShare.toFixed(0)}%`}</b></span><span>补刀/分 <b className="text-cs2-text-primary">{match.duration_seconds ? (Number(match.cs || 0) / (Number(match.duration_seconds) / 60)).toFixed(1) : "—"}</b></span></div>
           <div className="mt-2 flex flex-wrap items-center gap-1"><SpellIcons player={match} compact/><Loadout player={match} compact /></div>
-          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-cs2-text-muted"><span>{match.game_mode || "未知模式"}</span><span>·</span><Clock3 className="h-3 w-3"/><span>{formatDuration(match.duration_seconds)}</span><span>·</span><span>{formatPlayedAt(match.played_at)}</span><span>·</span><span>Game {match.game_id}</span></div>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-cs2-text-muted"><span>{match.game_mode || "未知模式"}</span><span>·</span><Clock3 className="h-3 w-3"/><span>{formatDuration(match.duration_seconds)}</span><span>·</span><span>{formatLeagueTimestamp(match.played_at)}</span><span>·</span><span>Game {match.game_id ?? "未知"}</span></div>
         </div>
         {participants.length ? <div className="hidden w-44 shrink-0 grid-cols-2 gap-x-2 lg:grid">{teams.slice(0, 2).map((team) => <div key={team.teamId} className="space-y-0.5">{team.players.slice(0, 5).map((player, index) => <button key={player.puuid || index} type="button" disabled={!player.puuid} onClick={() => player.puuid && onOpenPlayer?.(player.puuid)} className={`flex w-full min-w-0 items-center gap-1 text-left text-[9px] ${player.puuid === targetPuuid ? "font-bold text-cyan-200" : "text-cs2-text-muted"}`}><Icon src={getLeagueChampionIconUrl(player.champion_id)} title={player.champion_name} className="h-4 w-4"/><span className="truncate">{playerName(player, index, streamerMode, useAliases)}</span></button>)}</div>)}</div> : null}
       </div>
@@ -439,7 +488,7 @@ export default function LeagueDetailedMatchCard({ match, streamerMode = false, u
     </div>
     {expanded ? <div className="border-t border-cs2-border-subtle p-3">
       <div className="mb-3 flex flex-wrap items-center gap-1"><div className="flex min-w-0 flex-1 flex-wrap gap-1">{TABS.map(([id, label]) => <button key={id} type="button" onClick={() => void selectTab(id)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${tab === id ? "bg-cyan-400/15 text-cyan-200" : "text-cs2-text-muted hover:bg-white/5"}`}>{label}</button>)}</div><LeagueMatchReplayActions match={match} onError={onError}/></div>
-      {tab === "summary" ? <div className="space-y-3">{teams.map((team) => <section key={team.teamId}><h4 className="mb-1.5 text-[11px] font-bold text-cs2-text-muted">队伍 {team.teamId} · {team.players[0]?.win ? "胜利" : "失败"}</h4><TeamTable players={team.players} targetPuuid={targetPuuid} streamerMode={streamerMode} useAliases={useAliases} onOpenPlayer={onOpenPlayer}/></section>)}</div> : null}
+      {tab === "summary" ? <div className="space-y-3">{teams.map((team) => { const teamWin = leagueWinState(team.players[0]?.win); return <section key={team.teamId}><h4 className="mb-1.5 text-[11px] font-bold text-cs2-text-muted">队伍 {team.teamId} · {teamWin === true ? "胜利" : teamWin === false ? "失败" : "结果未知"}</h4><TeamTable players={team.players} targetPuuid={targetPuuid} streamerMode={streamerMode} useAliases={useAliases} onOpenPlayer={onOpenPlayer}/></section>; })}</div> : null}
       {tab === "details" ? <RawDetailsTab match={match} participants={participants} streamerMode={streamerMode} useAliases={useAliases}/> : null}
       {tab === "runes" ? <RunesTab participants={participants} perkMap={perkMap} streamerMode={streamerMode} useAliases={useAliases}/> : null}
       {tab === "events" ? detailsBusy ? <p className="rounded-xl border border-cs2-border-subtle p-8 text-center text-xs text-cs2-text-muted">正在读取本局事件…</p> : matchDetails ? <EventsTab details={matchDetails} participants={participants} mapId={match.map_id} streamerMode={streamerMode} useAliases={useAliases}/> : <p className="text-xs text-cs2-text-muted">此对局没有可用事件数据。</p> : null}

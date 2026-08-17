@@ -93,11 +93,18 @@ def test_friend_search_surface_hides_spectator_key_and_revalidates_launch(monkey
         "lol": {"gameStatus": "inGame", "spectatorKey": "private-spectator-key"},
     }]
     calls = []
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(toolkit_account_actions_enabled=True),
+    )
 
     async def request(method, path, *, json_body=None, params=None):
         calls.append((method, path, json_body))
         if (method, path) == ("GET", "/lol-chat/v1/friends"):
             return friend_payload
+        if (method, path) == ("GET", "/lol-gameflow/v1/gameflow-phase"):
+            return "Lobby"
         if (method, path) == ("POST", "/lol-spectator/v1/spectate/launch"):
             return None
         raise AssertionError(f"unexpected LCU request: {method} {path}")
@@ -509,10 +516,15 @@ def test_settings_are_persisted_without_lcu_credentials(tmp_path, monkeypatch):
 
 def test_champion_config_prefers_ranked_position_loadout():
     service = LeagueLabService()
-    service.settings = LeagueLabSettings(champion_loadouts=[
+    service.phase = "ChampSelect"
+    service.settings = LeagueLabSettings(
+        automation_enabled=True,
+        auto_champion_config_enabled=True,
+        champion_loadouts=[
         {"champion_id": 22, "config_key": "default", "primary_style_id": 8000, "sub_style_id": 8100, "selected_perk_ids": [8005], "spell1_id": 4, "spell2_id": 7},
         {"champion_id": 22, "config_key": "ranked-jungle", "primary_style_id": 8100, "sub_style_id": 8300, "selected_perk_ids": [8112], "spell1_id": 11, "spell2_id": 4},
-    ])
+        ],
+    )
     writes = []
 
     async def fake_request(method, path, *, json_body=None):
@@ -632,6 +644,7 @@ def test_play_again_waits_for_phase_buffer(monkeypatch):
 
 def test_auto_select_uses_the_first_available_preference(monkeypatch):
     service = LeagueLabService()
+    service.phase = "ChampSelect"
     service.settings = LeagueLabSettings(
         automation_enabled=True,
         auto_select_enabled=True,
@@ -658,6 +671,7 @@ def test_auto_select_uses_the_first_available_preference(monkeypatch):
 
 def test_auto_select_limits_card_mode_pick_to_server_subset(monkeypatch):
     service = LeagueLabService()
+    service.phase = "ChampSelect"
     profile = league_lab.AutoSelectProfile(
         pick={"enabled": True, "champions": {"default": [103, 157]}, "delay_seconds": 0, "strategy": "lock-in-immediately"}
     )
@@ -680,6 +694,7 @@ def test_auto_select_limits_card_mode_pick_to_server_subset(monkeypatch):
 
 def test_auto_select_supports_arena_bravery_special_action(monkeypatch):
     service = LeagueLabService()
+    service.phase = "ChampSelect"
     profile = league_lab.AutoSelectProfile(
         pick={"enabled": True, "champions": {"default": [-3]}, "delay_seconds": 0, "strategy": "lock-in-immediately"}
     )
@@ -726,6 +741,7 @@ def test_normalized_champ_select_exposes_mini_bench_state():
 
 def test_auto_select_temporary_disable_blocks_all_client_calls(monkeypatch):
     service = LeagueLabService()
+    service.phase = "ChampSelect"
     service.auto_select_temporarily_disabled = True
 
     async def request(*args, **kwargs):
@@ -737,6 +753,7 @@ def test_auto_select_temporary_disable_blocks_all_client_calls(monkeypatch):
 
 def test_auto_select_delay_is_non_blocking_and_visible(monkeypatch):
     service = LeagueLabService()
+    service.phase = "ChampSelect"
     service.settings = LeagueLabSettings(
         automation_enabled=True,
         auto_select_enabled=True,
@@ -761,8 +778,167 @@ def test_auto_select_delay_is_non_blocking_and_visible(monkeypatch):
     assert 0 < countdown["remaining_seconds"] <= 3
 
 
+def _auto_select_state_fixture(*, action_type="pick", champion_id=0, timer_phase="BAN_PICK", subset=False, bench=False):
+    completed = bool(bench and champion_id)
+    return {
+        "localPlayerCellId": 2,
+        "myTeam": [{"cellId": 2, "championId": 103}],
+        "allowSubsetChampionPicks": subset,
+        "benchEnabled": bench,
+        "benchChampions": [{"championId": 157}] if bench else [],
+        "actions": [[{
+            "id": 8,
+            "actorCellId": 2,
+            "type": action_type,
+            "championId": champion_id,
+            "completed": completed,
+            "isInProgress": not completed,
+        }]],
+        "timer": {"phase": timer_phase, "adjustedTimeLeftInPhase": 5000},
+    }
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected_move"),
+    [
+        ({"action_type": "pick", "timer_phase": "PLANNING"}, "pick-intent"),
+        ({"action_type": "pick"}, "show-pick"),
+        ({"action_type": "pick", "champion_id": 103}, "complete-pick"),
+        ({"action_type": "ban"}, "show-ban"),
+        ({"action_type": "ban", "champion_id": 103}, "complete-ban"),
+        ({"action_type": "vote"}, "vote"),
+        ({"action_type": "pick", "subset": True}, "show-subset-pick"),
+        ({"action_type": "pick", "subset": True, "champion_id": 103}, "complete-subset-pick"),
+        ({"action_type": "pick", "champion_id": 103, "subset": True, "bench": True}, "subset-bench-swap"),
+        ({"action_type": "pick", "champion_id": 103, "bench": True}, "bench-swap"),
+    ],
+)
+def test_normalized_auto_select_move_and_current_ids(kwargs, expected_move):
+    normalized = LeagueLabService._normalize_champ_select(
+        _auto_select_state_fixture(**kwargs),
+        pickable_ids=[103, 157],
+        bannable_ids=[103, 157],
+        subset_ids=[157],
+    )
+    assert normalized["auto_select_move"] == expected_move
+    assert normalized["current_pickable_champion_ids"] == [103, 157]
+    assert normalized["current_bannable_champion_ids"] == [103, 157]
+    assert normalized["current_pickable_ids_available"] is True
+    assert normalized["current_bannable_ids_available"] is True
+
+
+@pytest.mark.parametrize(
+    ("settings", "phase"),
+    [
+        (LeagueLabSettings(auto_select_enabled=True), "ChampSelect"),
+        (LeagueLabSettings(automation_enabled=True), "ChampSelect"),
+        (LeagueLabSettings(automation_enabled=True, auto_select_enabled=True), "Lobby"),
+    ],
+)
+def test_auto_select_safety_gates_stop_before_session_request(monkeypatch, settings, phase):
+    service = LeagueLabService()
+    service.settings = settings
+    service.phase = phase
+    calls = []
+
+    async def request(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("auto-select gate/phase must stop before LCU access")
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(service._run_auto_select())
+    assert calls == []
+
+
+def test_auto_select_rejects_unavailable_candidate_without_write(monkeypatch):
+    service = LeagueLabService()
+    service.phase = "ChampSelect"
+    service.settings = LeagueLabSettings(
+        automation_enabled=True,
+        auto_select_enabled=True,
+        auto_pick_champion_ids=[103],
+        champion_action_delay_seconds=0,
+    )
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if path == "/lol-champ-select/v1/session":
+            return _auto_select_state_fixture()
+        if path == "/lol-gameflow/v1/session":
+            return {}
+        if path == "/lol-champ-select/v1/pickable-champion-ids":
+            return [157]
+        calls.append((method, path, json_body))
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(service._run_auto_select())
+    assert calls == []
+
+
+def test_auto_select_pick_intent_uses_intent_payload_and_delayed_plan(monkeypatch):
+    service = LeagueLabService()
+    service.phase = "ChampSelect"
+    profile = league_lab.AutoSelectProfile(
+        pick={
+            "enabled": True,
+            "champions": {"default": [103]},
+            "delay_seconds": 2,
+            "show_intent": True,
+            "strategy": "show-and-lock-in",
+        }
+    )
+    service.settings = LeagueLabSettings(
+        automation_enabled=True,
+        auto_select_enabled=True,
+        auto_select_profiles={"default": profile},
+    )
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if path == "/lol-champ-select/v1/session":
+            return _auto_select_state_fixture(timer_phase="PLANNING")
+        if path == "/lol-gameflow/v1/session":
+            return {}
+        if path == "/lol-champ-select/v1/pickable-champion-ids":
+            return [103]
+        calls.append((method, path, json_body))
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(service._run_auto_select())
+    assert calls == []
+    plan = service.status()["delayed_action_plan"]
+    assert plan and plan[0]["move"] == "pick-intent"
+    assert plan[0]["completed"] is False
+    service._champion_action_due_at["pick:8"] = 0
+    asyncio.run(service._run_auto_select())
+    assert calls == [("PATCH", "/lol-champ-select/v1/session/actions/8", {"championId": 103})]
+
+
+def test_auto_select_automatic_trade_uses_champion_swaps_endpoint(monkeypatch):
+    service = LeagueLabService()
+    service.phase = "ChampSelect"
+    service.settings = LeagueLabSettings(automation_enabled=True, auto_select_enabled=True)
+    service.ongoing_champion_swap = {
+        "id": 7,
+        "state": "RECEIVED",
+        "requesterChampionId": 103,
+    }
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, json_body))
+        return None
+
+    monkeypatch.setattr(service, "request", request)
+    asyncio.run(service._run_trade_handling(
+        {"trades": []}, [103, 157], league_lab.PickProfile(enabled=True, delay_seconds=0), {"current_session_champion_id": 157}
+    ))
+    assert calls == [("POST", "/lol-champ-select/v1/session/champion-swaps/7/accept", None)]
+
+
 def test_invitation_strategy_prefers_accept_and_respects_game_type(monkeypatch):
     service = LeagueLabService()
+    service.phase = "Lobby"
     service.settings = LeagueLabSettings(
         automation_enabled=True,
         auto_handle_invitations_enabled=True,
@@ -785,6 +961,8 @@ def test_invitation_strategy_prefers_accept_and_respects_game_type(monkeypatch):
 
 def test_auto_honor_submits_votes_and_finishes_ballot(monkeypatch):
     service = LeagueLabService()
+    service.settings = LeagueLabSettings(automation_enabled=True, auto_honor_enabled=True)
+    service.phase = "EndOfGame"
     calls = []
 
     async def request(method, path, *, json_body=None, params=None):
@@ -797,7 +975,41 @@ def test_auto_honor_submits_votes_and_finishes_ballot(monkeypatch):
     asyncio.run(service._run_auto_honor())
 
     assert calls == [
-        ("POST", "/lol-honor/v1/honor", {"honorType": "COOL", "recipientPuuid": "ally"}),
+        ("POST", "/lol-honor/v1/honor", {"honorType": "HEART", "recipientPuuid": "ally"}),
+        ("POST", "/lol-honor/v1/ballot", None),
+    ]
+
+
+def test_auto_honor_prefers_lobby_allies_then_other_allies_then_opponents(monkeypatch):
+    service = LeagueLabService()
+    service.settings = LeagueLabSettings(automation_enabled=True, auto_honor_enabled=True)
+    service.phase = "EndOfGame"
+    calls = []
+
+    async def request(method, path, *, json_body=None, params=None):
+        if (method, path) == ("GET", "/lol-honor-v2/v1/ballot/"):
+            return {
+                "gameId": 79,
+                "votePool": {"votes": 3},
+                "eligibleAllies": [
+                    {"puuid": "other", "botPlayer": False},
+                    {"puuid": "lobby", "botPlayer": False},
+                ],
+                "eligibleOpponents": [{"puuid": "enemy", "botPlayer": False}],
+            }
+        if (method, path) == ("GET", "/lol-lobby/v2/eog-status"):
+            return {"eogPlayers": ["lobby"]}
+        calls.append((method, path, json_body))
+
+    monkeypatch.setattr(service, "request", request)
+    monkeypatch.setattr(league_lab.random, "sample", lambda population, count: list(population)[:count])
+
+    asyncio.run(service._run_auto_honor())
+
+    assert calls == [
+        ("POST", "/lol-honor/v1/honor", {"honorType": "HEART", "recipientPuuid": "lobby"}),
+        ("POST", "/lol-honor/v1/honor", {"honorType": "HEART", "recipientPuuid": "other"}),
+        ("POST", "/lol-honor/v1/honor", {"honorType": "HEART", "recipientPuuid": "enemy"}),
         ("POST", "/lol-honor/v1/ballot", None),
     ]
 
@@ -862,7 +1074,12 @@ def test_auto_matchmaking_starts_when_lobby_is_ready(monkeypatch):
 
 def test_auto_honor_opt_out_finishes_without_voting(monkeypatch):
     service = LeagueLabService()
-    service.settings = LeagueLabSettings(auto_honor_strategy="opt-out")
+    service.settings = LeagueLabSettings(
+        automation_enabled=True,
+        auto_honor_enabled=True,
+        auto_honor_strategy="opt-out",
+    )
+    service.phase = "EndOfGame"
     calls = []
 
     async def request(method, path, *, json_body=None, params=None):
@@ -1821,6 +2038,15 @@ def test_cooldown_timer_send_requires_opt_in_and_foreground_guard(monkeypatch):
 
 
 def test_skin_change_rejects_skin_outside_owned_snapshot(monkeypatch):
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(toolkit_account_actions_enabled=True),
+    )
+    async def request(method, path, **_kwargs):
+        assert (method, path) == ("GET", "/lol-gameflow/v1/gameflow-phase")
+        return "ChampSelect"
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
     league_lab.league_lab_service.champ_select = {
         "skin_selector": {"skins": [{"id": 22001}], "disabled": False}
     }
@@ -1952,20 +2178,34 @@ def test_manual_chat_preset_sends_to_champion_select(monkeypatch):
 
 
 def test_terminate_game_client_endpoint_uses_foreground_guard(monkeypatch):
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(toolkit_account_actions_enabled=True),
+    )
     monkeypatch.setattr(league_lab, "_terminate_foreground_league_game_client", lambda: 4242)
 
-    result = asyncio.run(league_lab.league_terminate_game_client())
+    result = asyncio.run(league_lab.league_terminate_game_client(
+        league_lab.TerminateGameClientRequest(confirmation="我确认结束游戏")
+    ))
 
     assert result == {"terminated": True, "pid": 4242}
 
 
 def test_terminate_game_client_endpoint_preserves_guard_error(monkeypatch):
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(toolkit_account_actions_enabled=True),
+    )
     def blocked():
         raise RuntimeError("当前前台窗口不是 League 游戏进程，未执行任何操作")
 
     monkeypatch.setattr(league_lab, "_terminate_foreground_league_game_client", blocked)
     try:
-        asyncio.run(league_lab.league_terminate_game_client())
+        asyncio.run(league_lab.league_terminate_game_client(
+            league_lab.TerminateGameClientRequest(confirmation="我确认结束游戏")
+        ))
     except league_lab.HTTPException as exc:
         assert exc.status_code == 409
         assert "未执行任何操作" in str(exc.detail)
@@ -1985,7 +2225,9 @@ def test_game_settings_file_mode_uses_tencent_game_config(tmp_path, monkeypatch)
         return str(install_root)
 
     original = league_lab.league_lab_service.credentials
+    original_settings = league_lab.league_lab_service.settings
     league_lab.league_lab_service.credentials = league_lab.LcuCredentials(1, "token", region="TENCENT")
+    league_lab.league_lab_service.settings = league_lab.LeagueLabSettings(toolkit_account_actions_enabled=True)
     monkeypatch.setattr(league_lab.league_lab_service, "request", request)
     try:
         readonly = asyncio.run(
@@ -2002,6 +2244,7 @@ def test_game_settings_file_mode_uses_tencent_game_config(tmp_path, monkeypatch)
         assert writable["mode"] == "writable"
     finally:
         league_lab.league_lab_service.credentials = original
+        league_lab.league_lab_service.settings = original_settings
         settings_path.chmod(stat.S_IREAD | stat.S_IWRITE)
 
 
@@ -2318,9 +2561,16 @@ def test_opgg_proxy_uses_fixed_origin_and_cache(monkeypatch):
 
 def test_opgg_spell_apply_honors_flash_position(monkeypatch):
     calls = []
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(toolkit_account_actions_enabled=True),
+    )
 
     async def request(method, path, *, json_body=None, params=None):
         calls.append((method, path, json_body))
+        if (method, path) == ("GET", "/lol-gameflow/v1/gameflow-phase"):
+            return "ChampSelect"
         if method == "GET":
             return {"spell1Id": 14, "spell2Id": 4}
         return None
@@ -2336,11 +2586,18 @@ def test_opgg_spell_apply_honors_flash_position(monkeypatch):
 
 def test_opgg_runes_replace_an_editable_page(monkeypatch):
     calls = []
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(toolkit_account_actions_enabled=True),
+    )
 
     async def request(method, path, *, json_body=None, params=None):
         calls.append((method, path, json_body))
         if (method, path) == ("GET", "/lol-perks/v1/pages"):
             return [{"id": 9, "isEditable": True}]
+        if (method, path) == ("GET", "/lol-gameflow/v1/gameflow-phase"):
+            return "ChampSelect"
         return None
 
     monkeypatch.setattr(league_lab.league_lab_service, "request", request)
@@ -2357,10 +2614,16 @@ def test_opgg_runes_replace_an_editable_page(monkeypatch):
 
     assert result["page_id"] == 9
     assert calls[-1] == ("PUT", "/lol-perks/v1/currentpage", 9)
-    assert calls[1][2]["selectedPerkIds"] == [8010, 9111, 9105, 8299, 8429, 8451, 5008, 5008, 5001]
+    page_write = next(call for call in calls if call[0] == "PUT" and "/lol-perks/v1/pages/" in call[1])
+    assert page_write[2]["selectedPerkIds"] == [8010, 9111, 9105, 8299, 8429, 8451, 5008, 5008, 5001]
 
 
 def test_opgg_item_set_is_written_atomically_to_dedicated_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(toolkit_account_actions_enabled=True),
+    )
     monkeypatch.setattr(league_lab, "_league_recommended_items_dir", lambda: asyncio.sleep(0, result=tmp_path))
     result = asyncio.run(league_lab.league_opgg_apply_items(league_lab.OpggItemSetApply(
         champion_id=86,
@@ -2378,6 +2641,57 @@ def test_opgg_item_set_is_written_atomically_to_dedicated_file(tmp_path, monkeyp
     assert target.is_file()
     assert not target.with_suffix(".json.tmp").exists()
     assert payload["blocks"][0]["items"][0] == {"id": "6631", "count": 1}
+
+
+def test_opgg_item_set_manual_gate_blocks_before_local_file_write(tmp_path, monkeypatch):
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", LeagueLabSettings())
+    monkeypatch.setattr(league_lab, "_league_recommended_items_dir", lambda: asyncio.sleep(0, result=tmp_path))
+    body = league_lab.OpggItemSetApply(
+        champion_id=86,
+        champion_name="盖伦",
+        groups=[{"title": "核心装", "item_ids": [6631]}],
+        source="manual",
+    )
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.league_opgg_apply_items(body))
+    assert caught.value.status_code == 403
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_opgg_item_set_automation_requires_master_and_feature_gate(tmp_path, monkeypatch):
+    monkeypatch.setattr(league_lab, "_league_recommended_items_dir", lambda: asyncio.sleep(0, result=tmp_path))
+    body = league_lab.OpggItemSetApply(
+        champion_id=86,
+        champion_name="盖伦",
+        groups=[{"title": "核心装", "item_ids": [6631]}],
+        source="automation",
+    )
+    for settings in (
+        LeagueLabSettings(opgg_auto_apply_items=True),
+        LeagueLabSettings(automation_enabled=True),
+    ):
+        monkeypatch.setattr(league_lab.league_lab_service, "settings", settings)
+        with pytest.raises(league_lab.HTTPException) as caught:
+            asyncio.run(league_lab.league_opgg_apply_items(body))
+        assert caught.value.status_code == 403
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_game_settings_file_write_gate_blocks_before_install_dir_request(monkeypatch):
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", LeagueLabSettings())
+    calls = []
+
+    async def request(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("toolkit gate must run before install-dir request")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.league_game_settings_file_update(
+            league_lab.GameSettingsFileModeUpdate(mode="readonly")
+        ))
+    assert caught.value.status_code == 403
+    assert calls == []
 
 
 def test_opgg_cleanup_removes_only_owned_item_sets(tmp_path, monkeypatch):
@@ -2611,3 +2925,589 @@ def test_generated_preset_shortcut_requires_matching_configured_target(monkeypat
     monkeypatch.setattr(league_lab, "_send_league_preset_lines", send_lines)
     assert asyncio.run(league_lab.league_send_in_game_lines(body)) == {"sent": True}
     assert sent == ["敌方近期表现"]
+
+
+@pytest.mark.parametrize("action", ["accept", "play-again", "reconnect", "start-matchmaking", "stop-matchmaking"])
+def test_manual_flow_actions_require_toolkit_gate_before_any_lcu_request(monkeypatch, action):
+    calls = []
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", LeagueLabSettings())
+
+    async def request(method, path, **_kwargs):
+        calls.append((method, path))
+        raise AssertionError("account gate must run before LCU requests")
+
+    async def record(*_args):
+        raise AssertionError("account gate must run before _record_action")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    monkeypatch.setattr(league_lab.league_lab_service, "_record_action", record)
+
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.run_league_lab_action(action))
+
+    assert caught.value.status_code == 403
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("action", "live_phase"),
+    [
+        ("accept", "Lobby"),
+        ("play-again", "Lobby"),
+        ("reconnect", "Lobby"),
+        ("start-matchmaking", "Matchmaking"),
+        ("stop-matchmaking", "Lobby"),
+    ],
+)
+def test_manual_flow_actions_reject_wrong_live_phase_without_recording(monkeypatch, action, live_phase):
+    calls = []
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(toolkit_account_actions_enabled=True),
+    )
+
+    async def request(method, path, **_kwargs):
+        calls.append((method, path))
+        if (method, path) == ("GET", "/lol-gameflow/v1/gameflow-phase"):
+            return live_phase
+        raise AssertionError(f"unexpected LCU request: {method} {path}")
+
+    async def record(*_args):
+        raise AssertionError("wrong phase must block _record_action")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    monkeypatch.setattr(league_lab.league_lab_service, "_record_action", record)
+
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.run_league_lab_action(action))
+
+    assert caught.value.status_code == 409
+    assert calls == [("GET", "/lol-gameflow/v1/gameflow-phase")]
+
+
+@pytest.mark.parametrize("operation", ["bench", "reroll"])
+def test_manual_champ_select_actions_require_gate_and_live_phase(monkeypatch, operation):
+    calls = []
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", LeagueLabSettings())
+
+    async def request(method, path, **_kwargs):
+        calls.append((method, path))
+        raise AssertionError("account gate must run before LCU requests")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    with pytest.raises(league_lab.HTTPException) as caught:
+        if operation == "bench":
+            asyncio.run(league_lab.league_bench_swap(7))
+        else:
+            asyncio.run(league_lab.league_champ_select_reroll())
+    assert caught.value.status_code == 403
+    assert calls == []
+
+
+@pytest.mark.parametrize("operation", ["bench", "reroll"])
+def test_manual_champ_select_actions_reject_wrong_phase_without_write(monkeypatch, operation):
+    calls = []
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(toolkit_account_actions_enabled=True),
+    )
+
+    async def request(method, path, **_kwargs):
+        calls.append((method, path))
+        if (method, path) == ("GET", "/lol-gameflow/v1/gameflow-phase"):
+            return "Lobby"
+        raise AssertionError(f"unexpected LCU request: {method} {path}")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    with pytest.raises(league_lab.HTTPException) as caught:
+        if operation == "bench":
+            asyncio.run(league_lab.league_bench_swap(7))
+        else:
+            asyncio.run(league_lab.league_champ_select_reroll())
+    assert caught.value.status_code == 409
+    assert calls == [("GET", "/lol-gameflow/v1/gameflow-phase")]
+
+
+def test_champ_select_reroll_returns_refreshed_status_after_write(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(toolkit_account_actions_enabled=True),
+    )
+
+    async def request(method, path, **_kwargs):
+        calls.append((method, path))
+        if (method, path) == ("GET", "/lol-gameflow/v1/gameflow-phase"):
+            return "ChampSelect"
+        if (method, path) == ("POST", "/lol-champ-select/v1/session/my-selection/reroll"):
+            return None
+        raise AssertionError(f"unexpected LCU request: {method} {path}")
+
+    async def refresh_state():
+        return None
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    monkeypatch.setattr(league_lab.league_lab_service, "_refresh_state", refresh_state)
+
+    result = asyncio.run(league_lab.league_champ_select_reroll())
+
+    assert isinstance(result, dict)
+    assert calls == [
+        ("GET", "/lol-gameflow/v1/gameflow-phase"),
+        ("POST", "/lol-champ-select/v1/session/my-selection/reroll"),
+    ]
+
+
+def test_manual_skin_change_requires_gate_and_live_phase(monkeypatch):
+    calls = []
+    league_lab.league_lab_service.champ_select = {
+        "skin_selector": {"skins": [{"id": 22001}], "disabled": False}
+    }
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", LeagueLabSettings())
+
+    async def request(method, path, **_kwargs):
+        calls.append((method, path))
+        raise AssertionError("account gate must run before LCU requests")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.league_champ_select_skin(22001))
+    assert caught.value.status_code == 403
+    assert calls == []
+
+
+def test_manual_skin_change_rejects_wrong_phase_without_patch(monkeypatch):
+    calls = []
+    league_lab.league_lab_service.champ_select = {
+        "skin_selector": {"skins": [{"id": 22001}], "disabled": False}
+    }
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(toolkit_account_actions_enabled=True),
+    )
+
+    async def request(method, path, **_kwargs):
+        calls.append((method, path))
+        if (method, path) == ("GET", "/lol-gameflow/v1/gameflow-phase"):
+            return "Lobby"
+        raise AssertionError(f"unexpected LCU request: {method} {path}")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.league_champ_select_skin(22001))
+    assert caught.value.status_code == 409
+    assert calls == [("GET", "/lol-gameflow/v1/gameflow-phase")]
+
+
+def test_manual_opgg_spells_require_gate_and_phase_before_patch(monkeypatch):
+    calls = []
+    body = league_lab.OpggSpellApply(spell_ids=[14, 4])
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", LeagueLabSettings())
+
+    async def request(method, path, **_kwargs):
+        calls.append((method, path))
+        raise AssertionError("account gate must run before LCU requests")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.league_opgg_apply_spells(body))
+    assert caught.value.status_code == 403
+    assert calls == []
+
+    calls.clear()
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(toolkit_account_actions_enabled=True),
+    )
+
+    async def wrong_phase_request(method, path, **_kwargs):
+        calls.append((method, path))
+        if (method, path) == ("GET", "/lol-champ-select/v1/session/my-selection"):
+            return {"spell1Id": 14, "spell2Id": 4}
+        if (method, path) == ("GET", "/lol-gameflow/v1/gameflow-phase"):
+            return "Lobby"
+        raise AssertionError(f"unexpected LCU request: {method} {path}")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", wrong_phase_request)
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.league_opgg_apply_spells(body))
+    assert caught.value.status_code == 409
+    assert calls == [
+        ("GET", "/lol-champ-select/v1/session/my-selection"),
+        ("GET", "/lol-gameflow/v1/gameflow-phase"),
+    ]
+
+
+def test_manual_opgg_runes_require_gate_and_phase_before_page_write(monkeypatch):
+    calls = []
+    body = league_lab.OpggRuneApply(
+        champion_id=86,
+        champion_name="盖伦",
+        primary_page_id=8000,
+        secondary_page_id=8400,
+        primary_rune_ids=[8010],
+    )
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(toolkit_account_actions_enabled=True),
+    )
+
+    async def request(method, path, **_kwargs):
+        calls.append((method, path))
+        if (method, path) == ("GET", "/lol-perks/v1/pages"):
+            return [{"id": 9, "isEditable": True}]
+        if (method, path) == ("GET", "/lol-gameflow/v1/gameflow-phase"):
+            return "Lobby"
+        raise AssertionError(f"unexpected LCU request: {method} {path}")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.league_opgg_apply_runes(body))
+    assert caught.value.status_code == 409
+    assert calls == [
+        ("GET", "/lol-perks/v1/pages"),
+        ("GET", "/lol-gameflow/v1/gameflow-phase"),
+    ]
+
+
+@pytest.mark.parametrize("feature", ["spells", "runes"])
+@pytest.mark.parametrize("automation_enabled,feature_enabled", [(False, True), (True, False)])
+def test_opgg_automatic_writes_require_automation_master_and_feature(monkeypatch, feature, automation_enabled, feature_enabled):
+    calls = []
+    settings = LeagueLabSettings(
+        automation_enabled=automation_enabled,
+        opgg_auto_apply_spells=feature_enabled if feature == "spells" else False,
+        opgg_auto_apply_runes=feature_enabled if feature == "runes" else False,
+    )
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", settings)
+
+    async def request(method, path, **_kwargs):
+        calls.append((method, path))
+        raise AssertionError("automation guard must run before LCU requests")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    if feature == "spells":
+        body = league_lab.OpggSpellApply(spell_ids=[14, 4], source="automation")
+        operation = league_lab.league_opgg_apply_spells(body)
+    else:
+        body = league_lab.OpggRuneApply(
+            champion_id=86,
+            champion_name="盖伦",
+            primary_page_id=8000,
+            secondary_page_id=8400,
+            primary_rune_ids=[8010],
+            source="automation",
+        )
+        operation = league_lab.league_opgg_apply_runes(body)
+
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(operation)
+    assert caught.value.status_code == 403
+    assert calls == []
+
+
+@pytest.mark.parametrize("feature", ["spells", "runes"])
+def test_opgg_automatic_writes_use_automation_gate_without_toolkit_gate(monkeypatch, feature):
+    calls = []
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(
+            automation_enabled=True,
+            toolkit_account_actions_enabled=False,
+            opgg_auto_apply_spells=feature == "spells",
+            opgg_auto_apply_runes=feature == "runes",
+        ),
+    )
+
+    async def request(method, path, *, json_body=None, params=None):
+        calls.append((method, path, json_body))
+        if (method, path) == ("GET", "/lol-champ-select/v1/session/my-selection"):
+            return {"spell1Id": 14, "spell2Id": 4}
+        if (method, path) == ("GET", "/lol-perks/v1/pages"):
+            return [{"id": 9, "isEditable": True}]
+        if (method, path) == ("GET", "/lol-gameflow/v1/gameflow-phase"):
+            return "ChampSelect"
+        if method in {"PATCH", "PUT"}:
+            return None
+        raise AssertionError(f"unexpected LCU request: {method} {path}")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    if feature == "spells":
+        result = asyncio.run(league_lab.league_opgg_apply_spells(
+            league_lab.OpggSpellApply(spell_ids=[14, 4], source="automation")
+        ))
+        assert result["applied"] is True
+        assert calls[-1][0:2] == ("PATCH", "/lol-champ-select/v1/session/my-selection")
+    else:
+        result = asyncio.run(league_lab.league_opgg_apply_runes(
+            league_lab.OpggRuneApply(
+                champion_id=86,
+                champion_name="盖伦",
+                primary_page_id=8000,
+                secondary_page_id=8400,
+                primary_rune_ids=[8010],
+                source="automation",
+            )
+        ))
+        assert result["applied"] is True
+        assert calls[-1][0:2] == ("PUT", "/lol-perks/v1/currentpage")
+
+
+def test_friend_spectate_requires_gate_and_live_phase_before_launch(monkeypatch):
+    friend_payload = [{
+        "puuid": "friend-1",
+        "gameName": "Friend",
+        "gameTag": "CN1",
+        "availability": "dnd",
+        "lol": {"gameStatus": "inGame", "spectatorKey": "private"},
+    }]
+    calls = []
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", LeagueLabSettings())
+
+    async def request(method, path, **_kwargs):
+        calls.append((method, path))
+        raise AssertionError("account gate must run before LCU requests")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.spectate_league_friend("friend-1"))
+    assert caught.value.status_code == 403
+    assert calls == []
+
+    calls.clear()
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(toolkit_account_actions_enabled=True),
+    )
+
+    async def wrong_phase_request(method, path, **_kwargs):
+        calls.append((method, path))
+        if (method, path) == ("GET", "/lol-chat/v1/friends"):
+            return friend_payload
+        if (method, path) == ("GET", "/lol-gameflow/v1/gameflow-phase"):
+            return "InProgress"
+        raise AssertionError(f"unexpected LCU request: {method} {path}")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", wrong_phase_request)
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.spectate_league_friend("friend-1"))
+    assert caught.value.status_code == 409
+    assert calls == [
+        ("GET", "/lol-chat/v1/friends"),
+        ("GET", "/lol-gameflow/v1/gameflow-phase"),
+    ]
+
+
+def test_terminate_game_client_requires_toolkit_gate_before_process_guard(monkeypatch):
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", LeagueLabSettings())
+    monkeypatch.setattr(league_lab, "_terminate_foreground_league_game_client", lambda: (_ for _ in ()).throw(AssertionError("must not terminate")))
+
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.league_terminate_game_client(
+            league_lab.TerminateGameClientRequest(confirmation="我确认结束游戏")
+        ))
+    assert caught.value.status_code == 403
+
+
+def test_decline_ready_check_requires_toolkit_gate_before_any_lcu_request(monkeypatch):
+    calls = []
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", LeagueLabSettings())
+
+    async def request(method, path, **_kwargs):
+        calls.append((method, path))
+        raise AssertionError("account gate must run before LCU requests")
+
+    async def record(*_args, **_kwargs):
+        raise AssertionError("account gate must run before _record_action")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    monkeypatch.setattr(league_lab.league_lab_service, "_record_action", record)
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.run_league_lab_action("decline-ready-check"))
+    assert caught.value.status_code == 403
+    assert calls == []
+
+
+def test_cancel_auto_accept_only_changes_local_deadline(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(automation_enabled=True, auto_accept_enabled=True),
+    )
+    league_lab.league_lab_service.phase = "ReadyCheck"
+    league_lab.league_lab_service._accept_due_at = time.monotonic() + 5
+
+    async def request(method, path, **_kwargs):
+        calls.append((method, path))
+        raise AssertionError("cancel-auto-accept must not call LCU")
+
+    async def record(*_args, **_kwargs):
+        raise AssertionError("cancel-auto-accept must not record an account action")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    monkeypatch.setattr(league_lab.league_lab_service, "_record_action", record)
+    result = asyncio.run(league_lab.cancel_auto_accept())
+    assert league_lab.league_lab_service._accept_due_at == float("inf")
+    assert result["action_plan"]["accept_due"] is None
+    assert calls == []
+
+
+def test_champ_select_trade_routes_require_gate_and_fresh_phase(monkeypatch):
+    calls = []
+    monkeypatch.setattr(league_lab.league_lab_service, "settings", LeagueLabSettings())
+
+    async def request(method, path, **_kwargs):
+        calls.append((method, path))
+        raise AssertionError("account gate must run before LCU requests")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.league_champ_select_trade_accept("17"))
+    assert caught.value.status_code == 403
+    assert calls == []
+
+    calls.clear()
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(toolkit_account_actions_enabled=True),
+    )
+
+    async def wrong_phase_request(method, path, **_kwargs):
+        calls.append((method, path))
+        if path == "/lol-gameflow/v1/gameflow-phase":
+            return "Lobby"
+        raise AssertionError("wrong phase must prevent session/write requests")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", wrong_phase_request)
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.league_champ_select_trade_decline("17"))
+    assert caught.value.status_code == 409
+    assert calls == [("GET", "/lol-gameflow/v1/gameflow-phase")]
+
+
+def test_champ_select_trade_rejects_stale_or_non_actionable_id_without_write(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(toolkit_account_actions_enabled=True),
+    )
+
+    async def request(method, path, **_kwargs):
+        calls.append((method, path))
+        if path == "/lol-gameflow/v1/gameflow-phase":
+            return "ChampSelect"
+        if path == "/lol-champ-select/v1/session":
+            return {
+                "localPlayerCellId": 1,
+                "myTeam": [{"cellId": 1, "summonerId": 10}],
+                "theirTeam": [{"cellId": 2, "summonerId": 20}],
+                "trades": [{"id": 7, "cellId": 2, "state": "INVALID"}],
+            }
+        raise AssertionError(f"unexpected LCU request: {method} {path}")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.league_champ_select_trade_accept("8"))
+    assert caught.value.status_code == 409
+    assert calls == [
+        ("GET", "/lol-gameflow/v1/gameflow-phase"),
+        ("GET", "/lol-champ-select/v1/session"),
+    ]
+
+    calls.clear()
+    with pytest.raises(league_lab.HTTPException) as caught:
+        asyncio.run(league_lab.league_champ_select_trade_decline("7"))
+    assert caught.value.status_code == 409
+    assert calls == [
+        ("GET", "/lol-gameflow/v1/gameflow-phase"),
+        ("GET", "/lol-champ-select/v1/session"),
+    ]
+
+
+def test_champ_select_trade_accept_uses_fresh_actionable_session_and_mock_write(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        league_lab.league_lab_service,
+        "settings",
+        LeagueLabSettings(toolkit_account_actions_enabled=True),
+    )
+
+    async def request(method, path, **_kwargs):
+        calls.append((method, path))
+        if path == "/lol-gameflow/v1/gameflow-phase":
+            return "ChampSelect"
+        if path == "/lol-champ-select/v1/session":
+            return {
+                "localPlayerCellId": 1,
+                "myTeam": [{"cellId": 1, "summonerId": 10, "gameName": "Local"}],
+                "theirTeam": [{"cellId": 2, "summonerId": 20, "gameName": "Other"}],
+                "trades": [{"id": 7, "cellId": 2, "state": "AVAILABLE"}],
+            }
+        if path == "/lol-champ-select/v1/session/champion-swaps/7/accept":
+            return None
+        raise AssertionError(f"unexpected LCU request: {method} {path}")
+
+    monkeypatch.setattr(league_lab.league_lab_service, "request", request)
+    result = asyncio.run(league_lab.league_champ_select_trade_accept("7"))
+    assert result["last_action"] == "已接受换英雄请求"
+    assert calls == [
+        ("GET", "/lol-gameflow/v1/gameflow-phase"),
+        ("GET", "/lol-champ-select/v1/session"),
+        ("POST", "/lol-champ-select/v1/session/champion-swaps/7/accept"),
+    ]
+
+
+def test_status_exposes_normalized_lifecycle_and_action_plan(monkeypatch):
+    service = LeagueLabService()
+    service.phase = "ReadyCheck"
+    service.ready_check = league_lab._normalize_ready_check({
+        "state": "InProgress",
+        "playerResponse": "None",
+        "declinerIds": [9],
+    })
+    service.matchmaking_search = league_lab._normalize_matchmaking_search({
+        "isCurrentlyInQueue": True,
+        "searchState": "Searching",
+        "timeInQueue": 4.5,
+        "estimatedQueueTime": 8,
+        "queueId": 420,
+    })
+    service._accept_due_at = time.monotonic() + 2
+    service._phase_action_due_at = time.monotonic() + 3
+    service._champion_action_due_at = {"pick-1": time.monotonic() + 4}
+    status = service.status()
+    assert status["ready_check"]["state"] == "InProgress"
+    assert status["ready_check"]["can_decline"] is True
+    assert status["matchmaking_search"]["is_currently_in_queue"] is True
+    assert status["action_plan"]["accept_due"]["label"] == "自动接受对局"
+    assert status["action_plan"]["accept_due"]["remaining_seconds"] > 0
+    assert status["action_plan"]["champion_due"][0]["action_id"] == "pick-1"
+    assert status["auto_select"]["schema_version"] == 1
+    assert status["auto_select"]["delayed_pick"] is None
+    assert "expected_picks" in status["auto_select"]
+
+
+def test_normalized_champ_select_exposes_trade_players_and_actionability():
+    normalized = LeagueLabService._normalize_champ_select({
+        "localPlayerCellId": 1,
+        "myTeam": [{"cellId": 1, "summonerId": 10, "gameName": "Local"}],
+        "theirTeam": [{"cellId": 2, "summonerId": 20, "gameName": "Other"}],
+        "trades": [{"id": 7, "requesterCellId": 2, "state": "AVAILABLE"}],
+    })
+    trade = normalized["trades"][0]
+    assert trade["id"] == 7
+    assert trade["state"] == "AVAILABLE"
+    assert trade["actionable"] is True
+    assert trade["initiated_by_local_player"] is False
+    assert trade["other_player"]["game_name"] == "Local"

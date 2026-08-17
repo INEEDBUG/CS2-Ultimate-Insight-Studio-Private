@@ -35,6 +35,19 @@ export async function runLeagueLabAction(action) {
   return data;
 }
 
+export async function declineLeagueReadyCheck() {
+  return runLeagueLabAction("decline-ready-check");
+}
+
+export async function cancelLeagueAutoAccept() {
+  const { data } = await API.post("/league-lab/actions/cancel-auto-accept");
+  return data;
+}
+
+export async function stopLeagueMatchmaking() {
+  return runLeagueLabAction("stop-matchmaking");
+}
+
 export async function fetchLeagueMatches(limit = 20) {
   const { data } = await API.get("/league-lab/matches", { params: { limit } });
   return data;
@@ -211,13 +224,13 @@ export async function fetchLeagueOpggChampion(championId, params) {
   return data;
 }
 
-export async function applyLeagueOpggSpells(body) {
-  const { data } = await API.post("/league-lab/opgg/apply-spells", body);
+export async function applyLeagueOpggSpells(body, source = "manual") {
+  const { data } = await API.post("/league-lab/opgg/apply-spells", { ...body, source });
   return data;
 }
 
-export async function applyLeagueOpggRunes(body) {
-  const { data } = await API.post("/league-lab/opgg/apply-runes", body);
+export async function applyLeagueOpggRunes(body, source = "manual") {
+  const { data } = await API.post("/league-lab/opgg/apply-runes", { ...body, source });
   return data;
 }
 
@@ -375,8 +388,8 @@ export async function cancelLeagueInGameSend() {
   return data;
 }
 
-export async function terminateLeagueGameClient() {
-  const { data } = await API.post("/league-lab/toolkit/terminate-game-client");
+export async function terminateLeagueGameClient(confirmation = "我确认结束游戏") {
+  const { data } = await API.post("/league-lab/toolkit/terminate-game-client", { confirmation });
   return data;
 }
 
@@ -422,5 +435,15 @@ export async function setLeagueAutoSelectTemporarilyDisabled(disabled) {
 
 export async function dodgeLeagueChampSelect(confirmation) {
   const { data } = await API.post("/league-lab/champ-select/dodge", { confirmation });
+  return data;
+}
+
+export async function acceptLeagueChampSelectTrade(tradeId) {
+  const { data } = await API.post(`/league-lab/champ-select/trades/${encodeURIComponent(tradeId)}/accept`);
+  return data;
+}
+
+export async function declineLeagueChampSelectTrade(tradeId) {
+  const { data } = await API.post(`/league-lab/champ-select/trades/${encodeURIComponent(tradeId)}/decline`);
   return data;
 }
