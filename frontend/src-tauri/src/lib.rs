@@ -684,7 +684,7 @@ fn restart_as_administrator(handle: AppHandle) -> Result<(), String> {
             .spawn()
             .map_err(|error| error.to_string())?;
         request_app_exit(&handle);
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(windows))]
