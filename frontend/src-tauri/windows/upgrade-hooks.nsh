@@ -141,6 +141,17 @@ Function CS2_RemoveBundledDemoparser
   Pop $0
 FunctionEnd
 
+; productName changed to MaxGameStudio. Tauri creates the new shortcuts from
+; the current PRODUCTNAME, but an in-place update does not know the historical
+; shortcut filenames. Remove only the obsolete brand shortcuts; application
+; data and the stable internal bundle identity remain untouched.
+Function CS2_RemoveLegacyBrandShortcuts
+  Delete "$DESKTOP\CS2 Ultimate Insight Studio.lnk"
+  Delete "$SMPROGRAMS\CS2 Ultimate Insight Studio.lnk"
+  Delete "$SMPROGRAMS\$AppStartMenuFolder\CS2 Ultimate Insight Studio.lnk"
+  RMDir "$SMPROGRAMS\CS2 Ultimate Insight Studio"
+FunctionEnd
+
 ; In: $R0 = raw InstallLocation, $R8 = raw UninstallString.
 ; Out: $CS2ElectronDir, $CS2ElectronUninsExe.
 Function CS2_ResolveElectronDir
@@ -395,6 +406,11 @@ FunctionEnd
     StrCpy $R7 "内置 Rust Demo 解析器版本校验失败（退出码 $R0）。安装已停止，请重新下载完整安装包。"
     Call CS2_AbortMigrationInstall
   ${EndIf}
+
+  ; Leave a single user-facing shortcut brand after upgrading from the old
+  ; product name. The generated installer has already created/updated the
+  ; MaxGameStudio Start Menu shortcut at this point.
+  Call CS2_RemoveLegacyBrandShortcuts
 
   ; Run the same idempotent migration used by the desktop startup before the
   ; finish page can launch Tauri. A failure leaves every legacy source intact.

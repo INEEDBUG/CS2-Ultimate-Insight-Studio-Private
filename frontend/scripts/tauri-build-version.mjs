@@ -150,6 +150,12 @@ if (process.platform === "win32") {
   if (!installerBody.includes("windows\\upgrade-hooks.nsh")) {
     throw new Error("Generated NSIS script does not include the project installer hook");
   }
+  if (!installerBody.includes('!define PRODUCTNAME "MaxGameStudio"')) {
+    throw new Error("Generated NSIS installer does not use the MaxGameStudio product name");
+  }
+  if (!installerBody.includes('CreateShortcut "$DESKTOP\\${PRODUCTNAME}.lnk"')) {
+    throw new Error("Generated NSIS installer does not create the branded desktop shortcut");
+  }
   if (!existsSync(artifact)) {
     throw new Error(`Tauri NSIS artifact was not created: ${artifact}`);
   }
