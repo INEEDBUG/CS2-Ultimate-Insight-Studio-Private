@@ -4,7 +4,6 @@ import { Keyboard } from "lucide-react";
 const fields = [
   ["in_game_cancel_shortcut", "取消当前游戏内逐行发送", "例如 Ctrl+Alt+C"],
   ["ongoing_window_shortcut", "按住显示实时对局窗口", "例如 Ctrl+Alt+O"],
-  ["opgg_window_shortcut", "显示 / 隐藏 OP.GG 窗口", "例如 Ctrl+Alt+P"],
   ["cooldown_window_shortcut", "显示 / 隐藏技能计时器", "例如 Ctrl+Alt+T"],
 ];
 

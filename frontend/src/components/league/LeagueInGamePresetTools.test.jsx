@@ -80,18 +80,23 @@ describe("LeagueInGamePresetTools", () => {
     ] }));
   });
 
-  it("starts with all generated display metrics disabled and exposes four preset tabs", () => {
+  it("starts with LeagueAkari rating defaults and exposes four preset tabs", () => {
     renderTools();
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Rating", "打野画像", "组排关系", "固定文字"]);
     expect(screen.getByRole("tab", { name: "Rating" }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByRole("checkbox", { name: "胜率" }).checked).toBe(false);
+    expect(screen.getByRole("checkbox", { name: "胜率" }).checked).toBe(true);
+    expect(screen.getByRole("checkbox", { name: "平均 KDA" }).checked).toBe(true);
+    expect(screen.getByRole("checkbox", { name: "场均单杀" }).checked).toBe(true);
+    expect(screen.getByRole("checkbox", { name: "主力英雄" }).checked).toBe(true);
+    expect(screen.getByRole("checkbox", { name: "主位置" }).checked).toBe(true);
+    expect(screen.getByRole("checkbox", { name: "场均视野" }).checked).toBe(false);
     expect(screen.getByRole("checkbox", { name: "显示当前英雄" }).checked).toBe(false);
   });
 
   it("loads players on demand, supports manual target selection, and previews only selected payload data", async () => {
     fetchLeagueOngoingGame.mockResolvedValue({ players: [
-      { puuid: "alice-puuid", team: 100, summoner: { gameName: "Alice" }, champion_name: "Ahri", recent: { matches: 4, wins: 3, average_kda: 2.5 } },
-      { puuid: "bob-puuid", team: 200, summoner: { gameName: "Bob" }, champion_name: "Braum", recent: { matches: 4, wins: 1, average_kda: 0.8 } },
+      { puuid: "alice-puuid", team: 100, summoner: { gameName: "Alice" }, champion_name: "Ahri", rating_summary: { win_rate: .75, avg_kda: 2.5, avg_solo_kills: 1.2, main_champions: [{ champion_name: "Ahri" }], main_positions: [{ position: "MIDDLE" }] } },
+      { puuid: "bob-puuid", team: 200, summoner: { gameName: "Bob" }, champion_name: "Braum", rating_summary: { win_rate: .25, avg_kda: .8, avg_solo_kills: 0, main_champions: [{ champion_name: "Braum" }], main_positions: [{ position: "UTILITY" }] } },
     ] });
     fetchLeagueLabStatus.mockResolvedValue({ current_summoner: { puuid: "alice-puuid" } });
     renderTools();
@@ -100,17 +105,62 @@ describe("LeagueInGamePresetTools", () => {
     fireEvent.click(screen.getByRole("button", { name: "读取当前玩家" }));
     await waitFor(() => expect(fetchLeagueOngoingGame).toHaveBeenCalledTimes(1));
     fireEvent.change(screen.getByRole("combobox", { name: "Rating目标范围" }), { target: { value: "selected" } });
-    fireEvent.click(screen.getByRole("checkbox", { name: "选择 Alice" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "胜率" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 Ahri" }));
     fireEvent.click(screen.getByRole("button", { name: "生成预览" }));
 
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Rating生成预览" }).value).toContain("Alice：胜率 75%"));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Rating生成预览" }).value).toContain("Ahri：胜率 75%"));
     expect(screen.getByRole("textbox", { name: "Rating生成预览" }).value).not.toContain("Bob");
+  });
+
+  it("renders the full LeagueAkari rating metric set and omits null solo kills", async () => {
+    fetchLeagueOngoingGame.mockResolvedValue({ players: [
+      {
+        puuid: "metric-puuid",
+        team: 100,
+        summoner: { gameName: "MetricPlayer" },
+        rating_summary: {
+          win_rate: .8,
+          avg_kda: 3.25,
+          avg_solo_kills: null,
+          avg_vision_score: 8.4,
+          avg_champion_damage_percentage_of_team: .35,
+          avg_damage_taken_percentage_of_team: .22,
+          avg_gold_percentage_of_team: .18,
+          avg_cs_per_minute: 7.5,
+          avg_kill_participation: .64,
+          avg_damage_gold_efficiency: 1.23,
+          main_champions: [{ champion_name: "Ahri" }, { champion_name: "Syndra" }],
+          main_positions: [{ position: "MIDDLE" }, { position: "TOP" }],
+        },
+      },
+    ] });
+    fetchLeagueLabStatus.mockResolvedValue({ current_summoner: { puuid: "metric-puuid" } });
+    renderTools();
+
+    fireEvent.click(screen.getByRole("button", { name: "读取当前玩家" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "生成预览" }).disabled).toBe(false));
+    ["场均视野", "团队输出占比", "团队承伤占比", "团队经济占比", "每分钟补刀", "参团率", "伤害经济效率"].forEach((label) => {
+      fireEvent.click(screen.getByRole("checkbox", { name: label }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "生成预览" }));
+
+    const preview = screen.getByRole("textbox", { name: "Rating生成预览" });
+    await waitFor(() => expect(preview.value).toContain("MetricPlayer：胜率 80%，KDA 3.25"));
+    expect(preview.value).toContain("场均视野 8.4");
+    expect(preview.value).toContain("团队输出 35%");
+    expect(preview.value).toContain("团队承伤 22%");
+    expect(preview.value).toContain("团队经济 18%");
+    expect(preview.value).toContain("补刀 7.5/分");
+    expect(preview.value).toContain("参团 64%");
+    expect(preview.value).toContain("伤害/经济 1.23");
+    expect(preview.value).toContain("主力 Ahri/Syndra");
+    expect(preview.value).toContain("主位置 MIDDLE/TOP");
+    expect(preview.value).not.toContain("场均单杀");
   });
 
   it("sends the generated preview only after the exact confirmation and can cancel an active send", async () => {
     fetchLeagueOngoingGame.mockResolvedValue({ players: [
-      { puuid: "alice-puuid", team: 100, summoner: { gameName: "Alice" }, recent: { matches: 2, wins: 2, average_kda: 1.5 } },
+      { puuid: "alice-puuid", team: 100, summoner: { gameName: "Alice" }, rating_summary: { win_rate: 1, avg_kda: 1.5, avg_solo_kills: null, main_champions: [], main_positions: [] } },
     ] });
     fetchLeagueLabStatus.mockResolvedValue({ current_summoner: { puuid: "alice-puuid" } });
     sendLeagueInGameLines.mockResolvedValue({ sent: true });
@@ -120,11 +170,10 @@ describe("LeagueInGamePresetTools", () => {
     renderTools(settings);
     fireEvent.click(screen.getByRole("button", { name: "读取当前玩家" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "生成预览" }).disabled).toBe(false));
-    fireEvent.click(screen.getByRole("checkbox", { name: "胜率" }));
     fireEvent.click(screen.getByRole("button", { name: "生成预览" }));
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Rating生成预览" }).value).toContain("Alice"));
     fireEvent.click(screen.getByRole("button", { name: "发送预览" }));
-    await waitFor(() => expect(sendLeagueInGameLines).toHaveBeenCalledWith(["Alice：胜率 100%"], "我确认发送", "manual", "rating", "all"));
+    await waitFor(() => expect(sendLeagueInGameLines).toHaveBeenCalledWith(["Alice：胜率 100%，KDA 1.50"], "我确认发送", "manual", "rating", "all"));
     fireEvent.click(screen.getByRole("button", { name: "取消发送", exact: true }));
     await waitFor(() => expect(cancelLeagueInGameSend).toHaveBeenCalledTimes(1));
   });

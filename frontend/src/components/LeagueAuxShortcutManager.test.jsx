@@ -17,7 +17,6 @@ describe("LeagueAuxShortcutManager", () => {
       in_game_send_enabled: true,
       in_game_cancel_shortcut: "Ctrl+Alt+C",
       ongoing_window_shortcut: "Ctrl+Alt+O",
-      opgg_window_shortcut: "Ctrl+Alt+P",
       cooldown_window_shortcut: "Ctrl+Alt+T",
     }});
     register.mockResolvedValue(undefined);
@@ -30,16 +29,17 @@ describe("LeagueAuxShortcutManager", () => {
     render(<LeagueAuxShortcutManager/>);
     await act(async () => {});
     const callbacks = Object.fromEntries(register.mock.calls.map(([shortcut, callback]) => [shortcut, callback]));
-    expect(Object.keys(callbacks).sort()).toEqual(["Ctrl+Alt+C","Ctrl+Alt+O","Ctrl+Alt+P","Ctrl+Alt+T"].sort());
+    expect(Object.keys(callbacks).sort()).toEqual(["Ctrl+Alt+C","Ctrl+Alt+O","Ctrl+Alt+T"].sort());
 
     await callbacks["Ctrl+Alt+C"]({ state: "Pressed" });
     await callbacks["Ctrl+Alt+O"]({ state: "Pressed" });
     await callbacks["Ctrl+Alt+O"]({ state: "Released" });
-    await callbacks["Ctrl+Alt+P"]({ state: "Pressed" });
+    await callbacks["Ctrl+Alt+T"]({ state: "Pressed" });
 
     expect(cancelLeagueInGameSend).toHaveBeenCalledTimes(1);
     expect(invoke).toHaveBeenCalledWith("toggle_league_aux_window", { kind: "ongoing", visible: true });
     expect(invoke).toHaveBeenCalledWith("toggle_league_aux_window", { kind: "ongoing", visible: false });
-    expect(invoke).toHaveBeenCalledWith("toggle_league_aux_window", { kind: "opgg", visible: null });
+    expect(invoke).toHaveBeenCalledWith("toggle_league_aux_window", { kind: "cooldown", visible: null });
+    expect(invoke).not.toHaveBeenCalledWith("toggle_league_aux_window", { kind: "opgg", visible: null });
   });
 });

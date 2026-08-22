@@ -61,7 +61,7 @@ export default {
   "nav.lightActive": "Light active",
   "nav.darkActive": "Dark active",
   "welcome.eyebrow": "First launch",
-  "welcome.title": "Welcome to CS2 Ultimate Insight Studio",
+  "welcome.title": "Welcome to MaxGameStudio",
   "welcome.body": "Official demo downloads, match review, sensitivity testing, and magnetic-key input testing now live in one local workspace. Choose what you want to do first.",
   "welcome.libraryTitle": "Organize local demos",
   "welcome.libraryBody": "Add watch folders, scan existing recordings, and ingest them locally.",

@@ -62,7 +62,7 @@ export default {
   "nav.lightActive": "浅色生效",
   "nav.darkActive": "深色生效",
   "welcome.eyebrow": "首次启动",
-  "welcome.title": "欢迎使用 CS2 Ultimate Insight Studio",
+  "welcome.title": "欢迎使用 MaxGameStudio",
   "welcome.body": "把官匹 Demo 获取、比赛复盘、灵敏度测试和磁轴输入测试放进一个本地工作台。请选择你现在最想完成的事情。",
   "welcome.libraryTitle": "整理本地 Demo",
   "welcome.libraryBody": "添加监听目录，扫描并将已有录像加入本地库。",

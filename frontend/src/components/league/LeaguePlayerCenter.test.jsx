@@ -118,6 +118,17 @@ describe("LeaguePlayerCenter", () => {
     await waitFor(() => expect(fetchLeaguePlayer).toHaveBeenCalledWith("ally", 20, 0, ""));
   });
 
+  it("renders the profile icon from the player payload", async () => {
+    fetchLeaguePlayer.mockResolvedValueOnce(makeBundle({
+      summoner: { puuid: "self", game_name: "Tester", tag_line: "CN1", summoner_level: 30, profile_icon_id: 29 },
+    }));
+
+    render(<LeaguePlayerCenter currentPuuid="self" onError={vi.fn()} />);
+
+    const image = await screen.findByAltText("玩家头像");
+    expect(image.getAttribute("src")).toContain("/api/league-lab/assets/profile-icons/29.jpg");
+  });
+
   it("switches between tabs without dropping existing search history navigation", async () => {
     render(<LeaguePlayerCenter currentPuuid="self" onError={vi.fn()} />);
     await screen.findByTestId("player-profile-header");

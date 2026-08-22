@@ -23,7 +23,6 @@ export default function LeagueAuxShortcutManager() {
         const candidates = [
           [settings.in_game_send_enabled ? settings.in_game_cancel_shortcut : null, "cancel"],
           [settings.ongoing_window_shortcut, "ongoing"],
-          [settings.opgg_window_shortcut, "opgg"],
           [settings.cooldown_window_shortcut, "cooldown"],
         ];
         const desired = new Map();

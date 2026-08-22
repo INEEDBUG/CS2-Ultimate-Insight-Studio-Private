@@ -15,10 +15,40 @@ describe("League settings transfer", () => {
   });
 
   it("sanitizes a compatible settings envelope", () => {
-    const imported = parseLeagueSettingsImport(JSON.stringify({ format: "cs2-ultimate-insight-studio/league-settings", schema_version: 1, settings: { automation_enabled: true, toolkit_account_actions_enabled: true, mini_enabled: false, unknown_field: "ignored", access_token: "removed" } }), { automation_enabled: false, toolkit_account_actions_enabled: false, mini_enabled: true });
-    expect(imported).toMatchObject({ automation_enabled: false, toolkit_account_actions_enabled: false, mini_enabled: false });
+    const imported = parseLeagueSettingsImport(JSON.stringify({ format: "cs2-ultimate-insight-studio/league-settings", schema_version: 1, settings: { automation_enabled: true, auto_accept_enabled: true, auto_select_enabled: true, auto_honor_enabled: true, toolkit_account_actions_enabled: true, mini_enabled: false, auto_select_profiles: { aram: { pick: { enabled: true, bench_handle_trade_enabled: true }, ban: { enabled: true } } }, unknown_field: "ignored", access_token: "removed" } }), { automation_enabled: false, auto_accept_enabled: false, auto_select_enabled: false, auto_honor_enabled: false, toolkit_account_actions_enabled: false, mini_enabled: true, auto_select_profiles: {} });
+    expect(imported).toMatchObject({ automation_enabled: false, auto_accept_enabled: false, auto_select_enabled: false, auto_honor_enabled: false, toolkit_account_actions_enabled: false, mini_enabled: false, auto_select_profiles: { aram: { pick: { enabled: false, bench_handle_trade_enabled: false }, ban: { enabled: false } } } });
     expect(imported).not.toHaveProperty("unknown_field");
     expect(imported).not.toHaveProperty("access_token");
+  });
+
+  it("imports LeagueAkari database exports from data[]", () => {
+    const imported = parseLeagueSettingsImport(JSON.stringify({
+      databaseVersion: 15,
+      type: "league-akari-settings",
+      data: [
+        { key: "window-manager-main/aux-window/pinned", value: false },
+        { key: "window-manager-main/ongoing-game-window/pinned", value: false },
+        { key: "window-manager-main/cd-timer-window/pinned", value: true },
+        { key: "unknown/setting", value: "ignored" },
+      ],
+    }), {
+      mini_pinned: true,
+      ongoing_pinned: true,
+      cooldown_pinned: false,
+    });
+    expect(imported).toMatchObject({
+      mini_pinned: false,
+      ongoing_pinned: false,
+      cooldown_pinned: true,
+    });
+  });
+
+  it("rejects a future LeagueAkari database export", () => {
+    expect(() => parseLeagueSettingsImport(JSON.stringify({
+      databaseVersion: 99,
+      type: "league-akari-settings",
+      data: [],
+    }), { mini_pinned: true })).toThrow("更新版本");
   });
 
   it("rejects invalid and future-version files", () => {

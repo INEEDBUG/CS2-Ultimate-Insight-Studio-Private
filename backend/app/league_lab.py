@@ -12,6 +12,7 @@ import ctypes
 import ctypes.wintypes as wintypes
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -29,7 +30,7 @@ import httpx
 import aiosqlite
 import websockets
 from fastapi import APIRouter, HTTPException, Response
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from .env_utils import get_data_dir
 
@@ -56,19 +57,21 @@ def _empty_position_pool() -> dict[str, list[int]]:
 class PickProfile(BaseModel):
     enabled: bool = False
     champions: dict[str, list[int]] = Field(default_factory=_empty_position_pool)
-    delay_seconds: float = Field(default=3.0, ge=0.0, le=15.0)
+    # LeagueAkari's empty profile starts with no artificial delay.  The
+    # scheduler still calibrates this value against the LCU phase timer.
+    delay_seconds: float = Field(default=0.0, ge=0.0)
     ignore_intent: bool = False
     strategy: PickStrategy = "show-and-lock-in"
-    show_intent: bool = True
-    bench_select_first_available_champion: bool = True
-    bench_swap_accumulated_delay_seconds: float = Field(default=2.5, ge=0.0, le=15.0)
-    bench_handle_trade_enabled: bool = True
+    show_intent: bool = False
+    bench_select_first_available_champion: bool = False
+    bench_swap_accumulated_delay_seconds: float = Field(default=2.9, ge=0.0)
+    bench_handle_trade_enabled: bool = False
 
 
 class BanProfile(BaseModel):
     enabled: bool = False
     champions: dict[str, list[int]] = Field(default_factory=_empty_position_pool)
-    delay_seconds: float = Field(default=3.0, ge=0.0, le=15.0)
+    delay_seconds: float = Field(default=0.0, ge=0.0)
     strategy: PickStrategy = "show-and-lock-in"
 
 
@@ -78,7 +81,12 @@ class AutoSelectProfile(BaseModel):
 
 
 def _default_auto_select_profiles() -> dict[str, AutoSelectProfile]:
-    return {key: AutoSelectProfile() for key in ("ranked", "aram", "arena", "urf", "clash", "doom-bots", "custom", "default")}
+    # Keep LeagueAkari's user-facing mode groups independently configurable.
+    # Legacy group keys remain accepted below for a non-destructive migration.
+    return {key: AutoSelectProfile() for key in (
+        "ranked", "normal", "aram", "cherry", "urf", "oneforall",
+        "ultbook", "bot", "custom", "default",
+    )}
 
 
 class InGameFixedTextPreset(BaseModel):
@@ -94,10 +102,82 @@ class InGamePresetTargetShortcuts(BaseModel):
     all: str | None = Field(default=None, max_length=80)
 
 
+class _InGamePresetDraftBase(BaseModel):
+    """Persistent, read-only options for the in-game-send preset drafts.
+
+    The renderer currently keeps these values in its local draft object using
+    camelCase keys.  Accept both that shape and the host's normal snake_case
+    shape, but serialize the latter so the settings file remains consistent
+    with the rest of the backend.  These are presentation/selection options
+    only; they do not enable or perform any LCU write.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    target_mode: Literal["all", "friendly", "enemy", "selected"] = Field(
+        default="all", alias="targetMode"
+    )
+    selected_puuids: list[str] = Field(
+        default_factory=list, max_length=10, alias="selectedPuuids"
+    )
+    name_display_strategy: Literal[
+        "preferName", "preferChampionName", "championNameWithName"
+    ] = Field(default="preferChampionName", alias="nameDisplayStrategy")
+
+
+class InGameRatingPresetDisplay(BaseModel):
+    """The twelve explicit Rating display switches from LeagueAkari."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    win_rate: bool = Field(default=True, alias="winRate")
+    kda: bool = True
+    avg_solo_kills: bool = Field(default=True, alias="avgSoloKills")
+    avg_vision_score: bool = Field(default=False, alias="avgVisionScore")
+    avg_champion_damage: bool = Field(default=False, alias="avgChampionDamage")
+    avg_damage_taken: bool = Field(default=False, alias="avgDamageTaken")
+    avg_gold: bool = Field(default=False, alias="avgGold")
+    avg_cs_per_minute: bool = Field(default=False, alias="avgCsPerMinute")
+    avg_kill_participation: bool = Field(default=False, alias="avgKillParticipation")
+    avg_damage_gold_efficiency: bool = Field(default=False, alias="avgDamageGoldEfficiency")
+    main_champions: bool = Field(default=True, alias="mainChampions")
+    main_positions: bool = Field(default=True, alias="mainPositions")
+
+
+class InGameJunglePresetDisplay(BaseModel):
+    """The six explicit Jungle display switches from LeagueAkari."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    activity_preference: bool = Field(default=True, alias="activityPreference")
+    first_clear_distribution: bool = Field(default=True, alias="firstClearDistribution")
+    early_gank: bool = Field(default=True, alias="earlyGank")
+    dragon_control: bool = Field(default=True, alias="dragonControl")
+    monster_control: bool = Field(default=True, alias="monsterControl")
+    main_champions: bool = Field(default=True, alias="mainChampions")
+
+
+class InGameRatingPresetDraft(_InGamePresetDraftBase):
+    show_current_champion: bool = Field(default=False, alias="showCurrentChampion")
+    display: InGameRatingPresetDisplay = Field(default_factory=InGameRatingPresetDisplay)
+
+
+class InGameJunglePresetDraft(_InGamePresetDraftBase):
+    show_current_champion: bool = Field(default=True, alias="showCurrentChampion")
+    display: InGameJunglePresetDisplay = Field(default_factory=InGameJunglePresetDisplay)
+
+
+class InGamePremadePresetDraft(_InGamePresetDraftBase):
+    """Premade has no metric display map in the renderer draft."""
+
+    pass
+
+
 class LeagueLabSettings(BaseModel):
+    safety_migration_version: int = Field(default=2, ge=0)
     automation_enabled: bool = False
     auto_accept_enabled: bool = False
-    auto_accept_delay_seconds: float = Field(default=1.0, ge=0.0, le=10.0)
+    auto_accept_delay_seconds: float = Field(default=0.0, ge=0.0, le=10.0)
     play_again_enabled: bool = False
     auto_reconnect_enabled: bool = False
     invitation_strategy: Literal["ignore", "accept", "decline"] = "ignore"
@@ -112,17 +192,28 @@ class LeagueLabSettings(BaseModel):
     champion_lock_in: bool = True
     auto_select_profiles: dict[str, AutoSelectProfile] = Field(default_factory=_default_auto_select_profiles)
     auto_champion_config_enabled: bool = False
+    # Canonical LeagueAkari auto-champ-config storage.  The legacy flat
+    # ``champion_loadouts`` list remains accepted for backwards compatibility,
+    # but the scheduler and renderer prefer these independently scoped pages.
+    runes_v2: dict[int, dict[str, ChampionRunesConfig | None]] = Field(
+        default_factory=dict, alias="runesV2"
+    )
+    summoner_spells: dict[int, dict[str, SummonerSpellsConfig | None]] = Field(
+        default_factory=dict, alias="summonerSpells"
+    )
     champion_loadouts: list["ChampionLoadout"] = Field(default_factory=list)
     auto_honor_enabled: bool = False
     auto_honor_strategy: Literal[
         "prefer-lobby-member", "only-lobby-member", "all-member", "opt-out", "all-member-including-opponent"
     ] = "prefer-lobby-member"
     auto_matchmaking_enabled: bool = False
-    auto_matchmaking_delay_seconds: float = Field(default=5.0, ge=0.0, le=60.0)
-    auto_matchmaking_minimum_members: int = Field(default=1, ge=1, le=5)
+    auto_matchmaking_delay_seconds: float = Field(default=5.0, ge=0.0)
+    auto_matchmaking_maximum_match_duration: float = Field(default=0.0, ge=0.0)
+    auto_matchmaking_minimum_members: int = Field(default=1, ge=1, le=99)
     auto_matchmaking_wait_for_invitees: bool = True
+    auto_matchmaking_chat_countdown_enabled: bool = False
     auto_matchmaking_rematch_strategy: Literal["never", "fixed-duration", "estimated-duration"] = "never"
-    auto_matchmaking_rematch_fixed_duration: float = Field(default=120.0, ge=10.0, le=3600.0)
+    auto_matchmaking_rematch_fixed_duration: float = Field(default=2.0, ge=1.0)
     auto_reply_enabled: bool = False
     auto_reply_only_away: bool = False
     auto_reply_text: str = Field(default="", max_length=500)
@@ -139,11 +230,27 @@ class LeagueLabSettings(BaseModel):
     mini_opacity: float = Field(default=1.0, ge=0.4, le=1.0)
     mini_pinned: bool = True
     mini_show_skin_selector: bool = True
+    # Keep the native auxiliary-window pin choices with the rest of the
+    # League settings.  The Tauri window-state plugin persists geometry only;
+    # these fields make the always-on-top choice survive a restart and allow
+    # it to travel through settings backups.
+    ongoing_pinned: bool = True
+    cooldown_pinned: bool = True
     match_history_refresh_after_game: bool = True
     match_history_load_count: int = Field(default=20, ge=1, le=100)
+    # LeagueAkari's player-tabs renderer keeps these preferences together with
+    # the tab strip.  Keep the two existing match-history keys as the
+    # compatibility surface used by this host, and persist the remaining
+    # renderer preferences explicitly so an upstream settings export can be
+    # migrated without silently dropping them.
+    player_tabs_match_history_use_sgp_api: bool = True
+    player_tabs_default_match_history_tag: str = Field(default="<akari:all>", max_length=200)
+    player_tabs_default_match_history_time_range: Literal["all", "24h", "3d", "7d", "30d"] = "all"
+    player_tabs_default_show_practice: bool = False
+    player_tabs_default_show_irregular_games: bool = False
     ongoing_auto_route_when_game_starts: bool = False
     ongoing_match_history_load_count: int = Field(default=20, ge=1, le=100)
-    ongoing_query_concurrency: int = Field(default=10, ge=1, le=20)
+    ongoing_query_concurrency: int = Field(default=4, ge=1, le=20)
     ongoing_game_details_load_count: int = Field(default=20, ge=0, le=100)
     ongoing_match_history_tag_preference: Literal["current", "all"] = "current"
     ongoing_order_player_by: Literal["win-rate", "kda", "default", "akari-score", "position", "premade-team"] = "default"
@@ -170,11 +277,14 @@ class LeagueLabSettings(BaseModel):
         "great-performance": True,
         "suspicious-flash-position": True,
         "solo-kills": True,
+        "easy-gank": True,
+        "win-rate-team": True,
         "average-team-damage": False,
         "average-team-damage-taken": False,
         "average-team-gold": False,
         "average-cs-per-minute": False,
         "average-damage-gold-efficiency": False,
+        "average-enemy-missing-pings": False,
         "average-vision-score": False,
         "average-kill-damage-efficiency": True,
         "akari-score": False,
@@ -183,17 +293,13 @@ class LeagueLabSettings(BaseModel):
     cooldown_timer_enabled: bool = False
     cooldown_timer_type: Literal["countdown", "countup"] = "countdown"
     cooldown_timer_reverse_adjustment: bool = False
-    opgg_window_enabled: bool = True
-    opgg_auto_show: bool = True
-    opgg_opacity: float = Field(default=1.0, ge=0.4, le=1.0)
-    opgg_auto_apply_runes: bool = False
-    opgg_auto_apply_spells: bool = False
-    opgg_auto_apply_items: bool = False
-    opgg_flash_position: Literal["auto", "d", "f"] = "auto"
     streamer_mode_enabled: bool = False
     streamer_mode_use_aliases: bool = False
     streamer_content_protection_enabled: bool = False
-    toolkit_account_actions_enabled: bool = False
+    # The single account-write gate is still checked immediately before every
+    # LCU write.  New installs start enabled so the prominent toolkit switch
+    # is usable out of the box; users can turn it off to return to read-only.
+    toolkit_account_actions_enabled: bool = True
     terminate_game_shortcut_enabled: bool = False
     terminate_game_shortcut: str = Field(default="Ctrl+Alt+End", min_length=3, max_length=80)
     in_game_send_enabled: bool = False
@@ -203,20 +309,109 @@ class LeagueLabSettings(BaseModel):
     in_game_rating_shortcuts: InGamePresetTargetShortcuts = Field(default_factory=InGamePresetTargetShortcuts)
     in_game_premade_shortcuts: InGamePresetTargetShortcuts = Field(default_factory=InGamePresetTargetShortcuts)
     in_game_jungle_shortcuts: InGamePresetTargetShortcuts = Field(default_factory=InGamePresetTargetShortcuts)
+    # Keep the canonical names close to the upstream preset options while
+    # accepting the shorter draft names used by the host UI during migration.
+    in_game_rating_preset_options: InGameRatingPresetDraft = Field(
+        default_factory=InGameRatingPresetDraft,
+        validation_alias=AliasChoices("in_game_rating_preset_options", "in_game_rating_preset"),
+    )
+    in_game_jungle_preset_options: InGameJunglePresetDraft = Field(
+        default_factory=InGameJunglePresetDraft,
+        validation_alias=AliasChoices("in_game_jungle_preset_options", "in_game_jungle_preset"),
+    )
+    in_game_premade_preset_options: InGamePremadePresetDraft = Field(
+        default_factory=InGamePremadePresetDraft,
+        validation_alias=AliasChoices("in_game_premade_preset_options", "in_game_premade_preset"),
+    )
     ongoing_window_shortcut: str | None = Field(default=None, max_length=80)
-    opgg_window_shortcut: str | None = Field(default=None, max_length=80)
     cooldown_window_shortcut: str | None = Field(default=None, max_length=80)
 
     @model_validator(mode="before")
     @classmethod
     def migrate_legacy_ongoing_settings(cls, value):
-        if not isinstance(value, dict) or "ongoing_champion_usage_mode" in value:
+        if not isinstance(value, dict):
             return value
-        if value.get("ongoing_show_champion_usage") is False:
-            migrated = dict(value)
+        migrated = dict(value)
+        # Removed feature keys are intentionally discarded during upgrade.
+        # Pydantic would ignore them as extras, but removing them explicitly
+        # prevents old settings from being written back into a fresh file.
+        for legacy_key in tuple(migrated):
+            if str(legacy_key).startswith("opgg_"):
+                migrated.pop(legacy_key, None)
+        if "ongoing_champion_usage_mode" not in migrated and migrated.get("ongoing_show_champion_usage") is False:
             migrated["ongoing_champion_usage_mode"] = "none"
-            return migrated
-        return value
+        # Upstream JSON exports store player-tabs settings as one namespaced
+        # object.  Accept both the current namespace and the pre-1.4 name,
+        # then flatten to this service's stable JSON model.
+        nested = None
+        for key in (
+            "player-tabs-renderer/frontendSettings",
+            "match-history-tabs-renderer/frontendSettings",
+            "player_tabs_frontend_settings",
+        ):
+            candidate = migrated.get(key)
+            if isinstance(candidate, dict):
+                nested = candidate
+                break
+        if isinstance(nested, dict):
+            aliases = {
+                "refreshTabsAfterGameEnds": "match_history_refresh_after_game",
+                "loadCount": "match_history_load_count",
+                "matchHistoryUseSgpApi": "player_tabs_match_history_use_sgp_api",
+                "defaultMatchHistoryTag": "player_tabs_default_match_history_tag",
+                "defaultMatchHistoryTimeRange": "player_tabs_default_match_history_time_range",
+                "defaultShowPractice": "player_tabs_default_show_practice",
+                "defaultShowIrregularGames": "player_tabs_default_show_irregular_games",
+            }
+            for source, target in aliases.items():
+                if target not in migrated and source in nested:
+                    migrated[target] = nested[source]
+            migrated.pop("player-tabs-renderer/frontendSettings", None)
+            migrated.pop("match-history-tabs-renderer/frontendSettings", None)
+            migrated.pop("player_tabs_frontend_settings", None)
+        # Also accept a flat camelCase payload produced by older renderer-only
+        # backups.  The explicit keys above remain canonical on disk.
+        flat_aliases = {
+            "refreshTabsAfterGameEnds": "match_history_refresh_after_game",
+            "loadCount": "match_history_load_count",
+            "matchHistoryUseSgpApi": "player_tabs_match_history_use_sgp_api",
+            "defaultMatchHistoryTag": "player_tabs_default_match_history_tag",
+            "defaultMatchHistoryTimeRange": "player_tabs_default_match_history_time_range",
+            "defaultShowPractice": "player_tabs_default_show_practice",
+            "defaultShowIrregularGames": "player_tabs_default_show_irregular_games",
+        }
+        for source, target in flat_aliases.items():
+            if target not in migrated and source in migrated:
+                migrated[target] = migrated[source]
+            migrated.pop(source, None)
+        profiles = migrated.get("auto_select_profiles")
+        if isinstance(profiles, dict):
+            next_profiles = dict(profiles)
+            legacy_aliases = {
+                "arena": "cherry",
+                "doom-bots": "ultbook",
+            }
+            for legacy, current in legacy_aliases.items():
+                if current not in next_profiles and legacy in next_profiles:
+                    next_profiles[current] = next_profiles[legacy]
+            for key, profile in _default_auto_select_profiles().items():
+                next_profiles.setdefault(key, profile.model_dump())
+            migrated["auto_select_profiles"] = next_profiles
+        return migrated
+
+    @property
+    def in_game_rating_preset(self) -> InGameRatingPresetDraft:
+        """Compatibility accessor for the renderer's shorter draft name."""
+
+        return self.in_game_rating_preset_options
+
+    @property
+    def in_game_jungle_preset(self) -> InGameJunglePresetDraft:
+        return self.in_game_jungle_preset_options
+
+    @property
+    def in_game_premade_preset(self) -> InGamePremadePresetDraft:
+        return self.in_game_premade_preset_options
 
 
 class ChampionLoadout(BaseModel):
@@ -227,6 +422,25 @@ class ChampionLoadout(BaseModel):
     selected_perk_ids: list[int] = Field(default_factory=list)
     spell1_id: int = Field(gt=0)
     spell2_id: int = Field(gt=0)
+
+
+class ChampionRunesConfig(BaseModel):
+    """LeagueAkari-compatible Rune V2 page shape (LCU schema version 2)."""
+
+    primary_style_id: int = Field(gt=0, alias="primaryStyleId")
+    sub_style_id: int = Field(gt=0, alias="subStyleId")
+    selected_perk_ids: list[int] = Field(default_factory=list, alias="selectedPerkIds")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class SummonerSpellsConfig(BaseModel):
+    """LeagueAkari-compatible two summoner spell selection."""
+
+    spell1_id: int = Field(gt=0, alias="spell1Id")
+    spell2_id: int = Field(gt=0, alias="spell2Id")
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
 class ChatPresenceUpdate(BaseModel):
@@ -264,41 +478,6 @@ class InGameAdHocSend(BaseModel):
     confirmation: str = Field(default="", max_length=20)
 
 
-class OpggRuneApply(BaseModel):
-    champion_id: int = Field(gt=0)
-    champion_name: str = Field(min_length=1, max_length=80)
-    position: str = Field(default="none", max_length=24)
-    primary_page_id: int = Field(gt=0)
-    secondary_page_id: int = Field(gt=0)
-    primary_rune_ids: list[int] = Field(min_length=1, max_length=8)
-    secondary_rune_ids: list[int] = Field(default_factory=list, max_length=4)
-    stat_mod_ids: list[int] = Field(default_factory=list, max_length=4)
-    source: Literal["manual", "automation"] = "manual"
-
-
-class OpggSpellApply(BaseModel):
-    spell_ids: list[int] = Field(min_length=2, max_length=2)
-    flash_position: Literal["auto", "d", "f"] = "auto"
-    source: Literal["manual", "automation"] = "manual"
-
-
-class OpggItemGroup(BaseModel):
-    title: str = Field(min_length=1, max_length=120)
-    item_ids: list[int] = Field(min_length=1, max_length=80)
-
-
-class OpggItemSetApply(BaseModel):
-    champion_id: int = Field(gt=0)
-    champion_name: str = Field(min_length=1, max_length=80)
-    mode: str = Field(default="ranked", max_length=24)
-    position: str = Field(default="none", max_length=24)
-    region: str = Field(default="global", max_length=24)
-    tier: str = Field(default="all", max_length=24)
-    version: str = Field(default="", max_length=24)
-    groups: list[OpggItemGroup] = Field(min_length=1, max_length=24)
-    source: Literal["manual", "automation"] = "manual"
-
-
 class GameSettingsFileModeUpdate(BaseModel):
     mode: Literal["readonly", "writable"]
 
@@ -321,6 +500,23 @@ class LeagueReplayPrepare(BaseModel):
     game_type: str = Field(default="", max_length=80)
     queue_id: int = Field(default=0, ge=0, le=100000)
     game_end: int = Field(default=0, ge=0)
+
+
+class LeagueMatchCollectRequest(BaseModel):
+    """Read-only LeagueAkari-style match-history collection settings.
+
+    Collection intentionally carries only a serializable predicate tree.  It
+    never accepts an LCU endpoint or credentials and therefore cannot turn the
+    history collector into an arbitrary client writer.
+    """
+
+    count_per_iteration: int = Field(default=20, ge=1, le=100)
+    expected_count: int = Field(default=20, ge=1, le=1000)
+    max_iteration: int = Field(default=50, ge=1, le=100)
+    filter_tree: dict = Field(default_factory=dict)
+    query: str = Field(default="", max_length=160)
+    queue_id: int | None = Field(default=None, ge=0, le=100000)
+    result: Literal["all", "win", "loss"] = "all"
 
 
 class MissionRewardClaim(BaseModel):
@@ -346,11 +542,44 @@ class FriendDeleteRequest(BaseModel):
     confirmation: Literal["我确认删除"]
 
 
+class AutoInviteFriendSchedule(BaseModel):
+    """Local-only list of friends to invite when they become available.
+
+    The list is a scheduler input, not an invitation command.  Updating it
+    only persists the PUUIDs; the background event handler performs an LCU
+    invitation only when the existing automation master switch is explicitly
+    enabled.
+    """
+
+    puuids: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        validation_alias=AliasChoices("puuids", "friend_puuids", "friendPuuids"),
+    )
+
+
 class SearchHistoryPinBody(BaseModel):
     pinned: bool
 
 
 class ChampSelectDodgeRequest(BaseModel):
+    confirmation: Literal["我确认秒退"]
+
+
+class ChampSelectCharityRerollRequest(BaseModel):
+    """Explicit confirmation for LeagueAkari-style charity reroll.
+
+    A charity reroll is two account writes at most (reroll, then an optional
+    bench swap), so it must never be reachable through an implicit/default
+    request body.
+    """
+
+    confirmation: Literal["我确认慈善重随"]
+
+
+class ChampSelectDodgeLoopRequest(BaseModel):
+    """Explicit confirmation required before starting the dodge loop."""
+
     confirmation: Literal["我确认秒退"]
 
 
@@ -874,6 +1103,11 @@ class LeagueLabService:
         self.credentials: LcuCredentials | None = None
         self.phase = ""
         self.game_mode = ""
+        # Read-only gameflow snapshot used by the Mini surface.  LeagueAkari's
+        # Lounge renders the current queue/map directly from the LCU session;
+        # keep the same evidence available in every lounge phase instead of
+        # making the frontend guess from the gameflow phase alone.
+        self.gameflow_session: dict = {}
         self.summoner_name = ""
         self.current_summoner: dict = {}
         self.last_error = ""
@@ -881,9 +1115,24 @@ class LeagueLabService:
         self.last_action_at = 0.0
         self._task: asyncio.Task | None = None
         self._event_task: asyncio.Task | None = None
+        self._dodge_loop_task: asyncio.Task | None = None
+        self._dodge_loop_cancel_event: asyncio.Event | None = None
+        self._dodge_loop_state: dict = {
+            "active": False,
+            "attempts": 0,
+            "concurrency": 5,
+            "started_at": None,
+            "stopped_at": None,
+            "stop_reason": None,
+            "last_error": None,
+        }
         self._event_wakeup = asyncio.Event()
         self._event_connected = False
         self._accept_due_at: float | None = None
+        # LeagueAkari starts a real timeout task as soon as the LCU enters
+        # ReadyCheck.  Keep the polling loop as a recovery path, but do not
+        # make an auto-accept wait for the next (possibly slow) state refresh.
+        self._auto_accept_waiter: asyncio.Task | None = None
         self._acted_phase = ""
         self._phase_action_done = ""
         self._phase_action_due_at: float | None = None
@@ -895,13 +1144,27 @@ class LeagueLabService:
         # endpoint responsible for (or capable of) executing an LCU write.
         self._delayed_action_plan: dict[str, dict] = {}
         self._handled_trades: set[str] = set()
+        # LeagueAkari records when an incoming champion swap first becomes
+        # RECEIVED.  Keeping the monotonic timestamp here lets a later poll
+        # subtract time that has already elapsed from the configured delay.
+        self._trade_created_at: dict[str, float] = {}
         self._bench_candidate_since: dict[int, float] = {}
         self.auto_select_temporarily_disabled = False
         self._leader_handoff_lobby = ""
         self._configured_champion_id = 0
+        self._active_auto_select_group = "default"
+        self._active_auto_select_position = "default"
+        self._active_auto_select_queue_type = ""
         self._honored_game_id = ""
+        # A ballot can arrive through the event stream and be observed by the
+        # polling fallback at the same time.  Keep the in-flight game id so
+        # those two paths cannot submit two honor ballots concurrently.
+        self._honor_in_progress_game_id = ""
         self._matchmaking_due_at: float | None = None
         self._matchmaking_status = "idle"
+        self._matchmaking_status_reason: str | None = None
+        self._matchmaking_chat_countdown_second: int | None = None
+        self._matchmaking_last_chat_key: str | None = None
         self._last_event_at = 0.0
         self._aram_side_sent_context = ""
         self._chat_ready_since: float | None = None
@@ -925,23 +1188,84 @@ class LeagueLabService:
 
     def _load_settings(self) -> LeagueLabSettings:
         try:
-            return LeagueLabSettings.model_validate_json(self._settings_path().read_text(encoding="utf-8"))
+            raw = json.loads(self._settings_path().read_text(encoding="utf-8"))
+            stored_migration_version = int(raw.get("safety_migration_version", 0) or 0)
+            settings = LeagueLabSettings.model_validate(raw)
         except (OSError, ValueError):
             return LeagueLabSettings()
+        if stored_migration_version < 1:
+            settings = self._apply_account_action_safety_migration(settings)
+            self._write_settings(settings)
+        elif stored_migration_version < 2:
+            # Preserve every automation the user explicitly opted into after
+            # the original safety migration; only make the manual account
+            # toolkit available by default in this product revision.
+            settings = settings.model_copy(update={
+                "toolkit_account_actions_enabled": True,
+                "safety_migration_version": 2,
+            })
+            self._write_settings(settings)
+        return settings
 
-    def update_settings(self, settings: LeagueLabSettings) -> LeagueLabSettings:
-        path = self._settings_path()
+    @staticmethod
+    def _apply_account_action_safety_migration(settings: LeagueLabSettings) -> LeagueLabSettings:
+        disabled = {
+            "automation_enabled": False,
+            "auto_accept_enabled": False,
+            "play_again_enabled": False,
+            "auto_reconnect_enabled": False,
+            "auto_handle_invitations_enabled": False,
+            "auto_skip_leader_enabled": False,
+            "auto_select_enabled": False,
+            "auto_champion_config_enabled": False,
+            "auto_honor_enabled": False,
+            "auto_matchmaking_enabled": False,
+            "auto_matchmaking_chat_countdown_enabled": False,
+            "auto_reply_enabled": False,
+            "lock_offline_status": False,
+            "auto_set_status_message_enabled": False,
+            "auto_set_ranked_status_enabled": False,
+            "auto_send_aram_team_side_enabled": False,
+            # The product now treats the account-write toolkit as an available
+            # capability by default. Individual automations remain disabled
+            # and still require their own explicit switches.
+            "toolkit_account_actions_enabled": True,
+            "terminate_game_shortcut_enabled": False,
+            "in_game_send_enabled": False,
+            "safety_migration_version": 2,
+        }
+        profiles = {}
+        for key, profile in settings.auto_select_profiles.items():
+            profile_body = profile.model_dump()
+            profile_body["pick"]["enabled"] = False
+            profile_body["pick"]["bench_handle_trade_enabled"] = False
+            profile_body["ban"]["enabled"] = False
+            profiles[key] = AutoSelectProfile.model_validate(profile_body)
+        return settings.model_copy(update={**disabled, "auto_select_profiles": profiles})
+
+    @classmethod
+    def _write_settings(cls, settings: LeagueLabSettings) -> None:
+        path = cls._settings_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         temp = path.with_suffix(".tmp")
         temp.write_text(json.dumps(settings.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
         temp.replace(path)
+
+    def update_settings(self, settings: LeagueLabSettings) -> LeagueLabSettings:
+        self._write_settings(settings)
         self.settings = settings
+        if not settings.automation_enabled or not settings.auto_accept_enabled:
+            self._cancel_auto_accept_waiter()
+            self._accept_due_at = None
         if not settings.auto_select_enabled:
             self._accept_due_at = None
             self._handled_champion_actions.clear()
             self._champion_action_due_at.clear()
             self._delayed_action_plan.clear()
             self._configured_champion_id = 0
+            self._active_auto_select_group = "default"
+            self._active_auto_select_position = "default"
+            self._active_auto_select_queue_type = ""
             self.champ_select = {}
         return settings
 
@@ -950,21 +1274,82 @@ class LeagueLabService:
             self._task = asyncio.create_task(self._run(), name="league-lab")
 
     async def stop(self) -> None:
-        if self._task is None:
-            return
-        self._task.cancel()
-        try:
-            await self._task
-        except asyncio.CancelledError:
-            pass
-        self._task = None
+        self._cancel_auto_accept_waiter()
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+        self._terminate_dodge_loop("service-stopped")
         if self._event_task:
             self._event_task.cancel()
             try:
                 await self._event_task
             except asyncio.CancelledError:
                 pass
-            self._event_task = None
+        self._event_task = None
+
+    def _cancel_auto_accept_waiter(self) -> None:
+        waiter = self._auto_accept_waiter
+        self._auto_accept_waiter = None
+        if waiter is not None and not waiter.done():
+            waiter.cancel()
+
+    def _start_auto_accept_waiter(self, delay: float) -> None:
+        """Start a ReadyCheck timer immediately after the LCU event arrives.
+
+        The regular loop still verifies the phase and deadline, so this is
+        safe when the event stream drops.  A single sentinel assignment in
+        ``_try_auto_accept`` prevents the event task and polling loop from
+        submitting the same accept request concurrently.
+        """
+        self._cancel_auto_accept_waiter()
+        if delay <= 0:
+            return
+        self._auto_accept_waiter = asyncio.create_task(
+            self._wait_and_auto_accept(delay),
+            name="league-auto-accept",
+        )
+
+    async def _wait_and_auto_accept(self, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+            await self._try_auto_accept()
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if self._auto_accept_waiter is asyncio.current_task():
+                self._auto_accept_waiter = None
+
+    async def _try_auto_accept(self) -> None:
+        """Accept once when the event-driven ReadyCheck deadline is due."""
+        if (
+            self.phase != "ReadyCheck"
+            or not self.settings.automation_enabled
+            or not self.settings.auto_accept_enabled
+            or self._accept_due_at is None
+            or self._accept_due_at == float("inf")
+            or time.monotonic() < self._accept_due_at
+        ):
+            return
+        ready_check = self.ready_check or {}
+        response = str(
+            ready_check.get("player_response") or ready_check.get("playerResponse") or ""
+        ).upper()
+        if response in {"ACCEPTED", "DECLINED"}:
+            self._accept_due_at = None
+            return
+        # Mark terminal before awaiting the LCU request.  The polling loop or
+        # another ReadyCheck event must not issue a duplicate accept.
+        self._accept_due_at = float("inf")
+        try:
+            await self._record_action("已自动接受对局", "POST", "/lol-matchmaking/v1/ready-check/accept")
+        except RuntimeError:
+            # Preserve the old recovery behavior: a failed request can be
+            # retried by the polling path while the phase remains active.
+            self._accept_due_at = None
 
     async def refresh_connection(self, *, force: bool = False) -> bool:
         now = time.monotonic()
@@ -984,12 +1369,15 @@ class LeagueLabService:
 
     def _replace_credentials(self, credentials: LcuCredentials | None) -> None:
         if credentials != self.credentials:
+            self._terminate_dodge_loop("client-disconnected")
             if self._event_task:
                 self._event_task.cancel()
                 self._event_task = None
             self.credentials = credentials
+            self._event_connected = False
             self.phase = ""
             self.game_mode = ""
+            self.gameflow_session = {}
             self.summoner_name = ""
             self.current_summoner = {}
             self._acted_phase = ""
@@ -1000,18 +1388,45 @@ class LeagueLabService:
             self._delayed_action_plan.clear()
             self._handled_champion_actions.clear()
             self._handled_trades.clear()
+            self._trade_created_at.clear()
             self._bench_candidate_since.clear()
+            self._active_auto_select_group = "default"
+            self._active_auto_select_position = "default"
+            self._active_auto_select_queue_type = ""
+            self._honor_in_progress_game_id = ""
             self._matchmaking_due_at = None
             self._matchmaking_status = "idle"
+            self._matchmaking_status_reason = None
+            self._matchmaking_last_chat_key = None
+            self._cancel_auto_accept_waiter()
             self.ready_check = None
             self.matchmaking_search = None
             self.ongoing_champion_swap = None
             if self.phase != "ChampSelect":
                 self.champ_select = {}
                 self.auto_select_temporarily_disabled = False
+                self._active_auto_select_group = "default"
+                self._active_auto_select_position = "default"
+                self._active_auto_select_queue_type = ""
             self._reset_chat_ready_automation()
             if credentials:
                 self._event_task = asyncio.create_task(self._run_event_stream(credentials), name="league-lcu-events")
+
+    def _invalidate_connection(self) -> None:
+        """Drop both credentials and cached gameflow state after an auth/IO failure.
+
+        LeagueAkari clears its gameflow snapshot when the LCU connection is
+        lost.  Keeping a stale Lobby/ChampSelect phase here would otherwise
+        make the desktop lifecycle reopen auxiliary windows after disconnect.
+        """
+        if self.credentials is not None:
+            self._replace_credentials(None)
+            return
+        # The caller may already have lost the credential object.  Recreate a
+        # harmless sentinel so the canonical replacement path still performs
+        # every lifecycle reset instead of maintaining a second reset list.
+        self.credentials = LcuCredentials(port=0, token="")
+        self._replace_credentials(None)
 
     async def select_client(self, pid: int) -> None:
         clients = await discover_lcu_clients()
@@ -1031,6 +1446,130 @@ class LeagueLabService:
     def _interrupt_chat_ready_automation(self) -> None:
         self._chat_ready_since = None
         self._chat_ready_automation_done = True
+
+    def _terminate_dodge_loop(self, reason: str) -> None:
+        """Stop the local dodge-loop task without issuing an LCU request.
+
+        This helper is intentionally synchronous so it can be used from
+        connection/phase reset paths.  The loop task itself is cancelled as a
+        best-effort local operation; every worker also observes the event and
+        re-checks the account gate before its next write.
+        """
+
+        event = self._dodge_loop_cancel_event
+        if event is not None:
+            event.set()
+        task = self._dodge_loop_task
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
+        if task is not None and task is not current and not task.done():
+            task.cancel()
+        if self._dodge_loop_state.get("active") or task is not None:
+            self._dodge_loop_state.update({
+                "active": False,
+                "stopped_at": time.time(),
+                "stop_reason": reason,
+            })
+
+    async def _dodge_once_with_revalidation(self) -> tuple[bool, str | None]:
+        """Perform one guarded dodge write, or return a terminal reason.
+
+        The phase and account-write gate are checked immediately before every
+        invoke request.  A worker never relies on the cached service phase.
+        """
+
+        if not self.settings.toolkit_account_actions_enabled:
+            return False, "account-actions-disabled"
+        try:
+            phase = str(await self.request("GET", "/lol-gameflow/v1/gameflow-phase") or "")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - concrete transport errors vary by client
+            return False, f"phase-check-failed: {type(exc).__name__}"
+        if phase != "ChampSelect":
+            return False, "phase-exited"
+        if not self.settings.toolkit_account_actions_enabled:
+            return False, "account-actions-disabled"
+        try:
+            await self.request(
+                "POST",
+                "/lol-login/v1/session/invoke",
+                params={
+                    "destination": "lcdsServiceProxy",
+                    "method": "call",
+                    "args": '["", "teambuilder-draft", "quitV2", ""]',
+                },
+                json_body={"data": ["", "teambuilder-draft", "quitV2", ""]},
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - concrete transport errors vary by client
+            return False, f"write-failed: {type(exc).__name__}"
+        return True, None
+
+    async def _run_dodge_loop_worker(self, cancel_event: asyncio.Event) -> str:
+        while not cancel_event.is_set():
+            ok, reason = await self._dodge_once_with_revalidation()
+            if ok:
+                self._dodge_loop_state["attempts"] = int(self._dodge_loop_state.get("attempts") or 0) + 1
+            elif reason in {"account-actions-disabled", "phase-exited"}:
+                cancel_event.set()
+                return reason
+            else:
+                self._dodge_loop_state["last_error"] = reason
+            # Keep five workers responsive without turning an LCU error into a
+            # tight CPU/network loop.  The upstream loop remains concurrent;
+            # this small yield is only a local safety backoff.
+            await asyncio.sleep(0.05)
+        return "cancelled"
+
+    async def _run_dodge_loop(self, cancel_event: asyncio.Event) -> None:
+        workers = [
+            asyncio.create_task(self._run_dodge_loop_worker(cancel_event), name=f"league-dodge-worker-{index}")
+            for index in range(5)
+        ]
+        try:
+            results = await asyncio.gather(*workers, return_exceptions=True)
+            terminal = next(
+                (result for result in results if isinstance(result, str) and result != "cancelled"),
+                None,
+            )
+            if terminal and self._dodge_loop_state.get("stop_reason") is None:
+                self._dodge_loop_state["stop_reason"] = terminal
+        except asyncio.CancelledError:
+            cancel_event.set()
+            for worker in workers:
+                worker.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+            raise
+        finally:
+            self._dodge_loop_state["active"] = False
+            self._dodge_loop_state["stopped_at"] = self._dodge_loop_state.get("stopped_at") or time.time()
+            self._dodge_loop_state["stop_reason"] = self._dodge_loop_state.get("stop_reason") or "completed"
+            if self._dodge_loop_task is asyncio.current_task():
+                self._dodge_loop_task = None
+                self._dodge_loop_cancel_event = None
+
+    def start_dodge_loop(self) -> None:
+        if self._dodge_loop_task is not None and not self._dodge_loop_task.done():
+            raise RuntimeError("秒退循环已经在运行")
+        cancel_event = asyncio.Event()
+        self._dodge_loop_cancel_event = cancel_event
+        self._dodge_loop_state = {
+            "active": True,
+            "attempts": 0,
+            "concurrency": 5,
+            "started_at": time.time(),
+            "stopped_at": None,
+            "stop_reason": None,
+            "last_error": None,
+        }
+        self._dodge_loop_task = asyncio.create_task(
+            self._run_dodge_loop(cancel_event),
+            name="league-dodge-loop",
+        )
 
     async def _run_event_stream(self, credentials: LcuCredentials) -> None:
         """Subscribe to LCU JsonApi events; the polling loop remains a recovery fallback."""
@@ -1067,6 +1606,77 @@ class LeagueLabService:
     async def _handle_lcu_event(self, event: dict) -> None:
         uri = str(event.get("uri") or "")
         data = event.get("data") or {}
+        if uri == "/lol-gameflow/v1/gameflow-phase":
+            # LeagueAkari reacts to the gameflow observable immediately.  Do
+            # the same here so ReadyCheck does not wait for a full state
+            # refresh before its zero-delay action can run.
+            next_phase = str(data or "")
+            self.phase = next_phase
+            self._acted_phase = next_phase
+            self._phase_action_done = ""
+            if next_phase != "ReadyCheck":
+                self._accept_due_at = None
+                self._cancel_auto_accept_waiter()
+            elif self.settings.automation_enabled and self.settings.auto_accept_enabled:
+                delay = max(0.0, float(self.settings.auto_accept_delay_seconds))
+                self._accept_due_at = time.monotonic() + delay
+                self._start_auto_accept_waiter(delay)
+                if delay <= 0:
+                    await self._try_auto_accept()
+
+        if uri == "/lol-matchmaking/v1/ready-check":
+            normalized = _normalize_ready_check(data)
+            if normalized is not None:
+                self.ready_check = normalized
+            response = str(
+                (normalized or {}).get("player_response")
+                or (normalized or {}).get("playerResponse")
+                or ""
+            ).upper()
+            if response in {"ACCEPTED", "DECLINED"}:
+                self._accept_due_at = None
+                self._cancel_auto_accept_waiter()
+            elif (
+                self.phase == "ReadyCheck"
+                and self.settings.automation_enabled
+                and self.settings.auto_accept_enabled
+                and self._accept_due_at is None
+            ):
+                delay = max(0.0, float(self.settings.auto_accept_delay_seconds))
+                self._accept_due_at = time.monotonic() + delay
+                self._start_auto_accept_waiter(delay)
+                if delay <= 0:
+                    await self._try_auto_accept()
+        # LeagueAkari completes the pre-end mission celebration before its
+        # play-again timer.  Without this event, clients that remain in
+        # PreEndOfGame can wait on a ballot that never becomes actionable.
+        if (
+            uri == "/lol-pre-end-of-game/v1/currentSequenceEvent"
+            and self.settings.automation_enabled
+            and self.settings.play_again_enabled
+            and isinstance(data, dict)
+            and data.get("name") == "missions-celebration"
+        ):
+            try:
+                await self.request(
+                    "POST",
+                    "/lol-pre-end-of-game/v1/complete/missions-celebration",
+                )
+            except RuntimeError:
+                logger.debug("Unable to complete pre-end missions celebration", exc_info=True)
+        # LeagueAkari reacts to the honor ballot event instead of relying on a
+        # phase poll.  This matters because some client builds expose the
+        # ballot only briefly while transitioning through WaitingForStats.
+        # The handler remains opt-in and _run_auto_honor still validates the
+        # phase/settings immediately before every account write.
+        if (
+            uri == "/lol-honor-v2/v1/ballot"
+            and isinstance(data, dict)
+            and data.get("gameId")
+            and self.settings.automation_enabled
+            and self.settings.auto_honor_enabled
+        ):
+            await self._run_auto_honor(data)
         message_match = re.fullmatch(r"/lol-chat/v1/conversations/([^/]+)/messages/([^/]+)", uri)
         if (
             message_match
@@ -1110,11 +1720,16 @@ class LeagueLabService:
                     lobby = await self.request("GET", "/lol-lobby/v2/lobby")
                 except RuntimeError:
                     return
+                if not isinstance(lobby, dict):
+                    return
+                local_member = lobby.get("localMember")
+                if not isinstance(local_member, dict) or local_member.get("allowedInviteOthers") is not True:
+                    return
                 members = (lobby or {}).get("members") or []
                 if any(str(member.get("puuid") or "") == puuid for member in members):
                     return
                 summoner_id = data.get("summonerId")
-                if summoner_id and (lobby or {}).get("localMember", {}).get("allowedInviteOthers", True):
+                if summoner_id:
                     await self.request(
                         "POST",
                         "/lol-lobby/v2/lobby/invitations",
@@ -1149,13 +1764,11 @@ class LeagueLabService:
             # Optional routes can legitimately be absent on some client builds.
             # A 404 does not invalidate the in-memory LCU credentials.
             if exc.response.status_code in {401, 403}:
-                self.credentials = None
-                self._reset_chat_ready_automation()
+                self._invalidate_connection()
             raise RuntimeError(self.last_error) from exc
         except httpx.RequestError as exc:
             self.last_error = f"LCU 请求失败: {type(exc).__name__}"
-            self.credentials = None
-            self._reset_chat_ready_automation()
+            self._invalidate_connection()
             raise RuntimeError(self.last_error) from exc
         except ValueError as exc:
             self.last_error = f"LCU 请求失败: {type(exc).__name__}"
@@ -1297,6 +1910,15 @@ class LeagueLabService:
         pickable_available = bool(champ_state.get("current_pickable_ids_available"))
         bannable_available = bool(champ_state.get("current_bannable_ids_available"))
         default_profile = self.settings.auto_select_profiles.get("default") or AutoSelectProfile()
+        active_group_id = str(self._active_auto_select_group or "default")
+        if active_group_id == "default" and self.game_mode:
+            guessed_group = self._mode_group(
+                {"gameData": {"queue": {"gameMode": self.game_mode, "type": self._active_auto_select_queue_type}}},
+                champ_state,
+            )
+            if guessed_group != "default":
+                active_group_id = guessed_group
+        active_profile = self.settings.auto_select_profiles.get(active_group_id) or default_profile
         local_cell = champ_state.get("local_player_cell_id")
         local_member = next(
             (
@@ -1306,62 +1928,160 @@ class LeagueLabService:
             ),
             {},
         )
-        position = str(local_member.get("assigned_position") or "default")
+        position = str(self._active_auto_select_position or local_member.get("assigned_position") or "default")
         pick_candidates = (
-            self._profile_candidates(default_profile.pick.champions, position)
-            if default_profile.pick.enabled
+            self._profile_candidates(active_profile.pick.champions, position)
+            if active_profile.pick.enabled
             else list(self.settings.auto_pick_champion_ids)
         )
         ban_candidates = (
-            self._profile_candidates(default_profile.ban.champions, position)
-            if default_profile.ban.enabled
+            self._profile_candidates(active_profile.ban.champions, position)
+            if active_profile.ban.enabled
             else list(self.settings.auto_ban_champion_ids)
         )
+
+        allow_subset = bool(champ_state.get("allow_subset_champion_picks"))
+        subset_available = bool(champ_state.get("subset_champion_ids_available"))
+        subset_set = set(champ_state.get("subset_champion_ids") or [])
+        grid_available = bool(champ_state.get("grid_champions_available"))
+        grid_champions = champ_state.get("grid_champions") or {}
+        game_mode = str(self.game_mode or "").upper()
 
         def expected_rows(candidates: list[int], available: list[int], available_flag: bool, action_type: str) -> list[dict]:
             available_set = set(available)
             if not available_flag:
                 return [{"id": int(champion_id), "status": "unknown"} for champion_id in candidates]
-            status_name = "pickable" if action_type == "pick" else "bannable"
-            unavailable_name = "unpickable" if action_type == "pick" else "unbannable"
-            return [
-                {"id": int(champion_id), "status": status_name if champion_id in available_set else unavailable_name}
-                for champion_id in candidates
-            ]
+            rows = []
+            for champion_id in candidates:
+                champion_id = int(champion_id)
+                # LeagueAkari treats the Cherry "Bravery" pseudo champion as
+                # available even though it is intentionally absent from the
+                # normal LCU pickable-id array.
+                if action_type == "pick" and champion_id == -3 and game_mode == "CHERRY":
+                    status = "pickable"
+                else:
+                    grid = grid_champions.get(champion_id) if isinstance(grid_champions, dict) else None
+                    selection = (grid or {}).get("selection_status") or {}
+                    if action_type == "pick":
+                        # When grid data is available, distinguish ownership
+                        # and selection conflicts exactly as LeagueAkari does.
+                        # A pickable-id list alone is not enough to establish
+                        # ownership/selection status.  LeagueAkari treats a
+                        # missing grid row as unknown even when the optional
+                        # LCU pickable endpoint succeeded.
+                        if not grid_available or grid is None:
+                            status = "unknown"
+                        elif champion_id not in available_set:
+                            status = "not-owned" if not bool(grid.get("owned")) else "unpickable"
+                        elif selection.get("is_banned"):
+                            status = "banned"
+                        elif not bool(champ_state.get("allow_duplicate_picks")):
+                            if selection.get("pick_intented") and not selection.get("pick_intented_by_me"):
+                                status = "pick-intented"
+                            elif selection.get("picked_by_other_or_banned") and not selection.get("selected_by_me"):
+                                status = "picked"
+                            elif allow_subset:
+                                status = "subset-pickable" if subset_available and champion_id in subset_set else (
+                                    "unknown" if not subset_available else "unpickable"
+                                )
+                            else:
+                                status = "pickable"
+                        elif allow_subset:
+                            status = "subset-pickable" if subset_available and champion_id in subset_set else (
+                                "unknown" if not subset_available else "unpickable"
+                            )
+                        else:
+                            status = "pickable"
+                    else:
+                        # Empty-ban (-1) has no grid row and may still be
+                        # bannable; other banned champions are not actionable.
+                        # For all ordinary champions the grid is still the
+                        # source of truth, so no row means unknown.
+                        if not grid_available or grid is None:
+                            status = "unknown"
+                        elif champion_id not in available_set:
+                            status = "unbannable"
+                        elif selection.get("is_banned") and champion_id != -1:
+                            status = "banned"
+                        elif selection.get("pick_intented") and not selection.get("pick_intented_by_me"):
+                            status = "pick-intented"
+                        else:
+                            status = "bannable"
+                rows.append({"id": champion_id, "status": status})
+            return rows
 
         subset = list(champ_state.get("subset_champion_ids") or [])
         bench = list(champ_state.get("bench_champions") or [])
         scoped_bench = subset if subset and champ_state.get("timer_phase") == "BAN_PICK" else bench
-        expected_swaps = [
-            {"id": int(champion_id), "status": "swappable" if champion_id in scoped_bench and champion_id in set(current_pickable) else "unswappable"}
-            for champion_id in pick_candidates
-        ] if champ_state.get("bench_enabled") else []
+        pickable_set = set(current_pickable)
+        expected_swaps = []
+        if champ_state.get("bench_enabled"):
+            for champion_id in pick_candidates:
+                champion_id = int(champion_id)
+                if champion_id not in scoped_bench or champion_id not in pickable_set:
+                    status = "unswappable"
+                elif allow_subset and str(champ_state.get("timer_phase") or "") == "BAN_PICK":
+                    status = (
+                        "subset-swappable" if subset_available and champion_id in subset_set
+                        else "unknown" if not subset_available
+                        else "waiting-on-finalization"
+                    )
+                else:
+                    status = "swappable"
+                expected_swaps.append({"id": champion_id, "status": status})
         delayed_by_kind = {
             "delayed_pick": next((item for item in delayed_action_plan if item.get("action_type") == "pick"), None),
             "delayed_ban": next((item for item in delayed_action_plan if item.get("action_type") == "ban"), None),
             "delayed_bench_swap": next((item for item in delayed_action_plan if item.get("kind") == "bench-swap"), None),
             "delayed_trade": next((item for item in delayed_action_plan if item.get("kind") == "champion-swap"), None),
         }
+        expected_picks = expected_rows(pick_candidates, current_pickable, pickable_available, "pick")
+        expected_bans = expected_rows(ban_candidates, current_bannable, bannable_available, "ban")
+        expected_pick = next((row for row in expected_picks if row.get("status") in {"pickable", "subset-pickable"}), None)
+        expected_ban = next((row for row in expected_bans if row.get("status") == "bannable"), None)
+        expected_swap = next((row for row in expected_swaps if row.get("status") in {"swappable", "subset-swappable"}), None)
+        move = champ_state.get("auto_select_move")
+        active_action = champ_state.get("active_action")
+        pick_enabled = bool(active_profile.pick.enabled or self.settings.auto_pick_champion_ids)
+        ban_enabled = bool(active_profile.ban.enabled or self.settings.auto_ban_champion_ids)
+        trade_rows = list(champ_state.get("trades") or [])
         auto_select_public = {
             "schema_version": 1,
             "enabled": bool(self.settings.automation_enabled and self.settings.auto_select_enabled),
             "temporarily_disabled": bool(self.auto_select_temporarily_disabled),
-            "move": champ_state.get("auto_select_move"),
-            "current_action": champ_state.get("active_action"),
+            "active_group_id": active_group_id,
+            "assigned_position": position,
+            "game_mode": self.game_mode or None,
+            "queue_type": self._active_auto_select_queue_type or None,
+            "move": move,
+            "current_action": active_action,
             "first_unfinished_pick_action": champ_state.get("first_unfinished_pick_action"),
-            "expected_picks": expected_rows(pick_candidates, current_pickable, pickable_available, "pick"),
-            "expected_bans": expected_rows(ban_candidates, current_bannable, bannable_available, "ban"),
+            "expected_pick": expected_pick,
+            "expected_picks": expected_picks,
+            "expected_ban": expected_ban,
+            "expected_bans": expected_bans,
+            "expected_swap": expected_swap,
             "expected_swaps": expected_swaps,
             "current_pickable_ids": current_pickable,
             "current_bannable_ids": current_bannable,
+            "subset_champion_ids": subset,
+            "scoped_bench_champion_ids": scoped_bench,
             "subset": {
                 "ids": subset,
                 "available": bool(champ_state.get("subset_champion_ids_available")),
             },
             "scoped_bench": scoped_bench,
             "actionability": {
-                "trades": list(champ_state.get("trades") or []),
-                "current_action": bool(champ_state.get("active_action")),
+                "intent": bool(move == "pick-intent" and pick_enabled and active_profile.pick.show_intent),
+                "show": bool(move in {"show-pick", "show-ban"} and (pick_enabled if move == "show-pick" else ban_enabled)),
+                "complete": bool(move in {"complete-pick", "complete-subset-pick", "complete-ban"} and (pick_enabled if move != "complete-ban" else ban_enabled)),
+                "vote": bool(move == "vote"),
+                "subset_pick": bool(move in {"show-subset-pick", "complete-subset-pick"} and pick_enabled and subset_available),
+                "bench_swap": bool(move in {"bench-swap", "subset-bench-swap"} and pick_enabled),
+                "trade_accept": any(bool(item.get("can_accept")) for item in trade_rows),
+                "trade_decline": any(bool(item.get("can_decline")) for item in trade_rows),
+                "trades": trade_rows,
+                "current_action": bool(active_action),
                 "current_pickable_ids_available": pickable_available,
                 "current_bannable_ids_available": bannable_available,
             },
@@ -1370,6 +2090,17 @@ class LeagueLabService:
                 "master_enabled": bool(self.settings.automation_enabled),
                 "feature_enabled": bool(self.settings.auto_select_enabled),
                 "profiles": {key: value.model_dump() for key, value in self.settings.auto_select_profiles.items()},
+                "pick_enabled": bool(active_profile.pick.enabled),
+                "ban_enabled": bool(active_profile.ban.enabled),
+                "show_intent": bool(active_profile.pick.show_intent),
+                "ignore_intent": bool(active_profile.pick.ignore_intent),
+                "pick_strategy": active_profile.pick.strategy,
+                "ban_strategy": active_profile.ban.strategy,
+                "bench_select_first_available_champion": bool(active_profile.pick.bench_select_first_available_champion),
+                "bench_handle_trade_enabled": bool(active_profile.pick.bench_handle_trade_enabled),
+                "pick_delay_seconds": float(active_profile.pick.delay_seconds),
+                "ban_delay_seconds": float(active_profile.ban.delay_seconds),
+                "bench_swap_accumulated_delay_seconds": float(active_profile.pick.bench_swap_accumulated_delay_seconds),
                 "legacy_pick_ids": list(self.settings.auto_pick_champion_ids),
                 "legacy_ban_ids": list(self.settings.auto_ban_champion_ids),
             },
@@ -1380,6 +2111,7 @@ class LeagueLabService:
             "requires_elevation": credentials is None and client_window_detected,
             "phase": self.phase,
             "game_mode": self.game_mode,
+            "gameflow_session": self.gameflow_session if isinstance(self.gameflow_session, dict) else {},
             "summoner_name": self.summoner_name,
             "current_summoner": self.current_summoner,
             "region": credentials.region if credentials else "",
@@ -1392,12 +2124,14 @@ class LeagueLabService:
             "ready_check": self.ready_check,
             "matchmaking_search": self.matchmaking_search,
             "ongoing_champion_swap": self.ongoing_champion_swap,
+            "dodge_loop": dict(self._dodge_loop_state),
             "champ_select": self.champ_select,
             "auto_select": auto_select_public,
             "auto_select_temporarily_disabled": self.auto_select_temporarily_disabled,
             "event_stream_connected": self._event_connected,
             "last_event_at": self._last_event_at or None,
             "matchmaking_status": self._matchmaking_status,
+            "matchmaking_status_reason": self._matchmaking_status_reason,
             "matchmaking_due_at": (time.time() + max(0.0, self._matchmaking_due_at - time.monotonic())) if self._matchmaking_due_at else None,
             "action_countdown": action_countdown,
             "action_plan": {
@@ -1410,8 +2144,7 @@ class LeagueLabService:
             "delayed_action_plan": delayed_action_plan,
             "respawn_timer": self.respawn_timer,
             "cooldown_timer_should_show": self.settings.cooldown_timer_enabled and self.phase == "InProgress" and self.game_mode in {"CLASSIC", "PRACTICETOOL", "ARAM", "URF", "ONEFORALL", "NEXUSBLITZ", "ULTBOOK", "KIWI"},
-            "opgg_should_show": self.settings.opgg_window_enabled and self.settings.opgg_auto_show and self.phase == "ChampSelect",
-            "mini_should_show": self.settings.mini_enabled and self.settings.mini_auto_show and self.phase in {"Lobby", "Matchmaking", "ReadyCheck", "ChampSelect"} and not bool(self.champ_select.get("is_spectating")),
+            "mini_should_show": bool(credentials) and self.settings.mini_enabled and self.settings.mini_auto_show and self.phase in {"Lobby", "Matchmaking", "ReadyCheck", "ChampSelect"} and not bool(self.champ_select.get("is_spectating")),
             "settings": self.settings.model_dump(),
         }
 
@@ -1419,12 +2152,19 @@ class LeagueLabService:
         try:
             phase = await self.request("GET", "/lol-gameflow/v1/gameflow-phase")
             self.phase = str(phase or "")
+            if self.phase != "ChampSelect":
+                self._terminate_dodge_loop("phase-exited")
             self.ready_check = None
             self.matchmaking_search = None
+            previous_ongoing_swap = self.ongoing_champion_swap
             self.ongoing_champion_swap = None
             if self.phase != "ChampSelect":
                 self.champ_select = {}
                 self.auto_select_temporarily_disabled = False
+                self._active_auto_select_group = "default"
+                self._active_auto_select_position = "default"
+                self._active_auto_select_queue_type = ""
+                self._trade_created_at.clear()
 
             async def optional(path: str):
                 try:
@@ -1432,10 +2172,17 @@ class LeagueLabService:
                 except RuntimeError:
                     return None
 
-            if self.phase in {"ChampSelect", "InProgress"}:
-                gameflow = await self.request("GET", "/lol-gameflow/v1/session")
+            if self.phase in {"Lobby", "Matchmaking", "ReadyCheck", "ChampSelect", "InProgress"}:
+                # The session is a read-only snapshot.  It is available in
+                # lobby/ready-check on the same client builds used by
+                # LeagueAkari and contains the authoritative map icon/name and
+                # queue mode used by the Mini Lounge.
+                gameflow = await optional("/lol-gameflow/v1/session")
+                self.gameflow_session = gameflow if isinstance(gameflow, dict) else {}
                 self.game_mode = str((((gameflow or {}).get("gameData") or {}).get("queue") or {}).get("gameMode") or "").upper()
             else:
+                gameflow = {}
+                self.gameflow_session = {}
                 self.game_mode = ""
             summoner = await self.request("GET", "/lol-summoner/v1/current-summoner")
             if isinstance(summoner, dict):
@@ -1451,7 +2198,29 @@ class LeagueLabService:
             self.last_error = ""
             if self.phase == "ChampSelect":
                 session = await self.request("GET", "/lol-champ-select/v1/session")
+                if isinstance(session, dict):
+                    self._active_auto_select_group = self._mode_group(
+                        gameflow if isinstance(gameflow, dict) else {}, session
+                    )
+                    self._active_auto_select_position = self._position_for_session(session)
+                    queue = ((gameflow or {}).get("gameData") or {}).get("queue") or {}
+                    self._active_auto_select_queue_type = str(queue.get("type") or "")
                 self.ongoing_champion_swap = await optional("/lol-champ-select/v1/ongoing-champion-swap")
+                if isinstance(self.ongoing_champion_swap, dict):
+                    trade_id = str(self.ongoing_champion_swap.get("id") or "")
+                    trade_state = str(self.ongoing_champion_swap.get("state") or "").upper()
+                    if trade_id and trade_state == "RECEIVED" and not bool(
+                        self.ongoing_champion_swap.get("initiatedByLocalPlayer")
+                        or self.ongoing_champion_swap.get("initiated_by_local_player")
+                    ):
+                        previous_id = str((previous_ongoing_swap or {}).get("id") or "")
+                        previous_state = str((previous_ongoing_swap or {}).get("state") or "").upper()
+                        if previous_id != trade_id or previous_state != "RECEIVED":
+                            self._trade_created_at[trade_id] = time.monotonic()
+                    else:
+                        self._trade_created_at.clear()
+                else:
+                    self._trade_created_at.clear()
                 # These are read-only snapshots.  Some client builds do not
                 # expose one or more routes, so absence must degrade to an
                 # explicit unavailable list rather than creating a write.
@@ -1466,6 +2235,7 @@ class LeagueLabService:
                     pickable_ids=pickable_ids,
                     bannable_ids=bannable_ids,
                     subset_ids=subset_ids,
+                    grid_champions=(session.get("gridChampions") if isinstance(session, dict) else None),
                 )
                 try:
                     skin_info, skin_rows = await asyncio.gather(
@@ -1515,6 +2285,51 @@ class LeagueLabService:
         self.last_action = label
         self.last_action_at = time.time()
 
+    async def _send_lcu_phase_chat(self, message: str, *, phase: str, message_type: str = "celebration") -> bool:
+        """Send a local automation notice to the matching LCU conversation.
+
+        Chat feedback is deliberately best-effort.  It never turns an
+        otherwise successful account action into a failure when a client
+        build omits the conversation endpoint, and it remains unreachable on
+        a fresh install because every caller is behind its feature switch.
+        """
+
+        conversation_types = {
+            "ChampSelect": {"championselect", "champion-select"},
+            "Lobby": {"customgame", "custom-game"},
+        }.get(phase, set())
+        if not conversation_types:
+            return False
+        try:
+            conversations = await self.request("GET", "/lol-chat/v1/conversations")
+            conversation = next(
+                (
+                    row
+                    for row in conversations
+                    if isinstance(row, dict)
+                    and str(row.get("type") or "").lower() in conversation_types
+                    and row.get("id")
+                ),
+                None,
+            ) if isinstance(conversations, list) else None
+            if not conversation:
+                return False
+            await self.request(
+                "POST",
+                f"/lol-chat/v1/conversations/{conversation['id']}/messages",
+                json_body={"body": f"[Insight] {message}", "type": message_type},
+            )
+            return True
+        except (RuntimeError, TypeError, ValueError):
+            return False
+
+    async def _send_champion_config_feedback(self, champion_id: int, message: str) -> None:
+        await self._send_lcu_phase_chat(
+            f"英雄 {champion_id}：{message}",
+            phase="ChampSelect",
+            message_type="celebration",
+        )
+
     @staticmethod
     def _normalize_champ_select(
         session,
@@ -1523,6 +2338,7 @@ class LeagueLabService:
         pickable_ids=None,
         bannable_ids=None,
         subset_ids=None,
+        grid_champions=None,
     ) -> dict:
         # Adapted from LeagueAkari's MIT-licensed auto-select computed state;
         # keep the upstream attribution in sync with THIRD_PARTY_LICENSES.md.
@@ -1539,7 +2355,11 @@ class LeagueLabService:
                 return None
             return {
                 "cell_id": member.get("cellId"),
-                "champion_id": member.get("championId") or member.get("championPickIntent"),
+                # A pick intent is not the champion currently held by the
+                # player.  LeagueAkari keeps these values separate because
+                # the intent may be set during PLANNING before any champion
+                # has been selected.
+                "champion_id": member.get("championId"),
                 "champion_pick_intent": member.get("championPickIntent"),
                 "assigned_position": member.get("assignedPosition") or "",
                 "summoner_id": member.get("summonerId"),
@@ -1585,6 +2405,64 @@ class LeagueLabService:
         current_bannable_ids = normalize_ids(bannable_ids)
         subset_champion_ids = normalize_ids(subset_ids)
 
+        def normalize_grid(values) -> dict[int, dict]:
+            """Normalize LCU grid champion selection evidence.
+
+            Different client builds expose this as either an id-keyed object
+            or an array of records.  Only the fields used by LeagueAkari's
+            expected-pick/ban computation are retained.
+            """
+
+            rows: list[tuple[object, object]] = []
+            if isinstance(values, dict):
+                rows = list(values.items())
+            elif isinstance(values, list):
+                rows = [
+                    (
+                        item.get("id") if isinstance(item, dict) else None,
+                        item,
+                    )
+                    for item in values
+                ]
+            normalized_grid: dict[int, dict] = {}
+            for key, raw in rows:
+                if not isinstance(raw, dict):
+                    continue
+                champion_value = raw.get("championId") or raw.get("champion_id") or key
+                try:
+                    champion_id = int(champion_value)
+                except (TypeError, ValueError):
+                    continue
+                selection = raw.get("selectionStatus") or raw.get("selection_status") or {}
+                if not isinstance(selection, dict):
+                    selection = {}
+                normalized_grid[champion_id] = {
+                    "owned": raw.get("owned"),
+                    "selection_status": {
+                        "is_banned": bool(selection.get("isBanned") if "isBanned" in selection else selection.get("is_banned")),
+                        "pick_intented": bool(selection.get("pickIntented") if "pickIntented" in selection else selection.get("pick_intented")),
+                        "pick_intented_by_me": bool(
+                            selection.get("pickIntentedByMe")
+                            if "pickIntentedByMe" in selection
+                            else selection.get("pick_intented_by_me")
+                        ),
+                        "picked_by_other_or_banned": bool(
+                            selection.get("pickedByOtherOrBanned")
+                            if "pickedByOtherOrBanned" in selection
+                            else selection.get("picked_by_other_or_banned")
+                        ),
+                        "selected_by_me": bool(
+                            selection.get("selectedByMe")
+                            if "selectedByMe" in selection
+                            else selection.get("selected_by_me")
+                        ),
+                    },
+                }
+            return normalized_grid
+
+        raw_grid_champions = grid_champions if grid_champions is not None else session.get("gridChampions")
+        normalized_grid = normalize_grid(raw_grid_champions)
+
         # LeagueAkari's computed state deliberately scopes actions to the
         # first action group which is not completely finished.  Looking at all
         # ``isInProgress`` actions can make a stale pick/ban race a new LCU
@@ -1614,6 +2492,7 @@ class LeagueLabService:
                 "completed": bool(action.get("completed")),
                 "in_progress": bool(action.get("isInProgress")),
                 "actor_cell_id": action.get("actorCellId"),
+                "pick_turn": action.get("pickTurn"),
                 "is_local": same_cell(action.get("actorCellId"), local_cell),
             }
 
@@ -1711,7 +2590,7 @@ class LeagueLabService:
 
             initiator = member_by_cell.get(str(initiator_cell)) if initiator_cell is not None else None
             other_player = member_by_cell.get(str(other_cell)) if other_cell is not None else None
-            actionable = state.upper() in actionable_states
+            actionable = state.upper() in actionable_states and not initiated_by_local
             reason = "available" if actionable else ("missing-state" if not state else "state-not-actionable")
             trades.append({
                 "id": trade_id,
@@ -1751,7 +2630,32 @@ class LeagueLabService:
                 "responder_champion_name": ongoing_swap.get("responderChampionName"),
             }
 
-        remaining_ms = int(timer.get("adjustedTimeLeftInPhase") or timer.get("timeLeftInPhase") or 0)
+        timer_is_infinite = bool(timer.get("isInfinite"))
+        try:
+            remaining_at_sample_ms = float(
+                timer.get("adjustedTimeLeftInPhase") or timer.get("timeLeftInPhase") or 0
+            )
+        except (TypeError, ValueError):
+            remaining_at_sample_ms = 0.0
+        try:
+            internal_now_ms = timer.get("internalNowInEpochMs")
+            elapsed_since_sample_ms = (
+                max(0.0, time.time() * 1000.0 - float(internal_now_ms))
+                if internal_now_ms is not None
+                else 0.0
+            )
+        except (TypeError, ValueError):
+            internal_now_ms = None
+            elapsed_since_sample_ms = 0.0
+        remaining_ms = int(
+            max(0.0, remaining_at_sample_ms - elapsed_since_sample_ms)
+            if not timer_is_infinite
+            else 0.0
+        )
+        try:
+            total_time_ms = int(timer.get("totalTimeInPhase") or 0)
+        except (TypeError, ValueError):
+            total_time_ms = 0
         my_team_cells = {
             str(item.get("cell_id"))
             for raw_member in session.get("myTeam") or []
@@ -1766,11 +2670,24 @@ class LeagueLabService:
             "bench_enabled": bool(session.get("benchEnabled")),
             "bench_champions": [int(item.get("championId")) for item in (session.get("benchChampions") or []) if isinstance(item, dict) and item.get("championId")],
             "rerolls_remaining": int(session.get("rerollsRemaining") or 0),
-            "allow_rerolling": bool(session.get("allowRerolling")),
+            # Keep support evidence strict: truthy strings or numeric values
+            # from an incomplete/malformed payload must not make the Mini
+            # render a write-capable reroll control.
+            "allow_rerolling": session.get("allowRerolling") is True,
             "allow_subset_champion_picks": bool(session.get("allowSubsetChampionPicks")),
+            "allow_duplicate_picks": bool(session.get("allowDuplicatePicks")),
+            "is_custom_game": bool(session.get("isCustomGame")),
             "timer_phase": str(timer.get("phase") or ""),
             "timer_adjusted_time_left_ms": remaining_ms,
-            "timer_deadline_at": time.time() + max(0, remaining_ms) / 1000,
+            "timer_total_time_ms": total_time_ms,
+            "timer_is_infinite": timer_is_infinite,
+            "timer_internal_now_ms": internal_now_ms,
+            "timer_elapsed_ms": max(0, total_time_ms - remaining_ms) if total_time_ms else None,
+            "timer_deadline_at": (
+                time.time() + max(0, remaining_ms) / 1000
+                if not timer_is_infinite and remaining_ms > 0
+                else None
+            ),
             "is_spectating": bool(session.get("isSpectating")),
             "my_actions": my_actions,
             "current_action_group_index": current_group_index,
@@ -1789,6 +2706,8 @@ class LeagueLabService:
             "current_bannable_ids_available": bannable_ids is not None,
             "subset_champion_ids": subset_champion_ids,
             "subset_champion_ids_available": subset_ids is not None,
+            "grid_champions": normalized_grid,
+            "grid_champions_available": raw_grid_champions is not None,
             "trades": trades,
             "ongoing_champion_swap": normalized_ongoing_swap,
         }
@@ -1806,14 +2725,20 @@ class LeagueLabService:
             return "aram"
         if queue_id in {420, 440} or "RANKED" in queue_type:
             return "ranked"
-        if queue_id == 700 or "CLASH" in queue_type:
-            return "clash"
         if queue_id in {1700, 1710} or mode == "CHERRY":
-            return "arena"
+            return "cherry"
+        if mode == "ONEFORALL" or "ONEFORALL" in queue_type:
+            return "oneforall"
+        if mode in {"ULTBOOK", "ULTIMATE_SPELLBOOK"} or "ULTBOOK" in queue_type or "ULTIMATE_SPELLBOOK" in queue_type:
+            return "ultbook"
         if "URF" in mode or "URF" in queue_type:
             return "urf"
-        if queue_id in {950, 960} or "DOOMBOT" in mode.replace("_", ""):
-            return "doom-bots"
+        if queue_id in {830, 840, 850, 950, 960} or any(token in mode.replace("_", "") for token in ("DOOMBOT", "BOT")) or "BOT" in queue_type:
+            return "bot"
+        if queue_id == 700 or "CLASH" in queue_type:
+            return "normal"
+        if queue_id in {400, 430, 480, 490} or mode in {"CLASSIC", "SWIFTPLAY"}:
+            return "normal"
         return "default"
 
     @staticmethod
@@ -1827,9 +2752,11 @@ class LeagueLabService:
 
     @staticmethod
     def _profile_candidates(pool: dict[str, list[int]], position: str) -> list[int]:
-        positioned = list(pool.get(position) or [])
-        fallback = list(pool.get("default") or [])
-        return list(dict.fromkeys(positioned + fallback))
+        # LeagueAkari resolves exactly the active position page.  A role page
+        # does not silently append the generic page, otherwise a champion
+        # configured for ``default`` can unexpectedly override a role list.
+        key = position if position in {"top", "jungle", "middle", "bottom", "utility"} else "default"
+        return list(dict.fromkeys(pool.get(key) or []))
 
     def _set_delayed_action_plan(
         self,
@@ -1841,11 +2768,27 @@ class LeagueLabService:
         **metadata,
     ) -> None:
         """Record a delayed action without making the plan executable by itself."""
-        self._delayed_action_plan[str(action_id)] = {
-            "action_id": str(action_id),
+        key = str(action_id)
+        previous = self._delayed_action_plan.get(key) or {}
+        now_wall = time.time()
+        now_mono = time.monotonic()
+        try:
+            delay_seconds = max(0.0, float(metadata.get("delay_seconds")))
+        except (TypeError, ValueError):
+            delay_seconds = max(0.0, float(due_at) - now_mono)
+        start_at = previous.get("start_at") or now_wall
+        finish_at = previous.get("finish_at") or now_wall + max(0.0, float(due_at) - now_mono)
+        action_type = str(metadata.get("action_type") or "")
+        move = str(metadata.get("move") or "")
+        self._delayed_action_plan[key] = {
+            "action_id": key,
             "kind": kind,
             "label": label,
             "due_at": due_at,
+            "start_at": start_at,
+            "finish_at": finish_at,
+            "delay_ms": int(round(delay_seconds * 1000.0)),
+            "is_pick_intent": bool(action_type == "pick" and move == "pick-intent"),
             **metadata,
         }
 
@@ -1853,13 +2796,20 @@ class LeagueLabService:
         self._delayed_action_plan.pop(str(action_id), None)
 
     @staticmethod
-    def _phase_calibrated_delay_seconds(session: dict, configured_seconds: float) -> float:
-        """Cap a delay at the current LCU phase timer, like LeagueAkari.
+    def _phase_calibrated_delay_seconds(
+        session: dict,
+        configured_seconds: float,
+        *,
+        target_offset_seconds: float | None = None,
+    ) -> float:
+        """Return LeagueAkari's phase-calibrated delay.
 
-        The LCU fixture does not consistently expose the internal timer epoch,
-        therefore this deliberately implements the proven safe part (never
-        scheduling past the remaining phase) and leaves elapsed-time
-        calibration to a future fixture with a stable schema.
+        LCU's ``adjustedTimeLeftInPhase`` is the value at
+        ``internalNowInEpochMs`` rather than a continuously decreasing
+        counter.  LeagueAkari subtracts the elapsed time and then caps the
+        requested action at both the target offset (used by show-and-lock-in)
+        and the real phase deadline.  Older client builds omit the epoch; in
+        that case we retain the conservative remaining-time cap.
         """
         try:
             configured = max(0.0, float(configured_seconds))
@@ -1869,12 +2819,33 @@ class LeagueLabService:
         if not isinstance(timer, dict):
             return configured
         try:
-            remaining_ms = float(timer.get("adjustedTimeLeftInPhase") or timer.get("timeLeftInPhase") or 0)
+            remaining_at_sample_ms = float(
+                timer.get("adjustedTimeLeftInPhase") or timer.get("timeLeftInPhase") or 0
+            )
         except (TypeError, ValueError):
             return configured
-        if remaining_ms <= 0:
+        if remaining_at_sample_ms <= 0:
             return configured
-        return max(0.0, min(configured, remaining_ms / 1000.0))
+        internal_now = timer.get("internalNowInEpochMs")
+        try:
+            elapsed_since_sample_ms = (
+                max(0.0, time.time() * 1000.0 - float(internal_now))
+                if internal_now is not None
+                else 0.0
+            )
+        except (TypeError, ValueError):
+            elapsed_since_sample_ms = 0.0
+        remaining_ms = max(0.0, remaining_at_sample_ms - elapsed_since_sample_ms)
+        if target_offset_seconds is None:
+            return max(0.0, min(configured, remaining_ms / 1000.0))
+        target_ms = max(0.0, float(target_offset_seconds) * 1000.0)
+        total_ms = timer.get("totalTimeInPhase")
+        try:
+            total_ms = float(total_ms) if total_ms is not None else target_ms
+        except (TypeError, ValueError):
+            total_ms = target_ms
+        elapsed_ms = max(0.0, total_ms - remaining_ms)
+        return max(0.0, min(configured, target_ms - elapsed_ms, remaining_ms) / 1000.0)
 
     async def _active_auto_select_profile(self, session: dict) -> tuple[str, AutoSelectProfile]:
         try:
@@ -1901,6 +2872,13 @@ class LeagueLabService:
         local_cell = session.get("localPlayerCellId")
         group, profile = await self._active_auto_select_profile(session)
         position = self._position_for_session(session)
+        self._active_auto_select_group = group
+        self._active_auto_select_position = position
+        try:
+            gameflow_queue = ((await self.request("GET", "/lol-gameflow/v1/session") or {}).get("gameData") or {}).get("queue") or {}
+        except RuntimeError:
+            gameflow_queue = {}
+        self._active_auto_select_queue_type = str(gameflow_queue.get("type") or "")
         subset_champion_ids: set[int] = set()
         if session.get("allowSubsetChampionPicks"):
             try:
@@ -1952,14 +2930,27 @@ class LeagueLabService:
                     (
                         value
                         for value in candidates
-                        if value in available_ids or (action_type == "pick" and group == "arena" and value == -3)
+                        if value in available_ids or (action_type == "pick" and group == "cherry" and value == -3)
                     ),
                     None,
                 )
                 if champion_id is not None:
                     delay_config = configured.delay_seconds if configured.enabled else self.settings.champion_action_delay_seconds
-                    delay = self._phase_calibrated_delay_seconds(session, delay_config)
-                    strategy = configured.strategy if configured.enabled else ("show-and-lock-in" if self.settings.champion_lock_in else "just-show")
+                    # LeagueAkari gives show-and-lock-in a two-stage budget:
+                    # once the client has entered the complete-* move, the
+                    # remaining delay is the configured offset minus elapsed
+                    # phase time, capped by the phase deadline.
+                    strategy = configured.strategy if configured.enabled else (
+                        "show-and-lock-in" if self.settings.champion_lock_in else "just-show"
+                    )
+                    target_offset = delay_config
+                    if strategy == "show-and-lock-in" and move in {"complete-pick", "complete-ban"}:
+                        target_offset = delay_config * 2.0
+                    delay = self._phase_calibrated_delay_seconds(
+                        session,
+                        delay_config,
+                        target_offset_seconds=target_offset,
+                    )
                     active_champion_id = int(action.get("champion_id") or 0)
 
                     # An already displayed champion is final for just-show;
@@ -2031,6 +3022,39 @@ class LeagueLabService:
         if profile.pick.enabled and session.get("benchEnabled"):
             await self._run_bench_swap(session, profile.pick, position, subset_champion_ids, normalized)
 
+    def _trade_received_at(self, trade_id: str, trade: dict | None = None) -> float:
+        """Return the monotonic timestamp at which an incoming trade appeared."""
+
+        key = str(trade_id)
+        existing = self._trade_created_at.get(key)
+        if existing is not None:
+            return existing
+
+        now_mono = time.monotonic()
+        # A few LCU builds include an epoch timestamp; use it when present.
+        # The normal build does not, so first observation is the safe fallback
+        # and subsequent polls still subtract the already elapsed delay.
+        raw_timestamp = None
+        if isinstance(trade, dict):
+            for name in ("createdAt", "created_at", "receivedAt", "received_at"):
+                if trade.get(name) is not None:
+                    raw_timestamp = trade.get(name)
+                    break
+        if raw_timestamp is not None:
+            try:
+                value = float(raw_timestamp)
+                if value > 10_000_000_000:
+                    value /= 1000.0
+                if value > 1_000_000_000:
+                    elapsed = max(0.0, time.time() - value)
+                    existing = now_mono - elapsed
+            except (TypeError, ValueError):
+                existing = None
+        if existing is None:
+            existing = now_mono
+        self._trade_created_at[key] = existing
+        return existing
+
     async def _run_trade_handling(self, session: dict, expected: list[int], profile: PickProfile | None = None, normalized: dict | None = None) -> None:
         if self.phase != "ChampSelect":
             return
@@ -2045,7 +3069,12 @@ class LeagueLabService:
         ongoing = self.ongoing_champion_swap
         if not isinstance(ongoing, dict) and isinstance((normalized or {}).get("ongoing_champion_swap"), dict):
             ongoing = (normalized or {}).get("ongoing_champion_swap")
-        if isinstance(ongoing, dict) and str(ongoing.get("state") or "").upper() == "RECEIVED" and ongoing.get("id") is not None:
+        if (
+            isinstance(ongoing, dict)
+            and str(ongoing.get("state") or "").upper() == "RECEIVED"
+            and ongoing.get("id") is not None
+            and not bool(ongoing.get("initiatedByLocalPlayer") or ongoing.get("initiated_by_local_player"))
+        ):
             trade_id = str(ongoing.get("id"))
             requester_champion = int(ongoing.get("requesterChampionId") or ongoing.get("requester_champion_id") or 0)
             current_champion = int((normalized or {}).get("current_session_champion_id") or 0)
@@ -2062,13 +3091,19 @@ class LeagueLabService:
             if action_key not in self._handled_trades:
                 due_at = self._delayed_action_plan.get(action_key, {}).get("due_at")
                 if due_at is None:
-                    delay = self._phase_calibrated_delay_seconds({}, profile.delay_seconds)
+                    received_at = self._trade_received_at(trade_id, ongoing)
+                    elapsed = max(0.0, time.monotonic() - received_at)
+                    # The configured trade delay is cumulative from the first
+                    # RECEIVED observation, not a fresh delay on every poll.
+                    delay = max(0.0, float(profile.delay_seconds) - elapsed)
+                    delay = self._phase_calibrated_delay_seconds(session, delay)
                     due_at = time.monotonic() + delay
                     self._set_delayed_action_plan(action_key, kind="champion-swap", label="自动处理换英雄", due_at=due_at, trade_id=trade_id, operation=operation, champion_id=requester_champion, delay_seconds=round(delay, 3))
                 if time.monotonic() >= due_at:
                     await self.request("POST", f"/lol-champ-select/v1/session/champion-swaps/{quote(trade_id, safe='')}/{operation}")
                     self._handled_trades.add(action_key)
                     self._clear_delayed_action_plan(action_key)
+                    self._trade_created_at.pop(trade_id, None)
                     self.last_action = f"已{('接受' if operation == 'accept' else '拒绝')}英雄交换：{requester_champion}"
                     self.last_action_at = time.time()
             return
@@ -2083,8 +3118,32 @@ class LeagueLabService:
             requester_champion = int(requester.get("championId") or 0)
             if requester_champion not in expected:
                 continue
+            action_key = f"trade:{trade_id}:accept"
+            if action_key in self._handled_trades:
+                continue
+            due_at = self._delayed_action_plan.get(action_key, {}).get("due_at")
+            if due_at is None:
+                received_at = self._trade_received_at(trade_id, trade)
+                elapsed = max(0.0, time.monotonic() - received_at)
+                delay = max(0.0, float(profile.delay_seconds) - elapsed)
+                delay = self._phase_calibrated_delay_seconds(session, delay)
+                due_at = time.monotonic() + delay
+                self._set_delayed_action_plan(
+                    action_key,
+                    kind="champion-swap",
+                    label="自动处理换英雄",
+                    due_at=due_at,
+                    trade_id=trade_id,
+                    operation="accept",
+                    champion_id=requester_champion,
+                    delay_seconds=round(delay, 3),
+                )
+            if time.monotonic() < due_at:
+                continue
             await self.request("POST", f"/lol-champ-select/v1/session/champion-swaps/{quote(trade_id, safe='')}/accept")
-            self._handled_trades.add(trade_id)
+            self._handled_trades.add(action_key)
+            self._trade_created_at.pop(trade_id, None)
+            self._clear_delayed_action_plan(action_key)
             self.last_action = f"已接受英雄交换：{requester_champion}"
             self.last_action_at = time.time()
 
@@ -2110,15 +3169,33 @@ class LeagueLabService:
         ]
         if session.get("allowSubsetChampionPicks") and str((session.get("timer") or {}).get("phase") or "") == "BAN_PICK":
             bench = [champion_id for champion_id in bench if champion_id in (subset_champion_ids or set())]
+        current_champion = int((normalized or {}).get("current_session_champion_id") or 0)
+        try:
+            current_index = expected.index(current_champion)
+        except ValueError:
+            current_index = -1
         candidate = next((champion_id for champion_id in expected if champion_id in bench), None)
-        if candidate is None and profile.bench_select_first_available_champion and bench:
-            candidate = bench[0]
+        try:
+            candidate_index = expected.index(candidate) if candidate is not None else -1
+        except ValueError:
+            candidate_index = -1
+        # LeagueAkari swaps only when the held champion is not in the expected
+        # pool, or when the first available bench candidate has higher
+        # priority. Never downgrade a configured current champion.
+        if candidate is not None and current_index >= 0 and (
+            not profile.bench_select_first_available_champion or candidate_index >= current_index
+        ):
+            candidate = None
         if candidate is None:
             self._bench_candidate_since.clear()
             self._clear_delayed_action_plan("bench-swap")
             return
         started = self._bench_candidate_since.setdefault(candidate, time.monotonic())
         delay = max(0.0, float(profile.bench_swap_accumulated_delay_seconds) - (time.monotonic() - started))
+        # The bench cooldown is wall-clock based, but a phase can end before
+        # it expires.  Match LeagueAkari by capping the pending task against
+        # the corrected LCU phase timer and never scheduling past lock-in.
+        delay = self._phase_calibrated_delay_seconds(session, delay)
         move = (normalized or {}).get("auto_select_move") or ("subset-bench-swap" if session.get("allowSubsetChampionPicks") else "bench-swap")
         due_at = time.monotonic() + delay
         self._set_delayed_action_plan("bench-swap", kind="bench-swap", label="自动从备战席换取英雄", due_at=due_at, move=move, champion_id=candidate, delay_seconds=round(delay, 3))
@@ -2157,102 +3234,274 @@ class LeagueLabService:
         else:
             mapped = {"ARAM": "aram", "KIWI": "aram", "URF": "urf", "NEXUSBLITZ": "nexusblitz", "ULTBOOK": "ultbook"}.get(game_mode)
             config_keys = [mapped, "default"] if mapped else ["default"]
-        loadout = next(
+        # LeagueAkari stores runes and spells independently under the same
+        # champion/mode page.  Prefer that canonical shape and only fall back
+        # to the pre-1:1 flat loadout list for settings imported from older
+        # Insight builds.
+        rune_pages = self.settings.runes_v2.get(champion_id) or self.settings.runes_v2.get(str(champion_id)) or {}
+        spell_pages = self.settings.summoner_spells.get(champion_id) or self.settings.summoner_spells.get(str(champion_id)) or {}
+        rune_key = next((key for key in config_keys if rune_pages.get(key)), None)
+        spell_key = next((key for key in config_keys if spell_pages.get(key)), None)
+        rune_config = rune_pages.get(rune_key) if rune_key else None
+        spell_config = spell_pages.get(spell_key) if spell_key else None
+        legacy = next(
             (item for key in config_keys for item in self.settings.champion_loadouts if item.champion_id == champion_id and item.config_key == key),
             None,
         )
-        if loadout is None:
+        if rune_config is None and legacy is not None:
+            rune_config = ChampionRunesConfig(
+                primaryStyleId=legacy.primary_style_id,
+                subStyleId=legacy.sub_style_id,
+                selectedPerkIds=legacy.selected_perk_ids,
+            )
+            rune_key = legacy.config_key
+        if spell_config is None and legacy is not None:
+            spell_config = SummonerSpellsConfig(spell1Id=legacy.spell1_id, spell2Id=legacy.spell2_id)
+        if rune_config is None and spell_config is None:
             return
-        await self.request("PATCH", "/lol-champ-select/v1/session/my-selection", json_body={
-            "spell1Id": loadout.spell1_id,
-            "spell2Id": loadout.spell2_id,
-        })
-        pages = await self.request("GET", "/lol-perks/v1/pages")
-        editable = next((page for page in (pages or []) if isinstance(page, dict) and page.get("isEditable")), None)
-        page_body = {
-            "name": f"[Insight] Champion {champion_id} - {loadout.config_key}",
-            "primaryStyleId": loadout.primary_style_id,
-            "subStyleId": loadout.sub_style_id,
-            "selectedPerkIds": loadout.selected_perk_ids,
-            "current": True,
-        }
-        if editable and editable.get("id") is not None:
-            page_id = editable["id"]
-            await self.request("PUT", f"/lol-perks/v1/pages/{page_id}", json_body=page_body)
-        else:
-            created = await self.request("POST", "/lol-perks/v1/pages", json_body=page_body)
-            page_id = created.get("id") if isinstance(created, dict) else None
-        if page_id is not None:
-            await self.request("PUT", "/lol-perks/v1/currentpage", json_body=page_id)
-        self._configured_champion_id = champion_id
-        self.last_action = f"已应用英雄 {champion_id} 的符文与召唤师技能"
-        self.last_action_at = time.time()
+        applied_any = False
+        if spell_config is not None:
+            try:
+                await self.request("PATCH", "/lol-champ-select/v1/session/my-selection", json_body={
+                    "spell1Id": spell_config.spell1_id,
+                    "spell2Id": spell_config.spell2_id,
+                })
+                applied_any = True
+                await self._send_champion_config_feedback(
+                    champion_id,
+                    f"召唤师技能已应用（{spell_config.spell1_id}/{spell_config.spell2_id}）",
+                )
+            except RuntimeError as exc:
+                await self._send_champion_config_feedback(
+                    champion_id,
+                    f"召唤师技能应用失败：{type(exc).__name__}",
+                )
+        if rune_config is not None:
+            try:
+                pages = await self.request("GET", "/lol-perks/v1/pages")
+                editable = next((page for page in (pages or []) if isinstance(page, dict) and page.get("isEditable")), None)
+                page_body = {
+                    "name": f"[Insight] Champion {champion_id} - {rune_key or config_keys[0]}",
+                    "primaryStyleId": rune_config.primary_style_id,
+                    "subStyleId": rune_config.sub_style_id,
+                    "selectedPerkIds": rune_config.selected_perk_ids,
+                    "current": True,
+                }
+                if editable and editable.get("id") is not None:
+                    page_id = editable["id"]
+                    await self.request("PUT", f"/lol-perks/v1/pages/{page_id}", json_body=page_body)
+                else:
+                    created = await self.request("POST", "/lol-perks/v1/pages", json_body=page_body)
+                    page_id = created.get("id") if isinstance(created, dict) else None
+                if page_id is None:
+                    raise RuntimeError("LCU 未返回可用符文页")
+                await self.request("PUT", "/lol-perks/v1/currentpage", json_body=page_id)
+                applied_any = True
+                await self._send_champion_config_feedback(
+                    champion_id,
+                    f"符文页已应用（{rune_key or config_keys[0]}）",
+                )
+            except RuntimeError as exc:
+                await self._send_champion_config_feedback(
+                    champion_id,
+                    f"符文页应用失败：{type(exc).__name__}",
+                )
+        if applied_any:
+            self._configured_champion_id = champion_id
+            self.last_action = f"已应用英雄 {champion_id} 的符文与召唤师技能"
+            self.last_action_at = time.time()
 
-    async def _run_auto_honor(self) -> None:
+    async def _run_auto_honor(self, ballot: dict | None = None) -> None:
+        """Submit the end-of-game honor ballot once, then let play-again run.
+
+        LeagueAkari watches the ballot itself, not only ``EndOfGame``.  In
+        particular, Tencent/current client builds can expose the ballot while
+        the gameflow phase is still ``WaitingForStats``.  The polling path
+        keeps the phase guard, while the event path can pass the already
+        received ballot as ``ballot``.
+
+        The v2 ballot GET is optional on builds without honor support.  A 404
+        must not abort the rest of ``_run_automation`` because doing so also
+        prevents the independent play-again action from running.
+        """
         if (
-            self.phase not in {"PreEndOfGame", "EndOfGame"}
+            self.phase not in {"WaitingForStats", "PreEndOfGame", "EndOfGame"}
             or not self.settings.automation_enabled
             or not self.settings.auto_honor_enabled
         ):
             return
-        ballot = await self.request("GET", "/lol-honor-v2/v1/ballot/")
+        if ballot is None:
+            try:
+                ballot = await self.request("GET", "/lol-honor-v2/v1/ballot/")
+            except RuntimeError:
+                # This endpoint is absent on some client builds.  Treat it as
+                # an unavailable optional snapshot, exactly like LeagueAkari's
+                # 404 handling, and leave play-again untouched.
+                logger.debug("Honor ballot is unavailable", exc_info=True)
+                return
         if not isinstance(ballot, dict):
             return
         game_id = str(ballot.get("gameId") or "")
-        if not game_id or game_id == self._honored_game_id:
+        if (
+            not game_id
+            or game_id == self._honored_game_id
+            or game_id == self._honor_in_progress_game_id
+        ):
             return
-        votes = int((ballot.get("votePool") or {}).get("votes") or 0)
-        strategy = self.settings.auto_honor_strategy
-        if strategy == "opt-out":
-            await self.request("POST", "/lol-honor/v1/ballot")
-            self._honored_game_id = game_id
-            self.last_action = "已按设置跳过点赞"
-            self.last_action_at = time.time()
-            return
-        allies = [item for item in (ballot.get("eligibleAllies") or []) if isinstance(item, dict) and not item.get("botPlayer") and item.get("puuid")]
-        opponents = [item for item in (ballot.get("eligibleOpponents") or []) if isinstance(item, dict) and not item.get("botPlayer") and item.get("puuid")]
-        lobby_puuids: set[str] = set()
+
+        self._honor_in_progress_game_id = game_id
         try:
-            eog = await self.request("GET", "/lol-lobby/v2/eog-status")
-            for key in ("eogPlayers", "leftPlayers", "readyPlayers"):
-                lobby_puuids.update(str(value) for value in ((eog or {}).get(key) or []))
-        except RuntimeError:
-            pass
-        lobby_allies = [item for item in allies if str(item.get("puuid")) in lobby_puuids]
-        other_allies = [item for item in allies if str(item.get("puuid")) not in lobby_puuids]
-        if strategy == "only-lobby-member":
-            pools = (lobby_allies,)
-        elif strategy == "all-member":
-            pools = (lobby_allies, other_allies)
-        elif strategy == "all-member-including-opponent":
-            pools = (lobby_allies, other_allies, opponents)
-        else:
-            pools = (lobby_allies, other_allies, opponents)
-        # Match the upstream honor-controller priority: lobby allies first,
-        # then non-lobby allies, then opponents. Randomness only applies
-        # within the currently selected priority tier.
-        candidates = []
-        remaining_votes = max(votes, 0)
-        for pool in pools:
-            if remaining_votes <= 0:
-                break
-            selected = random.sample(pool, min(remaining_votes, len(pool))) if pool else []
-            candidates.extend(selected)
-            remaining_votes -= len(selected)
-        if not candidates:
+            votes = int((ballot.get("votePool") or {}).get("votes") or 0)
+            strategy = self.settings.auto_honor_strategy
+            if strategy == "opt-out":
+                candidates: list[dict] = []
+            else:
+                allies = [
+                    item
+                    for item in (ballot.get("eligibleAllies") or [])
+                    if isinstance(item, dict) and not item.get("botPlayer") and item.get("puuid")
+                ]
+                opponents = [
+                    item
+                    for item in (ballot.get("eligibleOpponents") or [])
+                    if isinstance(item, dict) and not item.get("botPlayer") and item.get("puuid")
+                ]
+                lobby_puuids: set[str] = set()
+                try:
+                    eog = await self.request("GET", "/lol-lobby/v2/eog-status")
+                    for key in ("eogPlayers", "leftPlayers", "readyPlayers"):
+                        lobby_puuids.update(str(value) for value in ((eog or {}).get(key) or []))
+                except RuntimeError:
+                    pass
+                lobby_allies = [item for item in allies if str(item.get("puuid")) in lobby_puuids]
+                other_allies = [item for item in allies if str(item.get("puuid")) not in lobby_puuids]
+                if strategy == "only-lobby-member":
+                    pools = (lobby_allies,)
+                elif strategy == "all-member":
+                    pools = (lobby_allies, other_allies)
+                else:
+                    # This is also the LeagueAkari default: lobby allies,
+                    # other allies, then opponents, in that priority order.
+                    pools = (lobby_allies, other_allies, opponents)
+
+                candidates = []
+                remaining_votes = max(votes, 0)
+                for pool in pools:
+                    if remaining_votes <= 0:
+                        break
+                    selected = random.sample(pool, min(remaining_votes, len(pool))) if pool else []
+                    candidates.extend(selected)
+                    remaining_votes -= len(selected)
+
+            # Submit every selected honor, but always finish the ballot even
+            # when an individual legacy honor write fails.  A stuck ballot is
+            # what prevents the client from advancing and was the main reason
+            # the subsequent play-again action appeared to do nothing.
+            honor_error: RuntimeError | None = None
+            for player in candidates:
+                try:
+                    await self.request(
+                        "POST",
+                        "/lol-honor/v1/honor",
+                        json_body={
+                            "honorType": "HEART",
+                            "recipientPuuid": player.get("puuid"),
+                        },
+                    )
+                except RuntimeError as exc:
+                    honor_error = honor_error or exc
+                    logger.warning("Unable to submit one honor vote", exc_info=True)
+            try:
+                await self.request("POST", "/lol-honor/v1/ballot")
+            except RuntimeError:
+                # Do not mark this game handled when the ballot cannot be
+                # finished; the next event/poll can retry safely.
+                logger.warning("Unable to finish honor ballot", exc_info=True)
+                return
+
             self._honored_game_id = game_id
-            return
-        for index, player in enumerate(candidates):
-            await self.request("POST", "/lol-honor/v1/honor", json_body={
-                "honorType": "HEART", "recipientPuuid": player.get("puuid"),
-            })
-        await self.request("POST", "/lol-honor/v1/ballot")
-        self._honored_game_id = game_id
-        self.last_action = "已自动点赞队友"
-        self.last_action_at = time.time()
+            if strategy == "opt-out":
+                self.last_action = "已按设置跳过点赞"
+            elif honor_error is not None:
+                self.last_action = "自动点赞部分失败，已结束点赞流程"
+            elif candidates:
+                self.last_action = "已自动点赞队友"
+            else:
+                self.last_action = "已自动结束点赞流程"
+            self.last_action_at = time.time()
+
+            # A concrete ballot temporarily pauses play-again in LeagueAkari
+            # so honor writes cannot race it.  Re-arm the independent action
+            # immediately after the ballot is acknowledged; otherwise a
+            # previous deadline cleared here would make return-to-lobby never
+            # run when both switches are enabled.
+            if (
+                self.settings.play_again_enabled
+                and self.phase in {"WaitingForStats", "PreEndOfGame", "EndOfGame"}
+                and self._phase_action_done != "play-again"
+            ):
+                self._phase_action_due_at = time.monotonic() + 0.25
+        finally:
+            if self._honor_in_progress_game_id == game_id:
+                self._honor_in_progress_game_id = ""
+
+    async def _send_matchmaking_chat(self, message: str, *, key: str | None = None) -> bool:
+        """Send a deduplicated matchmaking notice to the custom-game chat."""
+
+        if not self.settings.auto_matchmaking_chat_countdown_enabled:
+            return False
+        if key and key == self._matchmaking_last_chat_key:
+            return False
+        sent = await self._send_lcu_phase_chat(message, phase="Lobby", message_type="celebration")
+        if sent and key:
+            self._matchmaking_last_chat_key = key
+        return sent
+
+    async def _notify_matchmaking_cancel(self, reason: str) -> None:
+        """Expose the same cancellation reasons as LeagueAkari's controller."""
+
+        messages = {
+            "normal": "自动匹配已取消",
+            "waiting-for-invitees": "自动匹配已取消，正在等待邀请的好友",
+            # Keep the upstream singular reason accepted by callers while
+            # the public status uses the more descriptive plural form.
+            "waiting-for-invitee": "自动匹配已取消，正在等待邀请的好友",
+            "not-the-leader": "自动匹配已取消，你不是房主",
+            "waiting-for-penalty-time": "自动匹配已取消，等待惩罚计时结束",
+            "insufficient-members": "自动匹配已取消，房间人数不足",
+            "cannot-start-activity": "自动匹配已取消，当前房间无法开始该队列",
+            "unsupported-lobby": "自动匹配已取消，当前房间不支持自动匹配",
+            "lobby-unavailable": "自动匹配已取消，房间状态暂不可用",
+            "rematch": "自动匹配已按重排策略取消",
+        }
+        await self._send_matchmaking_chat(
+            messages.get(reason, f"自动匹配已取消：{reason}"),
+            key=f"cancel:{reason}",
+        )
+
+    async def cancel_auto_matchmaking(self, reason: str = "normal") -> None:
+        """Cancel only the local auto-matchmaking plan (never the LCU queue)."""
+
+        had_plan = self._matchmaking_due_at is not None or self._matchmaking_status in {
+            "countdown", "waiting-for-invitees", "not-leader", "insufficient-members",
+        }
+        self._matchmaking_due_at = None
+        self._matchmaking_chat_countdown_second = None
+        self._matchmaking_status = "idle"
+        self._matchmaking_status_reason = reason
+        if had_plan:
+            await self._notify_matchmaking_cancel(reason)
 
     async def _run_auto_matchmaking(self) -> None:
         settings = self.settings
+        had_local_plan = self._matchmaking_due_at is not None or self._matchmaking_status in {
+            "countdown",
+            "waiting-for-invitees",
+            "not-leader",
+            "insufficient-members",
+            "waiting-for-penalty",
+            "cannot-start",
+        }
         if (
             not settings.automation_enabled
             or not settings.auto_matchmaking_enabled
@@ -2260,29 +3509,48 @@ class LeagueLabService:
         ):
             self._matchmaking_due_at = None
             self._matchmaking_status = "idle"
+            self._matchmaking_status_reason = None
+            self._matchmaking_chat_countdown_second = None
             return
         try:
             lobby = await self.request("GET", "/lol-lobby/v2/lobby")
         except RuntimeError:
             self._matchmaking_status = "lobby-unavailable"
+            self._matchmaking_status_reason = "lobby-unavailable"
+            self._matchmaking_due_at = None
+            self._matchmaking_chat_countdown_second = None
+            if had_local_plan:
+                await self._notify_matchmaking_cancel("lobby-unavailable")
             return
         if not isinstance(lobby, dict) or (lobby.get("gameConfig") or {}).get("isCustom"):
             self._matchmaking_status = "unsupported-lobby"
+            self._matchmaking_status_reason = "unsupported-lobby"
             self._matchmaking_due_at = None
+            if had_local_plan:
+                await self._notify_matchmaking_cancel("unsupported-lobby")
             return
         local = lobby.get("localMember") or {}
         members = lobby.get("members") or []
         if not local.get("isLeader"):
             self._matchmaking_status = "not-leader"
+            self._matchmaking_status_reason = "not-the-leader"
             self._matchmaking_due_at = None
+            if had_local_plan:
+                await self._notify_matchmaking_cancel("not-the-leader")
             return
         if len(members) < settings.auto_matchmaking_minimum_members:
             self._matchmaking_status = "insufficient-members"
+            self._matchmaking_status_reason = "insufficient-members"
             self._matchmaking_due_at = None
+            if had_local_plan:
+                await self._notify_matchmaking_cancel("insufficient-members")
             return
         if settings.auto_matchmaking_wait_for_invitees and any(item.get("state") == "Pending" for item in (lobby.get("invitations") or [])):
             self._matchmaking_status = "waiting-for-invitees"
+            self._matchmaking_status_reason = "waiting-for-invitees"
             self._matchmaking_due_at = None
+            if had_local_plan:
+                await self._notify_matchmaking_cancel("waiting-for-invitees")
             return
         try:
             search = await self.request("GET", "/lol-matchmaking/v1/search")
@@ -2291,6 +3559,7 @@ class LeagueLabService:
         self.matchmaking_search = _normalize_matchmaking_search(search)
         if isinstance(search, dict) and (search.get("isCurrentlyInQueue") or search.get("searchState") == "Searching"):
             self._matchmaking_status = "searching"
+            self._matchmaking_status_reason = None
             penalty = float(((search.get("lowPriorityData") or {}).get("penaltyTime")) or 0)
             elapsed = max(0.0, float(search.get("timeInQueue") or 0) - penalty)
             limit = settings.auto_matchmaking_rematch_fixed_duration
@@ -2299,23 +3568,49 @@ class LeagueLabService:
             if settings.auto_matchmaking_rematch_strategy != "never" and limit > 0 and elapsed >= limit:
                 await self._record_action("已按重排策略取消匹配", "DELETE", "/lol-lobby/v2/lobby/matchmaking/search")
                 self._matchmaking_status = "rematch-cancelled"
+                self._matchmaking_status_reason = "rematch"
+                await self._notify_matchmaking_cancel("rematch")
             return
         errors = ((search or {}).get("errors") or []) if isinstance(search, dict) else []
-        if any(float(item.get("penaltyTimeRemaining") or 0) > 0 for item in errors if isinstance(item, dict)):
+        low_priority = ((search or {}).get("lowPriorityData") or {}) if isinstance(search, dict) else {}
+        if any(
+            float(item.get("penaltyTimeRemaining") or 0) > 0
+            for item in errors
+            if isinstance(item, dict)
+        ) or float(low_priority.get("penaltyTimeRemaining") or 0) > 0 or float(low_priority.get("penaltyTime") or 0) > 0:
             self._matchmaking_status = "waiting-for-penalty"
+            self._matchmaking_status_reason = "waiting-for-penalty-time"
             self._matchmaking_due_at = None
+            if had_local_plan:
+                await self._notify_matchmaking_cancel("waiting-for-penalty-time")
             return
         if not lobby.get("canStartActivity", True):
             self._matchmaking_status = "cannot-start"
+            self._matchmaking_status_reason = "cannot-start-activity"
             self._matchmaking_due_at = None
+            if had_local_plan:
+                await self._notify_matchmaking_cancel("cannot-start-activity")
             return
         if self._matchmaking_due_at is None:
             self._matchmaking_due_at = time.monotonic() + settings.auto_matchmaking_delay_seconds
             self._matchmaking_status = "countdown"
+            self._matchmaking_status_reason = None
+            self._matchmaking_last_chat_key = None
+        if settings.auto_matchmaking_chat_countdown_enabled:
+            remaining = max(0, int(math.ceil(self._matchmaking_due_at - time.monotonic())))
+            if remaining != self._matchmaking_chat_countdown_second:
+                sent = await self._send_matchmaking_chat(
+                    f"将在 {remaining} 秒后自动开始匹配",
+                    key=f"countdown:{remaining}",
+                )
+                if sent:
+                    self._matchmaking_chat_countdown_second = remaining
         if time.monotonic() >= self._matchmaking_due_at:
             await self._record_action("已自动开始匹配", "POST", "/lol-lobby/v2/lobby/matchmaking/search")
             self._matchmaking_due_at = None
+            self._matchmaking_chat_countdown_second = None
             self._matchmaking_status = "searching"
+            self._matchmaking_status_reason = None
 
     async def _run_aram_team_side(self) -> None:
         if (
@@ -2372,7 +3667,7 @@ class LeagueLabService:
 
     async def _run_lobby_automation(self) -> None:
         settings = self.settings
-        if not settings.automation_enabled or self.phase != "Lobby":
+        if not settings.automation_enabled:
             return
         if settings.auto_skip_leader_enabled and self.phase == "Lobby":
             try:
@@ -2385,12 +3680,18 @@ class LeagueLabService:
                 if local_member.get("isLeader") and self._leader_handoff_lobby != lobby_id:
                     others = [member for member in (lobby.get("members") or []) if member.get("summonerId") != local_member.get("summonerId") and not member.get("isSpectator")]
                     ready = [member for member in others if member.get("ready")]
-                    candidate = (ready or others or [None])[0]
+                    # LeagueAkari chooses a ready teammate first and randomizes
+                    # within that tier so the same member is not always made
+                    # leader when several invitees are available.
+                    pool = ready or others
+                    candidate = random.choice(pool) if pool else None
                     if candidate and candidate.get("summonerId"):
                         await self._record_action("已自动转交房主", "POST", f"/lol-lobby/v2/lobby/members/{candidate['summonerId']}/promote")
                         self._leader_handoff_lobby = lobby_id
 
-        if not settings.auto_handle_invitations_enabled and settings.invitation_strategy == "ignore":
+        # LeagueAkari reacts to received invitations independently of the
+        # current gameflow phase; only leader handoff is Lobby-specific.
+        if not settings.auto_handle_invitations_enabled:
             return
         if settings.reject_invitation_when_away:
             try:
@@ -2402,7 +3703,7 @@ class LeagueLabService:
         invitations = await self.request("GET", "/lol-lobby/v2/received-invitations")
         candidates = []
         for invitation in invitations if isinstance(invitations, list) else []:
-            if not isinstance(invitation, dict) or invitation.get("state") not in {None, "Pending"} or invitation.get("canAcceptInvitation") is False:
+            if not isinstance(invitation, dict) or invitation.get("state") != "Pending" or invitation.get("canAcceptInvitation") is False:
                 continue
             invite_id = str(invitation.get("invitationId") or "")
             if not invite_id or invite_id in self._handled_invitations:
@@ -2492,14 +3793,25 @@ class LeagueLabService:
         phase = self.phase
         await self._run_chat_ready_automation()
         if not settings.automation_enabled:
+            self._cancel_auto_accept_waiter()
             self._accept_due_at = None
+            self._phase_action_due_at = None
+            self._matchmaking_due_at = None
+            self._matchmaking_status = "idle"
+            self._matchmaking_status_reason = None
+            self._matchmaking_chat_countdown_second = None
+            self._matchmaking_last_chat_key = None
             self._champion_action_due_at.clear()
             self._delayed_action_plan.clear()
+            self._trade_created_at.clear()
+            self._phase_action_done = ""
+            self._acted_phase = ""
             return
 
         if phase != self._acted_phase:
             self._acted_phase = phase
             self._phase_action_done = ""
+            self._cancel_auto_accept_waiter()
             self._accept_due_at = None
             delay_by_phase = {
                 "WaitingForStats": 10.0,
@@ -2511,13 +3823,21 @@ class LeagueLabService:
             self._phase_action_due_at = time.monotonic() + delay if delay is not None else None
 
         if phase == "ReadyCheck" and settings.auto_accept_enabled:
-            if self._accept_due_at is None:
-                self._accept_due_at = time.monotonic() + settings.auto_accept_delay_seconds
-            if time.monotonic() >= self._accept_due_at:
-                await self._record_action("已自动接受对局", "POST", "/lol-matchmaking/v1/ready-check/accept")
-                self._accept_due_at = float("inf")
+            ready_check = self.ready_check or {}
+            player_response = str(
+                ready_check.get("player_response") or ready_check.get("playerResponse") or ""
+            ).upper()
+            if player_response in {"ACCEPTED", "DECLINED"}:
+                self._accept_due_at = None
+            else:
+                if self._accept_due_at is None:
+                    delay = max(0.0, float(settings.auto_accept_delay_seconds))
+                    self._accept_due_at = time.monotonic() + delay
+                    self._start_auto_accept_waiter(delay)
+                await self._try_auto_accept()
         else:
             self._accept_due_at = None
+            self._cancel_auto_accept_waiter()
 
         if phase == "ChampSelect":
             if settings.auto_select_enabled:
@@ -2529,20 +3849,35 @@ class LeagueLabService:
             self._champion_action_due_at.clear()
             self._delayed_action_plan.clear()
             self._handled_trades.clear()
+            self._trade_created_at.clear()
             self._bench_candidate_since.clear()
             self._configured_champion_id = 0
+            self._active_auto_select_group = "default"
+            self._active_auto_select_position = "default"
+            self._active_auto_select_queue_type = ""
+
+        if phase in {"WaitingForStats", "PreEndOfGame", "EndOfGame"} and settings.auto_honor_enabled:
+            # LeagueAkari watches the ballot independently of the exact
+            # post-game phase.  WaitingForStats is a common phase while the
+            # ballot is already actionable on current clients.
+            await self._run_auto_honor()
 
         if phase in {"EndOfGame", "WaitingForStats", "PreEndOfGame"} and settings.play_again_enabled:
-            if self._phase_action_done != "play-again" and time.monotonic() >= (self._phase_action_due_at or 0):
+            if (
+                self._phase_action_due_at is not None
+                and self._phase_action_done != "play-again"
+                and time.monotonic() >= self._phase_action_due_at
+            ):
                 await self._record_action("已自动返回房间", "POST", "/lol-lobby/v2/play-again")
                 self._phase_action_done = "play-again"
         elif phase == "Reconnect" and settings.auto_reconnect_enabled:
-            if self._phase_action_done != "reconnect" and time.monotonic() >= (self._phase_action_due_at or 0):
+            if (
+                self._phase_action_due_at is not None
+                and self._phase_action_done != "reconnect"
+                and time.monotonic() >= self._phase_action_due_at
+            ):
                 await self._record_action("已自动重新连接", "POST", "/lol-gameflow/v1/reconnect")
                 self._phase_action_done = "reconnect"
-
-        if phase in {"PreEndOfGame", "EndOfGame"} and settings.auto_honor_enabled:
-            await self._run_auto_honor()
 
         await self._run_auto_matchmaking()
         await self._run_aram_team_side()
@@ -2561,6 +3896,30 @@ class LeagueLabService:
                 logger.exception("League lab background loop failed")
             chat_settling = self.credentials and not self._chat_ready_automation_done and self._chat_ready_since is not None
             timeout = 1.0 if chat_settling or (self.credentials and self.settings.respawn_timer_enabled and self.phase == "InProgress") else 5.0
+            # LeagueAkari starts a real timeout task when ReadyCheck begins.
+            # Keep the polling fallback event-driven, but do not let its
+            # five-second idle interval postpone a configured auto-accept
+            # deadline (especially for sub-five-second delays).
+            accept_due_at = self._accept_due_at
+            if (
+                self.phase == "ReadyCheck"
+                and self.settings.automation_enabled
+                and self.settings.auto_accept_enabled
+                and accept_due_at is not None
+                and accept_due_at != float("inf")
+            ):
+                timeout = min(timeout, max(0.0, accept_due_at - time.monotonic()))
+            phase_due_at = self._phase_action_due_at
+            if (
+                phase_due_at is not None
+                and phase_due_at != float("inf")
+                and self._phase_action_done not in {"play-again", "reconnect"}
+                and (
+                    (self.phase in {"WaitingForStats", "PreEndOfGame", "EndOfGame"} and self.settings.play_again_enabled)
+                    or (self.phase == "Reconnect" and self.settings.auto_reconnect_enabled)
+                )
+            ):
+                timeout = min(timeout, max(0.0, phase_due_at - time.monotonic()))
             try:
                 await asyncio.wait_for(self._event_wakeup.wait(), timeout=timeout)
                 self._event_wakeup.clear()
@@ -2606,16 +3965,23 @@ def _normalize_ready_check(payload) -> dict | None:
     state_upper = state.upper()
     response_upper = player_response.upper()
     available = state_upper in {"INPROGRESS", "PENDING", "READY"}
+    can_accept = available and response_upper != "ACCEPTED"
+    can_decline = available and response_upper != "DECLINED"
     return {
         "state": state,
         "player_response": player_response,
+        "response_state": response_upper.lower() or "pending",
         "decliner_ids": [value for value in (payload.get("declinerIds") or payload.get("decliner_ids") or [])],
         "dodge_warning": payload.get("dodgeWarning") or payload.get("dodge_warning"),
         "suppress_ux": bool(payload.get("suppressUx") if "suppressUx" in payload else payload.get("suppress_ux")),
         "timer": normalized_timer,
         "available": available,
-        "can_accept": available and response_upper not in {"ACCEPTED", "DECLINED"},
-        "can_decline": available and response_upper not in {"ACCEPTED", "DECLINED"},
+        # LeagueAkari lets the user reverse an already submitted response while
+        # the ReadyCheck is still active: Accepted can decline, Declined can
+        # accept again.  The endpoint still revalidates the live phase.
+        "can_accept": can_accept,
+        "can_decline": can_decline,
+        "actionability": {"accept": can_accept, "decline": can_decline},
     }
 
 
@@ -3002,6 +4368,20 @@ async def _ddragon_champion_icon(champion_id: int) -> tuple[bytes, str]:
     return response.content, response.headers.get("content-type") or "image/png"
 
 
+async def _ddragon_item_icon(item_id: int) -> tuple[bytes, str]:
+    """Fetch an item icon when the local LCU artwork endpoint is unavailable."""
+    version, _ = await _ddragon_champion_catalog()
+    try:
+        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+            response = await client.get(
+                f"https://ddragon.leagueoflegends.com/cdn/{version}/img/item/{int(item_id)}.png"
+            )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Data Dragon 装备图标请求失败: {type(exc).__name__}") from exc
+    return response.content, response.headers.get("content-type") or "image/png"
+
+
 async def _champion_catalog() -> list[dict]:
     rows = None
     try:
@@ -3176,6 +4556,308 @@ def _scalar_match_stats(payload: dict) -> dict[str, bool | float | int | str | N
     return result
 
 
+_INVALID_MATCH_POSITIONS = {"", "NONE", "UNSELECTED", "INVALID", "UNKNOWN", "N/A"}
+
+
+def _normalize_match_position(value) -> str | None:
+    """Map LCU/SGP role sentinels to the same nullable value as LeagueAkari."""
+    value = str(value or "").strip().upper()
+    if value in _INVALID_MATCH_POSITIONS:
+        return None
+    return {
+        "MID": "MIDDLE",
+        "BOT": "BOTTOM",
+        "ADC": "BOTTOM",
+        "SUPPORT": "UTILITY",
+        "SUP": "UTILITY",
+    }.get(value, value)
+
+
+def _normalize_riot_identity(participant: dict, player: dict) -> tuple[str, str, str]:
+    """Return one canonical Riot ID without duplicating ``gameName#tagLine``."""
+    game_name = str(
+        participant.get("riotIdGameName")
+        or participant.get("gameName")
+        or player.get("gameName")
+        or player.get("displayName")
+        or player.get("summonerName")
+        or ""
+    ).strip()
+    tag_line = str(
+        participant.get("riotIdTagline")
+        or participant.get("riotIdTagLine")
+        or participant.get("tagLine")
+        or player.get("tagLine")
+        or ""
+    ).strip().lstrip("#")
+    if "#" in game_name:
+        base, embedded_tag = game_name.rsplit("#", 1)
+        if not tag_line or tag_line.casefold() == embedded_tag.casefold():
+            game_name, tag_line = base.strip(), tag_line or embedded_tag.strip()
+    if tag_line and game_name.casefold().endswith(f"#{tag_line}".casefold()):
+        game_name = game_name[: -(len(tag_line) + 1)].rstrip()
+    riot_id = f"{game_name}#{tag_line}" if tag_line else game_name
+    return game_name, tag_line, riot_id
+
+
+def _compute_match_win_result(end_of_game_result, stats: dict) -> tuple[bool, str]:
+    """Mirror LeagueAkari's abort/remake/loss/win precedence."""
+    if str(end_of_game_result or "").startswith("Abort_"):
+        return False, "abort"
+    if bool(stats.get("gameEndedInEarlySurrender")):
+        return True, "remake"
+    if bool(stats.get("teamEarlySurrendered")):
+        return True, "loss"
+    win = stats.get("win")
+    if isinstance(win, str):
+        win = win.strip().lower() in {"win", "won", "true", "1"}
+    return bool(win), "win" if bool(win) else "loss"
+
+
+def _lcu_perk_styles(stats: dict) -> list[dict]:
+    def selection(index: int) -> dict:
+        return {
+            "perk": int(stats.get(f"perk{index}") or 0),
+            "var1": stats.get(f"perk{index}Var1") or 0,
+            "var2": stats.get(f"perk{index}Var2") or 0,
+            "var3": stats.get(f"perk{index}Var3") or 0,
+        }
+
+    return [
+        {
+            "description": "primaryStyle",
+            "style": int(stats.get("perkPrimaryStyle") or 0),
+            "selections": [selection(index) for index in range(4)],
+        },
+        {
+            "description": "subStyle",
+            "style": int(stats.get("perkSubStyle") or 0),
+            "selections": [selection(index) for index in range(4, 6)],
+        },
+    ]
+
+
+def _lcu_team_identifier(game: dict, team_id: int, stats: dict) -> str:
+    if str(game.get("gameMode") or "").upper() == "CHERRY":
+        subteam = int(stats.get("playerSubteamId") or 0)
+        if subteam:
+            return f"CHERRY-{subteam}"
+    return f"TEAM-{team_id}" if team_id else "TEAM-UNKNOWN"
+
+
+def _normalize_item_id(value) -> int:
+    """Return a usable League item id from any LCU/SGP item representation."""
+    if isinstance(value, dict):
+        value = (
+            value.get("item_id")
+            or value.get("itemId")
+            or value.get("id")
+            or value.get("itemID")
+        )
+    try:
+        item_id = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return item_id if item_id > 0 else 0
+
+
+def _item_values(value) -> list:
+    """Flatten list/dict item payloads while retaining their slot order."""
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    if isinstance(value, dict):
+        indexed = []
+        for key, item in value.items():
+            match = re.fullmatch(r"(?:item|slot)?[_-]?(\d+)", str(key), re.IGNORECASE)
+            if match:
+                indexed.append((int(match.group(1)), item))
+        if indexed:
+            return [item for _, item in sorted(indexed)]
+        return list(value.values())
+    return []
+
+
+def _normalize_item_slots(*sources) -> list[int]:
+    """Normalize the seven end-of-game item slots from LCU and SGP shapes.
+
+    LCU details normally expose ``stats.item0`` … ``stats.item6`` while SGP
+    summaries may expose ``items``/``itemSlots`` arrays (and some Tencent
+    builds wrap the same fields in ``stats``).  Keep seven slots for callers
+    that need the original placement, then compact them separately below.
+    """
+    slots: list[int] = []
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in ("item_slots", "itemSlots", "items", "loadout"):
+            values = _item_values(source.get(key))
+            if values:
+                slots = [_normalize_item_id(value) for value in values[:7]]
+                break
+        if slots:
+            break
+        flat = []
+        for index in range(7):
+            value = None
+            for key in (f"item{index}", f"item_{index}", f"Item{index}"):
+                if key in source:
+                    value = source.get(key)
+                    break
+            flat.append(_normalize_item_id(value))
+        if any(flat):
+            slots = flat
+            break
+    return (slots + [0] * 7)[:7]
+
+
+def _normalized_items(*sources) -> tuple[list[int], list[int]]:
+    slots = _normalize_item_slots(*sources)
+    compact = [item_id for item_id in slots if item_id]
+    if not compact:
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            for key in ("items", "item_ids", "itemIds", "loadout"):
+                values = [_normalize_item_id(value) for value in _item_values(source.get(key))]
+                compact = [item_id for item_id in values if item_id]
+                if compact:
+                    slots = (compact + [0] * 7)[:7]
+                    break
+            if compact:
+                break
+    return compact[:7], slots
+
+
+def _normalize_lcu_participant(game: dict, row: dict, identities: dict[str, dict], names: dict[int, str]) -> dict:
+    stats = row.get("stats") if isinstance(row.get("stats"), dict) else row
+    participant_id = int(row.get("participantId") or stats.get("participantId") or 0)
+    identity_row = identities.get(str(participant_id)) or {}
+    player = identity_row.get("player") if isinstance(identity_row.get("player"), dict) else identity_row
+    game_name, tag_line, riot_id = _normalize_riot_identity(row, player)
+    champion_id = int(row.get("championId") or 0)
+    team_id = int(row.get("teamId") or stats.get("teamId") or 0)
+    team_identifier = _lcu_team_identifier(game, team_id, stats)
+    styles = _lcu_perk_styles(stats)
+    items, item_slots = _normalized_items(stats, row)
+    augments = [int(stats.get(f"playerAugment{index}") or 0) for index in range(1, 7)]
+    win, win_result = _compute_match_win_result(game.get("endOfGameResult"), stats)
+    position = _normalize_match_position(
+        row.get("teamPosition") or row.get("individualPosition") or (row.get("timeline") or {}).get("lane")
+    )
+    role = _normalize_match_position(row.get("individualPosition") or (row.get("timeline") or {}).get("role"))
+    normalized = {
+        "participant_id": participant_id,
+        "puuid": player.get("puuid") or identity_row.get("puuid") or row.get("puuid") or "",
+        "game_name": game_name,
+        "tag_line": tag_line,
+        "riot_id": riot_id,
+        "profile_icon_id": row.get("profileIcon") or row.get("profileIconId") or player.get("profileIcon") or player.get("profileIconId"),
+        "team_id": team_id,
+        "team_identifier": team_identifier,
+        "champion_id": champion_id,
+        "champion_name": names.get(champion_id, str(champion_id)),
+        "position": position,
+        "role": role,
+        "spell1_id": row.get("spell1Id") or row.get("summoner1Id") or stats.get("spell1Id") or stats.get("summoner1Id"),
+        "spell2_id": row.get("spell2Id") or row.get("summoner2Id") or stats.get("spell2Id") or stats.get("summoner2Id"),
+        "spells": [
+            row.get("spell1Id") or row.get("summoner1Id") or stats.get("spell1Id") or stats.get("summoner1Id"),
+            row.get("spell2Id") or row.get("summoner2Id") or stats.get("spell2Id") or stats.get("summoner2Id"),
+        ],
+        "kills": stats.get("kills", 0), "deaths": stats.get("deaths", 0), "assists": stats.get("assists", 0),
+        "win": win, "win_result": win_result,
+        "is_surrender": bool(stats.get("gameEndedInSurrender"))
+        or bool(stats.get("teamEarlySurrendered"))
+        or win_result == "remake",
+        "gold": stats.get("goldEarned", 0), "level": stats.get("champLevel", 0), "gold_spent": stats.get("goldSpent", 0),
+        "cs": int(stats.get("totalMinionsKilled", 0) or 0) + int(stats.get("neutralMinionsKilled", 0) or 0),
+        "damage": stats.get("totalDamageDealtToChampions", 0), "damage_taken": stats.get("totalDamageTaken", 0),
+        "healing": stats.get("totalHeal", 0), "time_ccing": stats.get("totalTimeCCDealt", 0),
+        "tower_damage": stats.get("damageDealtToTurrets", 0), "vision_score": stats.get("visionScore", 0),
+        "items": items, "item_slots": item_slots,
+        "perks": [int(stats.get(f"perk{index}") or 0) for index in range(6) if stats.get(f"perk{index}")],
+        "perk_styles": styles, "styles": styles,
+        "augments": [augment for augment in augments if augment], "augment_slots": augments,
+        "role_bound_item": int(stats.get("roleBoundItem") or 0),
+        "subteam_placement": stats.get("subteamPlacement", 0),
+        "game_ended_in_early_surrender": bool(stats.get("gameEndedInEarlySurrender")),
+        "game_ended_in_surrender": bool(stats.get("gameEndedInSurrender")),
+        "team_early_surrendered": bool(stats.get("teamEarlySurrendered")),
+        "double_kills": stats.get("doubleKills", 0), "triple_kills": stats.get("tripleKills", 0),
+        "quadra_kills": stats.get("quadraKills", 0), "penta_kills": stats.get("pentaKills", 0),
+        "challenges": row.get("challenges") or stats.get("challenges") or {},
+        "raw_stats": _scalar_match_stats({**stats, "challenges": row.get("challenges") or stats.get("challenges") or {}}),
+    }
+    normalized["teamIdentifier"] = team_identifier
+    normalized["winResult"] = win_result
+    normalized["isSurrender"] = normalized["is_surrender"]
+    return normalized
+
+
+def _normalize_lcu_team_stats(game: dict, participants: list[dict]) -> tuple[list[dict], dict[str, dict]]:
+    grouped: dict[str, list[dict]] = {}
+    for participant in participants:
+        grouped.setdefault(str(participant.get("team_identifier") or "TEAM-UNKNOWN"), []).append(participant)
+    raw_teams = {f"TEAM-{int(row.get('teamId') or 0)}": row for row in game.get("teams") or [] if isinstance(row, dict)}
+    teams, team_stat_map = [], {}
+    for identifier, rows in grouped.items():
+        raw = raw_teams.get(identifier) or {}
+        first = rows[0]
+        result = first.get("win_result") or ("win" if first.get("win") else "loss")
+        team = {
+            "team_identifier": identifier, "teamIdentifier": identifier,
+            "team_id": first.get("team_id"), "bans": raw.get("bans") or [],
+            "win": bool(first.get("win")), "win_result": result,
+            "winResult": result, "is_surrender": bool(first.get("is_surrender")),
+            "isSurrender": bool(first.get("is_surrender")),
+            "total_kills": sum(int(row.get("kills") or 0) for row in rows),
+            "total_deaths": sum(int(row.get("deaths") or 0) for row in rows),
+            "total_assists": sum(int(row.get("assists") or 0) for row in rows),
+            "total_damage_dealt_to_champions": sum(float(row.get("damage") or 0) for row in rows),
+            "total_damage_taken": sum(float(row.get("damage_taken") or 0) for row in rows),
+            "total_gold_earned": sum(float(row.get("gold") or 0) for row in rows),
+            "total_cs": sum(int(row.get("cs") or 0) for row in rows),
+            "players": rows,
+        }
+        teams.append(team)
+        team_stat_map[identifier] = team
+    return teams, team_stat_map
+
+
+async def _complete_lcu_match_history(payload: dict | None) -> dict | None:
+    """Complete LCU summaries exactly like LeagueAkari's getGame queue."""
+    if not isinstance(payload, dict):
+        return payload
+    games_container = payload.get("games")
+    games = games_container.get("games") if isinstance(games_container, dict) else games_container
+    if not isinstance(games, list):
+        return payload
+    semaphore = asyncio.Semaphore(10)
+
+    async def complete(summary: dict) -> dict:
+        game_id = summary.get("gameId") if isinstance(summary, dict) else None
+        try:
+            game_id = int(game_id)
+        except (TypeError, ValueError):
+            return summary
+        if game_id <= 0:
+            return summary
+        try:
+            async with semaphore:
+                detail = await league_lab_service.request("GET", f"/lol-match-history/v1/games/{game_id}")
+            detail = detail.get("json") if isinstance(detail, dict) and isinstance(detail.get("json"), dict) else detail
+            if isinstance(detail, dict) and isinstance(detail.get("participants"), list):
+                return detail
+        except Exception as exc:  # optional completion must not hide an otherwise usable summary
+            logger.debug("LCU match completion failed for %s: %s", game_id, exc)
+        return summary
+
+    completed = await asyncio.gather(*(complete(game) for game in games))
+    if isinstance(games_container, dict):
+        return {**payload, "games": {**games_container, "games": completed}}
+    return {**payload, "games": completed}
+
+
 def _remember_recent_players(players: list[dict], game_id=None) -> None:
     existing = {str(row.get("puuid")): row for row in _read_recent_players() if row.get("puuid")}
     now = int(time.time() * 1000)
@@ -3264,6 +4946,8 @@ def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "")
     games = ((payload or {}).get("games") or {}).get("games") or []
     normalized = []
     for game in games:
+        if not isinstance(game, dict):
+            continue
         identities = game.get("participantIdentities") or []
         identity = next(
             (
@@ -3280,40 +4964,19 @@ def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "")
         if not participant:
             continue
         stats = participant.get("stats") or {}
+        match_items, match_item_slots = _normalized_items(stats, participant)
         champion_id = int(participant.get("championId") or 0)
-        identity_by_id = {row.get("participantId"): row for row in identities if isinstance(row, dict)}
-        scoped_participants = []
-        for row in game.get("participants") or []:
-            row_stats = row.get("stats") or {}
-            row_identity = identity_by_id.get(row.get("participantId")) or {}
-            row_player = row_identity.get("player") or {}
-            row_champion_id = int(row.get("championId") or 0)
-            scoped_participants.append({
-                "participant_id": row.get("participantId"),
-                "puuid": row_player.get("puuid") or row_identity.get("puuid"),
-                "game_name": row_player.get("gameName") or row_player.get("displayName") or row_player.get("summonerName") or "",
-                "tag_line": row_player.get("tagLine") or "",
-                "profile_icon_id": row_player.get("profileIcon") or row_player.get("profileIconId"),
-                "team_id": row.get("teamId"),
-                "champion_id": row_champion_id,
-                "champion_name": names.get(row_champion_id, str(row_champion_id)),
-                "position": row.get("teamPosition") or row.get("timeline", {}).get("lane"),
-                "role": row.get("individualPosition") or row.get("timeline", {}).get("role"),
-                "spell1_id": row.get("spell1Id"),
-                "spell2_id": row.get("spell2Id"),
-                "kills": row_stats.get("kills", 0), "deaths": row_stats.get("deaths", 0), "assists": row_stats.get("assists", 0),
-                "win": bool(row_stats.get("win")), "gold": row_stats.get("goldEarned", 0),
-                "level": row_stats.get("champLevel", 0), "gold_spent": row_stats.get("goldSpent", 0),
-                "cs": int(row_stats.get("totalMinionsKilled", 0)) + int(row_stats.get("neutralMinionsKilled", 0)),
-                "damage": row_stats.get("totalDamageDealtToChampions", 0), "damage_taken": row_stats.get("totalDamageTaken", 0),
-                "healing": row_stats.get("totalHeal", 0), "time_ccing": row_stats.get("totalTimeCCDealt", 0),
-                "tower_damage": row_stats.get("damageDealtToTurrets", 0), "vision_score": row_stats.get("visionScore", 0),
-                "items": [row_stats.get(f"item{i}") for i in range(7) if row_stats.get(f"item{i}")],
-                "perks": [row_stats.get(f"perk{i}") for i in range(6) if row_stats.get(f"perk{i}")],
-                "augments": [row_stats.get(f"playerAugment{i}") for i in range(1, 7) if row_stats.get(f"playerAugment{i}")],
-                "challenges": row.get("challenges") or row_stats.get("challenges") or {},
-                "raw_stats": _scalar_match_stats({**row_stats, "challenges": row.get("challenges") or row_stats.get("challenges") or {}}),
-            })
+        identity_by_id = {str(row.get("participantId")): row for row in identities if isinstance(row, dict)}
+        scoped_participants = [
+            _normalize_lcu_participant(game, row, identity_by_id, names)
+            for row in game.get("participants") or []
+            if isinstance(row, dict)
+        ]
+        teams, team_stat_map = _normalize_lcu_team_stats(game, scoped_participants)
+        own = next((row for row in scoped_participants if str(row.get("puuid") or "") == puuid), None)
+        if own is None:
+            own = _normalize_lcu_participant(game, participant, identity_by_id, names)
+        win_result = own.get("win_result") or ("win" if own.get("win") else "loss")
         normalized.append(
             {
                 "game_id": game.get("gameId"),
@@ -3324,19 +4987,32 @@ def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "")
                 "game_version": game.get("gameVersion"),
                 "map_id": game.get("mapId"),
                 "queue_id": game.get("queueId"),
-                "participant_puuid": (identity.get("player") or {}).get("puuid") if identity else None,
+                "participant_puuid": own.get("puuid") or ((identity.get("player") or {}).get("puuid") if identity else None),
                 "team_id": participant.get("teamId"),
                 "participants": scoped_participants,
-                "position": participant.get("teamPosition") or participant.get("timeline", {}).get("lane"),
-                "role": participant.get("individualPosition") or participant.get("timeline", {}).get("role"),
+                "team_identifier": own.get("team_identifier"),
+                "teamIdentifier": own.get("team_identifier"),
+                "game_name": own.get("game_name"),
+                "tag_line": own.get("tag_line"),
+                "riot_id": own.get("riot_id"),
+                "profile_icon_id": own.get("profile_icon_id"),
+                "teams": teams,
+                "team_stats": team_stat_map,
+                "team_stat_map": team_stat_map,
+                "position": own.get("position"),
+                "role": own.get("role"),
                 "champion_id": champion_id,
                 "champion_name": names.get(champion_id, str(champion_id)),
-                "spell1_id": participant.get("spell1Id"),
-                "spell2_id": participant.get("spell2Id"),
+                "spell1_id": participant.get("spell1Id") or participant.get("summoner1Id") or stats.get("spell1Id") or stats.get("summoner1Id"),
+                "spell2_id": participant.get("spell2Id") or participant.get("summoner2Id") or stats.get("spell2Id") or stats.get("summoner2Id"),
+                "spells": [
+                    participant.get("spell1Id") or participant.get("summoner1Id") or stats.get("spell1Id") or stats.get("summoner1Id"),
+                    participant.get("spell2Id") or participant.get("summoner2Id") or stats.get("spell2Id") or stats.get("summoner2Id"),
+                ],
                 "kills": stats.get("kills", 0),
                 "deaths": stats.get("deaths", 0),
                 "assists": stats.get("assists", 0),
-                "win": bool(stats.get("win")),
+                "win": own.get("win"),
                 "cs": int(stats.get("totalMinionsKilled", 0)) + int(stats.get("neutralMinionsKilled", 0)),
                 "gold": stats.get("goldEarned", 0),
                 "damage": stats.get("totalDamageDealtToChampions", 0),
@@ -3351,13 +5027,198 @@ def _normalize_match_rows(payload: dict, names: dict[int, str], puuid: str = "")
                 "triple_kills": stats.get("tripleKills", 0),
                 "quadra_kills": stats.get("quadraKills", 0),
                 "penta_kills": stats.get("pentaKills", 0),
-                "items": [stats.get(f"item{i}") for i in range(7) if stats.get(f"item{i}")],
+                "items": match_items,
+                "item_slots": match_item_slots,
                 "perks": [stats.get(f"perk{i}") for i in range(6) if stats.get(f"perk{i}")],
+                "perk_styles": _lcu_perk_styles(stats),
+                "styles": _lcu_perk_styles(stats),
                 "augments": [stats.get(f"playerAugment{i}") for i in range(1, 7) if stats.get(f"playerAugment{i}")],
+                "augment_slots": [int(stats.get(f"playerAugment{i}") or 0) for i in range(1, 7)],
                 "challenges": participant.get("challenges") or stats.get("challenges") or {},
+                "win_result": win_result,
+                "winResult": win_result,
+                "is_surrender": bool(stats.get("gameEndedInSurrender"))
+                or bool(stats.get("teamEarlySurrendered"))
+                or win_result == "remake",
+                "isSurrender": bool(stats.get("gameEndedInSurrender"))
+                or bool(stats.get("teamEarlySurrendered"))
+                or win_result == "remake",
             }
         )
     return normalized
+
+
+_MATCH_RULE_NUMERIC_FIELDS = {
+    "kills", "deaths", "assists", "kda", "damage", "gold", "cs", "queue_id",
+    "champion_id", "duration_seconds", "spell1_id", "spell2_id", "kill_participation",
+    "vision_score", "damage_taken", "gold_spent", "tower_damage", "healing", "time_ccing",
+    "solo_kills", "double_kills", "triple_kills", "quadra_kills", "penta_kills", "level",
+    "played_at",
+}
+
+_MATCH_RULE_CHALLENGE_FIELDS = {
+    "kill_participation": "killParticipation",
+    "vision_score": "visionScore",
+    "damage_taken": "damageTakenOnTeamPercentage",
+    "gold_spent": "goldPerMinute",
+    "tower_damage": "damageToTurrets",
+    "healing": "effectiveHealAndShielding",
+    "time_ccing": "enemyChampionImmobilizations",
+    "solo_kills": "soloKills",
+}
+
+
+def _match_rule_value(match: dict, field: str):
+    """Read the same normalized fields exposed by the React filter tree."""
+    aliases = {
+        "champion_name": ("champion_name", "championName"),
+        "champion_id": ("champion_id", "championId"),
+        "game_mode": ("game_mode", "gameMode"),
+        "game_type": ("game_type", "gameType"),
+        "queue_id": ("queue_id", "queueId"),
+        "duration_seconds": ("duration_seconds", "gameDuration"),
+        "played_at": ("played_at", "playedAt", "gameCreation"),
+        "spell1_id": ("spell1_id", "spell1Id", "summoner1Id"),
+        "spell2_id": ("spell2_id", "spell2Id", "summoner2Id"),
+    }
+    if field == "kda":
+        return (float(match.get("kills") or 0) + float(match.get("assists") or 0)) / max(float(match.get("deaths") or 0), 1.0)
+    if field == "has_item":
+        return match.get("items") or match.get("item_ids") or match.get("itemIds") or []
+    if field == "has_spell":
+        return [match.get("spell1_id", match.get("spell1Id")), match.get("spell2_id", match.get("spell2Id"))]
+    if field == "has_perk":
+        return match.get("perks") or match.get("runes") or []
+    if field == "has_augment":
+        return match.get("augments") or []
+    if field == "is_remake":
+        duration = float(match.get("duration_seconds") or match.get("gameDuration") or 0)
+        return 0 < duration <= 300
+    if field == "is_matched_game":
+        return str(match.get("game_type") or match.get("gameType") or "").upper() == "MATCHED_GAME"
+    if field == "is_pve_game":
+        return bool(re.search(r"PVE|BOT", f"{match.get('game_type', '')} {match.get('game_mode', '')}".upper()))
+    if field in _MATCH_RULE_CHALLENGE_FIELDS:
+        direct = match.get(field)
+        if direct is not None:
+            return direct
+        challenges = match.get("challenges") if isinstance(match.get("challenges"), dict) else {}
+        return challenges.get(_MATCH_RULE_CHALLENGE_FIELDS[field])
+    for key in aliases.get(field, (field,)):
+        if key in match:
+            return match.get(key)
+    return None
+
+
+def _match_rule_participants(match: dict, scope: str) -> list[dict]:
+    participants = [row for row in (match.get("participants") or []) if isinstance(row, dict)]
+    if scope == "self":
+        return [match]
+    self_puuid = str(match.get("participant_puuid") or match.get("participantPuuid") or "")
+    self_team = str(match.get("team_id") if match.get("team_id") is not None else match.get("teamId") or "")
+    _, group = str(scope).split("-", 1) if "-" in str(scope) else ("any", "all")
+    if group == "allies":
+        return [
+            row for row in participants
+            if str(row.get("team_id") if row.get("team_id") is not None else row.get("teamId") or "") == self_team
+            and (not self_puuid or str(row.get("puuid") or row.get("participant_puuid") or "") != self_puuid)
+        ]
+    if group == "enemies":
+        return [
+            row for row in participants
+            if str(row.get("team_id") if row.get("team_id") is not None else row.get("teamId") or "") != self_team
+        ]
+    return [
+        row for row in participants
+        if not self_puuid or str(row.get("puuid") or row.get("participant_puuid") or "") != self_puuid
+    ]
+
+
+def _matches_league_rule(match: dict, rule: dict) -> bool:
+    if not isinstance(rule, dict) or not rule.get("field") or rule.get("value") == "":
+        return True
+    field = str(rule.get("field"))
+    operator = str(rule.get("operator") or "eq")
+    scope = str(rule.get("scope") or "self")
+    rows = _match_rule_participants(match, scope)
+    if scope != "self" and not rows:
+        return False
+
+    def compare(row: dict) -> bool:
+        actual = _match_rule_value(row, field)
+        expected = str(rule.get("value") or "")
+        if isinstance(actual, (list, tuple, set)):
+            contains = any(str(item) == expected for item in actual if item not in (None, ""))
+            return not contains if operator == "neq" else contains
+        if isinstance(actual, bool):
+            truthy = expected.strip().lower() in {"true", "1", "yes", "是", "胜利"}
+            return actual != truthy if operator == "neq" else actual == truthy
+        if field in _MATCH_RULE_NUMERIC_FIELDS:
+            try:
+                left, right = float(actual or 0), float(expected)
+            except (TypeError, ValueError):
+                return True
+            if operator == "gte":
+                return left >= right
+            if operator == "lte":
+                return left <= right
+            if operator == "neq":
+                return left != right
+            return left == right
+        left = str(actual or "").casefold()
+        right = expected.casefold()
+        if operator == "neq":
+            return left != right
+        if operator == "contains":
+            return right in left
+        return left == right
+
+    quantifier = scope.split("-", 1)[0] if scope != "self" else "any"
+    return all(compare(row) for row in rows) if quantifier == "every" else any(compare(row) for row in rows)
+
+
+def _matches_league_rule_tree(match: dict, node: dict | None) -> bool:
+    if not node:
+        return True
+    if node.get("type") == "rule":
+        return _matches_league_rule(match, node)
+    children = node.get("children") if isinstance(node.get("children"), list) else []
+    if not children:
+        return True
+    values = [_matches_league_rule_tree(match, child) for child in children if isinstance(child, dict)]
+    if not values:
+        return True
+    combined = any(values) if str(node.get("logic") or "and") == "or" else all(values)
+    return not combined if bool(node.get("negate")) else combined
+
+
+def _matches_league_collect_request(match: dict, body: LeagueMatchCollectRequest) -> bool:
+    if body.queue_id is not None and int(match.get("queue_id") or 0) != int(body.queue_id):
+        return False
+    if body.result != "all":
+        own_win = bool(match.get("win"))
+        if body.result == "win" and not own_win:
+            return False
+        if body.result == "loss" and own_win:
+            return False
+    needle = body.query.strip().casefold()
+    if needle:
+        haystack = " ".join(
+            str(value or "")
+            for value in (
+                match.get("game_id"), match.get("champion_name"), match.get("game_mode"),
+                match.get("game_type"), match.get("game_name"), match.get("tag_line"),
+                *[
+                    value
+                    for participant in match.get("participants") or []
+                    for value in (participant.get("game_name"), participant.get("tag_line"), participant.get("champion_name"))
+                    if isinstance(participant, dict)
+                ],
+            )
+        ).casefold()
+        if needle not in haystack:
+            return False
+    return _matches_league_rule_tree(match, body.filter_tree)
 
 
 def _normalize_sgp_match_rows(payload: dict, names: dict[int, str], puuid: str) -> list[dict]:
@@ -3372,10 +5233,16 @@ def _normalize_sgp_match_rows(payload: dict, names: dict[int, str], puuid: str) 
         )
         if not participant:
             continue
+        participant_stats = participant.get("stats") if isinstance(participant.get("stats"), dict) else {}
+        participant_items, participant_item_slots = _normalized_items(participant, participant_stats)
         champion_id = int(participant.get("championId") or 0)
         scoped_participants = []
         for row in game.get("participants") or []:
+            row_stats = row.get("stats") if isinstance(row.get("stats"), dict) else {}
             row_champion_id = int(row.get("championId") or 0)
+            row_items, row_item_slots = _normalized_items(row, row_stats)
+            row_spell1_id = row.get("summoner1Id") or row.get("spell1Id") or row_stats.get("summoner1Id") or row_stats.get("spell1Id")
+            row_spell2_id = row.get("summoner2Id") or row.get("spell2Id") or row_stats.get("summoner2Id") or row_stats.get("spell2Id")
             scoped_participants.append({
                 "participant_id": row.get("participantId"), "puuid": row.get("puuid"),
                 "game_name": row.get("riotIdGameName") or row.get("gameName") or row.get("summonerName") or "",
@@ -3383,17 +5250,20 @@ def _normalize_sgp_match_rows(payload: dict, names: dict[int, str], puuid: str) 
                 "profile_icon_id": row.get("profileIcon") or row.get("profileIconId"), "team_id": row.get("teamId"),
                 "champion_id": row_champion_id, "champion_name": names.get(row_champion_id, row.get("championName") or str(row_champion_id)),
                 "position": row.get("teamPosition"), "role": row.get("individualPosition"),
-                "spell1_id": row.get("summoner1Id") or row.get("spell1Id"), "spell2_id": row.get("summoner2Id") or row.get("spell2Id"),
+                "spell1_id": row_spell1_id, "spell2_id": row_spell2_id, "spells": [row_spell1_id, row_spell2_id],
                 "kills": row.get("kills", 0), "deaths": row.get("deaths", 0), "assists": row.get("assists", 0), "win": bool(row.get("win")),
                 "gold": row.get("goldEarned", 0), "gold_spent": row.get("goldSpent", 0), "level": row.get("champLevel", 0),
                 "cs": int(row.get("totalMinionsKilled", 0)) + int(row.get("neutralMinionsKilled", 0)),
                 "damage": row.get("totalDamageDealtToChampions", 0), "damage_taken": row.get("totalDamageTaken", 0),
                 "healing": row.get("totalHeal", 0), "time_ccing": row.get("totalTimeCCDealt", 0),
                 "tower_damage": row.get("damageDealtToTurrets", 0), "vision_score": row.get("visionScore", 0),
-                "items": [row.get(f"item{i}") for i in range(7) if row.get(f"item{i}")], "perks": [row.get(f"perk{i}") for i in range(6) if row.get(f"perk{i}")],
+                "items": row_items, "item_slots": row_item_slots,
+                "perks": [row.get(f"perk{i}") for i in range(6) if row.get(f"perk{i}")],
                 "augments": [row.get(f"playerAugment{i}") for i in range(1, 7) if row.get(f"playerAugment{i}")], "challenges": row.get("challenges") or {},
                 "raw_stats": _scalar_match_stats(row),
             })
+        participant_spell1_id = participant.get("summoner1Id") or participant.get("spell1Id") or participant_stats.get("summoner1Id") or participant_stats.get("spell1Id")
+        participant_spell2_id = participant.get("summoner2Id") or participant.get("spell2Id") or participant_stats.get("summoner2Id") or participant_stats.get("spell2Id")
         normalized.append(
             {
                 "game_id": game.get("gameId"),
@@ -3411,8 +5281,9 @@ def _normalize_sgp_match_rows(payload: dict, names: dict[int, str], puuid: str) 
                 "role": participant.get("individualPosition"),
                 "champion_id": champion_id,
                 "champion_name": names.get(champion_id, participant.get("championName") or str(champion_id)),
-                "spell1_id": participant.get("summoner1Id") or participant.get("spell1Id"),
-                "spell2_id": participant.get("summoner2Id") or participant.get("spell2Id"),
+                "spell1_id": participant_spell1_id,
+                "spell2_id": participant_spell2_id,
+                "spells": [participant_spell1_id, participant_spell2_id],
                 "kills": participant.get("kills", 0),
                 "deaths": participant.get("deaths", 0),
                 "assists": participant.get("assists", 0),
@@ -3431,7 +5302,7 @@ def _normalize_sgp_match_rows(payload: dict, names: dict[int, str], puuid: str) 
                 "triple_kills": participant.get("tripleKills", 0),
                 "quadra_kills": participant.get("quadraKills", 0),
                 "penta_kills": participant.get("pentaKills", 0),
-                "items": [participant.get(f"item{i}") for i in range(7) if participant.get(f"item{i}")],
+                "items": participant_items, "item_slots": participant_item_slots,
                 "perks": [participant.get(f"perk{i}") for i in range(6) if participant.get(f"perk{i}")],
                 "augments": [participant.get(f"playerAugment{i}") for i in range(1, 7) if participant.get(f"playerAugment{i}")],
                 "challenges": participant.get("challenges") or {},
@@ -3738,6 +5609,239 @@ def _ongoing_performance_tags(
     return tags[:12]
 
 
+def _ongoing_rating_summary(matches: list[dict]) -> dict:
+    """Aggregate the evidence used by LeagueAkari's rating message preset.
+
+    Metrics that require complete team rows are omitted when those rows are not
+    available. Solo kills stay ``None`` unless every sampled match exposes the
+    challenge field, matching upstream's non-fabrication rule.
+    """
+    if not matches:
+        return {
+            "sample_count": 0,
+            "win_rate": None,
+            "avg_kda": None,
+            "avg_solo_kills": None,
+            "avg_vision_score": None,
+            "avg_champion_damage_percentage_of_team": None,
+            "avg_damage_taken_percentage_of_team": None,
+            "avg_gold_percentage_of_team": None,
+            "avg_cs_per_minute": None,
+            "avg_kill_participation": None,
+            "avg_damage_gold_efficiency": None,
+            "main_champions": [],
+            "main_positions": [],
+        }
+
+    def number(value) -> float:
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    sample = len(matches)
+    timed = [match for match in matches if number(match.get("duration_seconds")) > 0]
+    team_metrics = []
+    for match in matches:
+        team = [
+            row for row in (match.get("participants") or [])
+            if str(row.get("team_id")) == str(match.get("team_id"))
+        ]
+        if not team:
+            continue
+        team_damage = sum(number(row.get("damage")) for row in team)
+        team_taken = sum(number(row.get("damage_taken")) for row in team)
+        team_gold = sum(number(row.get("gold")) for row in team)
+        team_kills = sum(number(row.get("kills")) for row in team)
+        team_metrics.append({
+            "damage": number(match.get("damage")) / team_damage if team_damage > 0 else None,
+            "taken": number(match.get("damage_taken")) / team_taken if team_taken > 0 else None,
+            "gold": number(match.get("gold")) / team_gold if team_gold > 0 else None,
+            "kill_participation": (number(match.get("kills")) + number(match.get("assists"))) / team_kills if team_kills > 0 else None,
+        })
+
+    def average(values):
+        finite = [number(value) for value in values if value is not None]
+        return sum(finite) / len(finite) if finite else None
+
+    solo_values = []
+    solo_complete = True
+    for match in matches:
+        challenges = match.get("challenges") or {}
+        if "soloKills" not in challenges:
+            solo_complete = False
+            break
+        solo_values.append(number(challenges.get("soloKills")))
+
+    champion_counts: dict[int, int] = {}
+    champion_names: dict[int, str] = {}
+    position_counts: dict[str, int] = {}
+    for match in matches:
+        champion_id = int(match.get("champion_id") or 0)
+        if champion_id > 0:
+            champion_counts[champion_id] = champion_counts.get(champion_id, 0) + 1
+            champion_names[champion_id] = str(match.get("champion_name") or champion_id)
+        position = str(match.get("position") or "").upper()
+        if position:
+            position_counts[position] = position_counts.get(position, 0) + 1
+
+    main_champions = [
+        {"champion_id": champion_id, "champion_name": champion_names[champion_id], "count": count}
+        for champion_id, count in sorted(champion_counts.items(), key=lambda item: (-item[1], item[0]))[:3]
+    ]
+    position_order = {"TOP": 0, "JUNGLE": 1, "MIDDLE": 2, "MID": 2, "BOTTOM": 3, "UTILITY": 4}
+    main_positions = [
+        {"position": position, "count": count}
+        for position, count in sorted(position_counts.items(), key=lambda item: (-item[1], position_order.get(item[0], 99)))[:2]
+    ]
+    return {
+        "sample_count": sample,
+        "win_rate": sum(1 for match in matches if match.get("win")) / sample,
+        "avg_kda": average([
+            (number(match.get("kills")) + number(match.get("assists"))) / max(1.0, number(match.get("deaths")))
+            for match in matches
+        ]),
+        "avg_solo_kills": average(solo_values) if solo_complete else None,
+        "avg_vision_score": average([match.get("vision_score") for match in matches]),
+        "avg_champion_damage_percentage_of_team": average([row["damage"] for row in team_metrics]),
+        "avg_damage_taken_percentage_of_team": average([row["taken"] for row in team_metrics]),
+        "avg_gold_percentage_of_team": average([row["gold"] for row in team_metrics]),
+        "avg_cs_per_minute": average([
+            number(match.get("cs")) / (number(match.get("duration_seconds")) / 60.0)
+            for match in timed
+        ]),
+        "avg_kill_participation": average([row["kill_participation"] for row in team_metrics]),
+        "avg_damage_gold_efficiency": average([
+            number(match.get("damage")) / max(1.0, number(match.get("gold"))) for match in matches
+        ]),
+        "main_champions": main_champions,
+        "main_positions": main_positions,
+    }
+
+
+def _ongoing_analysis_payload(players: list[dict]) -> dict:
+    """Return the compact analysis contract consumed by LeagueAkari's cards.
+
+    The upstream panel keeps the raw match rows separate from its aggregated
+    ``analysis.players``/``analysis.teams`` objects.  The desktop port already
+    exposes the raw rows as ``recent_matches``; this helper adds the same
+    stable, read-only aggregate shape without making the React layer guess at
+    missing data.  Values are derived only from rows which the LCU/SGP loader
+    actually returned, so an empty history remains empty evidence.
+    """
+    analyses: dict[str, dict] = {}
+    for player in players:
+        puuid = str(player.get("puuid") or "")
+        if not puuid:
+            continue
+        recent = player.get("recent") if isinstance(player.get("recent"), dict) else {}
+        summary = player.get("rating_summary") if isinstance(player.get("rating_summary"), dict) else {}
+        matches = player.get("recent_matches") if isinstance(player.get("recent_matches"), list) else []
+        wins = int(recent.get("wins") or 0)
+        count = int(recent.get("matches") or len(matches) or 0)
+        losses = max(0, count - wins)
+        result_streak = 0
+        result_streak_value = None
+        for row in matches:
+            if not isinstance(row, dict):
+                continue
+            value = bool(row.get("win"))
+            if result_streak_value is None:
+                result_streak_value = value
+            if value != result_streak_value:
+                break
+            result_streak += 1
+        winning_streak = result_streak if result_streak_value is True else 0
+        losing_streak = result_streak if result_streak_value is False else 0
+        win_rate = (wins / count) if count else 0.0
+        akari_score = float(recent.get("akari_score") or 0.0)
+        analyses[puuid] = {
+            "count": count,
+            "detailsCount": int(recent.get("details_analyzed") or len(matches) or 0),
+            "summary": {
+                "avgKda": float(recent.get("average_kda") or summary.get("avg_kda") or 0.0),
+                "kills": sum(float(row.get("kills") or 0) for row in matches if isinstance(row, dict)),
+                "deaths": sum(float(row.get("deaths") or 0) for row in matches if isinstance(row, dict)),
+                "assists": sum(float(row.get("assists") or 0) for row in matches if isinstance(row, dict)),
+                "avgSoloKills": summary.get("avg_solo_kills"),
+                "avgVisionScore": summary.get("avg_vision_score"),
+                "avgChampionDamagePercentageOfTeam": summary.get("avg_champion_damage_percentage_of_team"),
+                "avgDamageTakenPercentageOfTeam": summary.get("avg_damage_taken_percentage_of_team"),
+                "avgGoldPercentageOfTeam": summary.get("avg_gold_percentage_of_team"),
+                "avgCsPerMinute": summary.get("avg_cs_per_minute"),
+                "avgKillParticipation": summary.get("avg_kill_participation"),
+                "avgDamageGoldEfficiency": summary.get("avg_damage_gold_efficiency"),
+            },
+            "winLoss": {
+                "all": {
+                    "count": count,
+                    "wins": wins,
+                    "losses": losses,
+                    "winRate": win_rate,
+                    "winningStreak": winning_streak,
+                    "losingStreak": losing_streak,
+                }
+            },
+            "akariScore": {
+                "total": akari_score,
+                "outstanding": akari_score >= 6.5,
+                "extraordinary": akari_score >= 8.0,
+            },
+            "champions": {},
+            "positions": {},
+            "details": {},
+        }
+        for row in matches:
+            if not isinstance(row, dict):
+                continue
+            champion_id = int(row.get("champion_id") or 0)
+            position = str(row.get("position") or "").upper()
+            if champion_id:
+                champion = analyses[puuid]["champions"].setdefault(
+                    str(champion_id),
+                    {"championId": champion_id, "count": 0, "wins": 0},
+                )
+                champion["count"] += 1
+                champion["wins"] += int(bool(row.get("win")))
+            if position:
+                analyses[puuid]["positions"][position] = analyses[puuid]["positions"].get(position, 0) + 1
+
+    teams: dict[str, dict] = {}
+    for player in players:
+        team_key = str(player.get("team") or "UNKNOWN")
+        puuid = str(player.get("puuid") or "")
+        analysis = analyses.get(puuid)
+        if not analysis:
+            continue
+        bucket = teams.setdefault(team_key, {"players": [], "wins": 0, "games": 0, "kills": 0, "deaths": 0, "assists": 0})
+        bucket["players"].append(puuid)
+        all_stats = analysis["winLoss"]["all"]
+        bucket["wins"] += int(all_stats["wins"])
+        bucket["games"] += int(all_stats["count"])
+        bucket["kills"] += float(analysis["summary"]["kills"])
+        bucket["deaths"] += float(analysis["summary"]["deaths"])
+        bucket["assists"] += float(analysis["summary"]["assists"])
+    for bucket in teams.values():
+        bucket["avgWinRate"] = bucket["wins"] / bucket["games"] if bucket["games"] else 0.0
+        bucket["avgKda"] = (bucket["kills"] + bucket["assists"]) / max(1.0, bucket["deaths"])
+
+    return {"players": analyses, "teams": teams}
+
+
+def _ongoing_jungle_main_champions(matches: list[dict], names: dict[int, str]) -> list[dict]:
+    counts: dict[int, int] = {}
+    for match in matches:
+        champion_id = int(match.get("champion_id") or 0)
+        position = str(match.get("position") or "").upper()
+        spells = {int(match.get("spell1_id") or 0), int(match.get("spell2_id") or 0)}
+        if champion_id > 0 and (position == "JUNGLE" or 11 in spells):
+            counts[champion_id] = counts.get(champion_id, 0) + 1
+    return [
+        {"champion_id": champion_id, "champion_name": names.get(champion_id, str(champion_id)), "count": count}
+        for champion_id, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:3]
+    ]
+
+
 def _ongoing_akari_score(matches: list[dict]) -> float:
     """LeagueAkari MIT scoring model adapted for live-card ordering."""
     if not matches:
@@ -3853,7 +5957,7 @@ def _timeline_participant_frame(frame: dict, participant_id: int) -> dict:
     return {}
 
 
-def _compute_single_jungle_analysis(frames: list[dict], participant_id: int) -> dict:
+def _compute_single_jungle_analysis(frames: list[dict], participant_id: int, team_id: int | None = None) -> dict:
     zone_weights = {"top": 0, "mid": 0, "bot": 0}
     kill_zone_weights = {"top": 0, "mid": 0, "bot": 0}
     minute_positions = []
@@ -3872,9 +5976,35 @@ def _compute_single_jungle_analysis(frames: list[dict], participant_id: int) -> 
     ganks = {"top": 0, "mid": 0, "bot": 0}
     gank_positions, level3_positions, level4_positions = [], [], []
     kill_weight_total = 0
+    objectives = {"dragons": 0, "voidgrubs": 0, "heralds": 0, "barons": 0, "first_dragon": None, "first_dragon_time_ms": None}
+    first_dragon_seen = False
     for frame in frames:
         for event in (frame or {}).get("events") or []:
-            if not isinstance(event, dict) or event.get("type") != "CHAMPION_KILL":
+            if not isinstance(event, dict):
+                continue
+            if event.get("type") == "ELITE_MONSTER_KILL":
+                monster = str(event.get("monsterType") or "").upper()
+                subtype = str(event.get("monsterSubType") or "").upper()
+                killer = int(event.get("killerId") or 0)
+                killer_team = int(event.get("killerTeamId") or (100 if 1 <= killer <= 5 else 200))
+                own_team = int(team_id or (100 if 1 <= participant_id <= 5 else 200))
+                involved = killer_team == own_team
+                if monster == "DRAGON":
+                    if not first_dragon_seen:
+                        first_dragon_seen = True
+                        objectives["first_dragon"] = involved
+                    if involved:
+                        objectives["dragons"] += 1
+                        if objectives["first_dragon_time_ms"] is None:
+                            objectives["first_dragon_time_ms"] = int(event.get("timestamp") or 0)
+                elif involved and (monster in {"HORDE", "VOID_GRUB", "VOIDGRUB"} or "HORDE" in subtype or "VOID" in subtype):
+                    objectives["voidgrubs"] += 1
+                elif involved and monster in {"RIFTHERALD", "RIFT_HERALD"}:
+                    objectives["heralds"] += 1
+                elif involved and monster in {"BARON_NASHOR", "BARON"}:
+                    objectives["barons"] += 1
+                continue
+            if event.get("type") != "CHAMPION_KILL":
                 continue
             timestamp = int(event.get("timestamp") or 0)
             if timestamp > _JUNGLE_ANALYSIS_MINUTES * 60 * 1000:
@@ -3931,6 +6061,7 @@ def _compute_single_jungle_analysis(frames: list[dict], participant_id: int) -> 
         "level4_kill_positions": level4_positions,
         "gank_positions": gank_positions,
         "minute_positions": minute_positions,
+        "objectives": objectives,
     }
 
 
@@ -3960,6 +6091,26 @@ def _aggregate_jungle_analyses(samples: list[dict]) -> dict | None:
         for lane in ("top", "mid", "bot")
     }
     average_ganks = {lane: round(ganks[lane] / games, 2) for lane in ("top", "mid", "bot")}
+    objective_rows = [sample.get("objectives") or {} for sample in samples]
+    known_first_dragons = [
+        bool(row.get("first_dragon"))
+        for row in objective_rows if row.get("first_dragon") is not None
+    ]
+    first_dragon_times = [
+        float(row.get("first_dragon_time_ms")) / 1000.0
+        for row in objective_rows if row.get("first_dragon_time_ms") is not None
+    ]
+    objectives = {
+        "first_dragon_rate": (
+            sum(known_first_dragons) / len(known_first_dragons)
+            if known_first_dragons else None
+        ),
+        "avg_first_dragon_time_seconds": round(sum(first_dragon_times) / len(first_dragon_times), 1) if first_dragon_times else None,
+        "avg_dragons": round(sum(int(row.get("dragons") or 0) for row in objective_rows) / games, 2),
+        "avg_voidgrubs": round(sum(int(row.get("voidgrubs") or 0) for row in objective_rows) / games, 2),
+        "avg_heralds": round(sum(int(row.get("heralds") or 0) for row in objective_rows) / games, 2),
+        "avg_barons": round(sum(int(row.get("barons") or 0) for row in objective_rows) / games, 2),
+    }
     level3_rate = round(sum(bool(sample.get("level3_gank_detected")) for sample in samples) / games, 4)
     level4_rate = round(sum(bool(sample.get("level4_gank_detected")) for sample in samples) / games, 4)
     lane_labels = {"top": "上半区", "mid": "中路", "bot": "下半区", "unknown": "未知区域"}
@@ -3979,6 +6130,7 @@ def _aggregate_jungle_analyses(samples: list[dict]) -> dict | None:
             "level3_rate": level3_rate,
             "level4_rate": level4_rate,
         },
+        "objectives": objectives,
         "start_camps": camp_counts,
         "preferred_lane": preferred_lane,
         "preferred_start_camp": preferred_camp,
@@ -4091,11 +6243,13 @@ async def _load_jungle_analysis(
         frames = (timeline or {}).get("frames") or []
         if not participant_id or not isinstance(frames, list) or not frames:
             return None
-        sample = _compute_single_jungle_analysis(frames, participant_id)
+        game_participant = _jungle_game_participant(game, puuid) or {}
+        team_id = int(game_participant.get("teamId") or (100 if 1 <= participant_id <= 5 else 200))
+        sample = _compute_single_jungle_analysis(frames, participant_id, team_id)
         sample.update(
             {
                 "game_id": game_id,
-                "team_id": int((game and (_jungle_game_participant(game, puuid) or {}).get("teamId")) or 0),
+                "team_id": team_id,
                 "source": source,
             }
         )
@@ -4185,22 +6339,94 @@ async def update_league_lab_settings(body: LeagueLabSettings):
 
 
 @router.get("/matches")
-async def league_match_history(limit: int = 20):
+async def league_match_history(limit: int = 20, beg_index: int = 0):
     requested_limit = max(1, min(limit, 40))
+    requested_start = max(0, int(beg_index or 0))
     try:
         payload = await league_lab_service.request(
             "GET", "/lol-match-history/v1/products/lol/current-summoner/matches",
-            params={"begIndex": 0, "endIndex": requested_limit - 1},
+            params={"begIndex": requested_start, "endIndex": requested_start + requested_limit - 1},
         )
         names = await _champion_names()
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    payload = await _complete_lcu_match_history(payload)
     current_puuid = str(league_lab_service.current_summoner.get("puuid") or "")
+    raw_games = (payload.get("games") or {}).get("games") if isinstance(payload, dict) and isinstance(payload.get("games"), dict) else (payload.get("games") if isinstance(payload, dict) else [])
+    raw_games = raw_games if isinstance(raw_games, list) else []
     # Some Tencent LCU builds return one extra row even with an inclusive
     # endIndex. Enforce the user-visible limit after normalization as well.
     normalized = _normalize_match_rows(payload, names, current_puuid)[:requested_limit]
     _index_match_encounters(normalized, current_puuid)
-    return {"matches": normalized, "count": len(normalized)}
+    return {
+        "matches": normalized,
+        "count": len(normalized),
+        "beg_index": requested_start,
+        "page_size": requested_limit,
+        "page": requested_start // requested_limit + 1,
+        "has_more": len(raw_games) >= requested_limit,
+        "source": "lcu",
+    }
+
+
+@router.post("/matches/collect")
+async def collect_league_match_history(body: LeagueMatchCollectRequest):
+    """Collect matching pages without performing any LCU write.
+
+    This is the server-side counterpart of LeagueAkari's Collect mode: each
+    iteration asks the LCU for one bounded page, normalizes it to the same
+    ten-player matrix used by the cards, applies the nested predicate tree,
+    de-duplicates Game IDs, and stops at the requested result or scan budget.
+    """
+    current_puuid = str(league_lab_service.current_summoner.get("puuid") or "")
+    if not current_puuid:
+        raise HTTPException(status_code=409, detail="当前客户端没有可用账号")
+    try:
+        names = await _champion_names()
+        collected: list[dict] = []
+        seen_game_ids: set[str] = set()
+        scanned = 0
+        iterations = 0
+        for iteration in range(max(1, int(body.max_iteration))):
+            payload = await league_lab_service.request(
+                "GET",
+                "/lol-match-history/v1/products/lol/current-summoner/matches",
+                params={
+                    "begIndex": iteration * int(body.count_per_iteration),
+                    "endIndex": (iteration + 1) * int(body.count_per_iteration) - 1,
+                },
+            )
+            payload = await _complete_lcu_match_history(payload)
+            page_rows = _normalize_match_rows(payload, names, current_puuid)
+            if not page_rows:
+                break
+            scanned += len(page_rows)
+            for row in page_rows:
+                game_id = str(row.get("game_id") or "")
+                if not game_id or game_id in seen_game_ids or not _matches_league_collect_request(row, body):
+                    continue
+                seen_game_ids.add(game_id)
+                collected.append(row)
+                if len(collected) >= int(body.expected_count):
+                    break
+            iterations = iteration + 1
+            if len(collected) >= int(body.expected_count) or len(page_rows) < int(body.count_per_iteration):
+                break
+        collected = collected[: int(body.expected_count)]
+        stored_count = await _store_match_collection(current_puuid, collected) if collected else await _match_collection_count(current_puuid)
+        _index_match_encounters(collected, current_puuid)
+        return {
+            "matches": collected,
+            "count": len(collected),
+            "expected_count": int(body.expected_count),
+            "scanned_games_count": scanned,
+            "iterations": iterations,
+            "collection_count": stored_count,
+            "source": "lcu",
+            "complete": len(collected) >= int(body.expected_count),
+        }
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/replays/{game_id}")
@@ -4445,6 +6671,110 @@ async def league_player_friends():
     return {"friends": friends, "count": len(friends)}
 
 
+async def _load_auto_invite_friend_rows() -> list[dict]:
+    """Return friend choices plus local invitation-schedule state.
+
+    This is intentionally a read-only LCU call.  The caller may use the
+    returned PUUIDs to update the local schedule, while the actual invitation
+    remains gated by ``automation_enabled`` and the friend event handler.
+    """
+
+    payload = await league_lab_service.request("GET", "/lol-chat/v1/friends")
+    scheduled = {str(value) for value in league_lab_service.settings.auto_invite_friend_puuids}
+    priority = {"dnd": 3, "away": 2, "chat": 1, "offline": 0}
+    rows: list[dict] = []
+    for friend in payload if isinstance(payload, list) else []:
+        if not isinstance(friend, dict):
+            continue
+        public = _public_league_friend(friend)
+        puuid = public["puuid"]
+        if not puuid:
+            continue
+        row = {
+            **public,
+            "summoner_id": friend.get("summonerId"),
+            "scheduled": puuid in scheduled,
+            "inviteable": public["availability"] == "chat",
+        }
+        rows.append(row)
+    rows.sort(key=lambda row: (priority.get(row["availability"], 0), row["game_name"].casefold()), reverse=True)
+    return rows
+
+
+@router.get("/automation/invite-friends")
+@router.get("/automation/invite-friends/schedule")
+async def league_auto_invite_friends():
+    """Read friend choices and the locally scheduled invitation PUUIDs."""
+
+    try:
+        friends = await _load_auto_invite_friend_rows()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    scheduled = [row["puuid"] for row in friends if row.get("scheduled")]
+    # Preserve scheduled PUUIDs for offline/deleted friends in the explicit
+    # list, so a transient friend-list response cannot silently erase a user's
+    # appointment.  They will be consumed only if a matching friend event
+    # arrives later.
+    known = set(scheduled)
+    scheduled.extend(
+        puuid for puuid in league_lab_service.settings.auto_invite_friend_puuids
+        if str(puuid) not in known
+    )
+    return {
+        "friends": friends,
+        "count": len(friends),
+        "scheduled_puuids": scheduled,
+        "automation_enabled": bool(league_lab_service.settings.automation_enabled),
+    }
+
+
+@router.put("/automation/invite-friends")
+@router.put("/automation/invite-friends/schedule")
+async def schedule_league_auto_invite_friends(body: AutoInviteFriendSchedule):
+    """Persist an invitation appointment without calling an LCU write route."""
+
+    requested: list[str] = []
+    for raw in body.puuids:
+        value = str(raw or "").strip()
+        if value and value not in requested:
+            requested.append(value)
+    if len(requested) > 20:
+        raise HTTPException(status_code=422, detail="最多预约 20 位好友")
+    try:
+        friends = await _load_auto_invite_friend_rows()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    available = {str(row["puuid"]) for row in friends}
+    # A PUUID that was already scheduled may be temporarily absent (offline
+    # or a partial LCU refresh); keep it rather than turning a selection UI
+    # refresh into an implicit cancellation.
+    current = {str(value) for value in league_lab_service.settings.auto_invite_friend_puuids}
+    scheduled = [value for value in requested if value in available or value in current]
+    league_lab_service.update_settings(
+        league_lab_service.settings.model_copy(update={"auto_invite_friend_puuids": scheduled})
+    )
+    return {
+        "scheduled_puuids": scheduled,
+        "count": len(scheduled),
+        "automation_enabled": bool(league_lab_service.settings.automation_enabled),
+    }
+
+
+@router.delete("/automation/invite-friends/{puuid}")
+async def unschedule_league_auto_invite_friend(puuid: str):
+    """Remove one local invitation appointment; never touches the LCU."""
+
+    value = str(puuid or "").strip()
+    scheduled = [
+        str(item) for item in league_lab_service.settings.auto_invite_friend_puuids
+        if str(item) != value
+    ]
+    league_lab_service.update_settings(
+        league_lab_service.settings.model_copy(update={"auto_invite_friend_puuids": scheduled})
+    )
+    return {"puuid": value, "removed": value not in scheduled, "scheduled_puuids": scheduled}
+
+
 @router.post("/players/friends/{puuid}/spectate")
 async def spectate_league_friend(puuid: str):
     _require_toolkit_account_actions()
@@ -4581,6 +6911,8 @@ async def _load_player_bundle(
             ranked_source = "sgp"
         except RuntimeError:
             pass
+    if not prefer_sgp and isinstance(history, dict):
+        history = await _complete_lcu_match_history(history)
     matches = _normalize_match_rows(history or {}, names, puuid)
     if len(matches) < match_limit:
         try:
@@ -5010,29 +7342,54 @@ async def league_ongoing_game():
     if _ongoing_cache["key"] == cache_key and time.monotonic() < _ongoing_cache["expires_at"]:
         return _ongoing_cache["payload"]
     query_semaphore = asyncio.Semaphore(settings.ongoing_query_concurrency)
+    sgp_server_id = _sgp_server_id(league_lab_service.credentials)
 
     async def enrich(row):
         if not isinstance(row, dict):
             return None, None
         puuid = str(row.get("puuid") or row.get("playerPuuid") or "")
         summoner, ranked, history, mastery = None, None, None, None
+        history_source = "lcu"
+        load_errors: dict[str, str] = {}
         if puuid:
-            try:
-                async with query_semaphore:
-                    summoner, ranked, history = await asyncio.gather(
-                        league_lab_service.request("GET", f"/lol-summoner/v2/summoners/puuid/{puuid}"),
-                        league_lab_service.request("GET", f"/lol-ranked/v1/ranked-stats/{puuid}"),
-                        league_lab_service.request(
-                            "GET", f"/lol-match-history/v1/products/lol/{puuid}/matches",
-                            params={"begIndex": 0, "endIndex": settings.ongoing_match_history_load_count - 1},
-                        ),
-                    )
-                    if settings.ongoing_champion_usage_mode == "mastery":
-                        mastery = await league_lab_service.request(
-                            "GET", f"/lol-champion-mastery/v1/{puuid}/champion-mastery"
+            async def load_optional(name: str, path: str, *, params=None):
+                try:
+                    async with query_semaphore:
+                        return await league_lab_service.request("GET", path, params=params)
+                except RuntimeError as exc:
+                    # Tencent and privacy-restricted accounts frequently expose
+                    # only a subset of these optional endpoints.  Keep every
+                    # successful field instead of letting one failure discard
+                    # the entire player card.
+                    load_errors[name] = str(exc)
+                    return None
+
+            summoner, ranked, history = await asyncio.gather(
+                load_optional("summoner", f"/lol-summoner/v2/summoners/puuid/{puuid}"),
+                load_optional("ranked", f"/lol-ranked/v1/ranked-stats/{puuid}"),
+                load_optional(
+                    "history",
+                    f"/lol-match-history/v1/products/lol/{puuid}/matches",
+                    params={"begIndex": 0, "endIndex": settings.ongoing_match_history_load_count - 1},
+                ),
+            )
+            if not isinstance(history, dict):
+                try:
+                    async with query_semaphore:
+                        history = await _sgp_match_history(
+                            puuid,
+                            0,
+                            settings.ongoing_match_history_load_count,
+                            sgp_server_id or None,
                         )
-            except RuntimeError:
-                pass
+                    history_source = "sgp"
+                    load_errors.pop("history", None)
+                except RuntimeError as exc:
+                    load_errors["history_sgp"] = str(exc)
+            if settings.ongoing_champion_usage_mode == "mastery":
+                mastery = await load_optional(
+                    "mastery", f"/lol-champion-mastery/v1/{puuid}/champion-mastery"
+                )
         champion_id = int(row.get("championId") or 0)
         matches = _normalize_match_rows(history or {}, names, puuid)
         queue_data = game_data.get("queue") or ((lobby or {}).get("gameConfig") or {})
@@ -5052,6 +7409,8 @@ async def league_ongoing_game():
             selected_position == "JUNGLE" or settings.ongoing_show_jungle_pathing_for_all_players
         ) and isinstance(history, dict):
             jungle_analysis = await _load_jungle_analysis(puuid, history, limit=settings.ongoing_jungle_analysis_count)
+            if isinstance(jungle_analysis, dict):
+                jungle_analysis["main_champions"] = _ongoing_jungle_main_champions(matches, names)
         recent_kda = round(sum(
             (float(match.get("kills") or 0) + float(match.get("assists") or 0))
             / max(1.0, float(match.get("deaths") or 0))
@@ -5094,6 +7453,11 @@ async def league_ongoing_game():
                 "akari_score": _ongoing_akari_score(detail_matches),
                 "details_analyzed": len(detail_matches),
             },
+            # Keep the normalized match rows alongside the aggregate metrics.
+            # The ongoing player card can then render LeagueAkari-style recent
+            # results without making a second request for every player.
+            "recent_matches": detail_matches,
+            "rating_summary": _ongoing_rating_summary(detail_matches),
             "champion_usage": {
                 "mode": usage_mode,
                 "matches": len(champion_matches),
@@ -5104,6 +7468,14 @@ async def league_ongoing_game():
             },
             "jungle_analysis": jungle_analysis,
             "performance_tags": extra_tags + card_tags,
+            "data_availability": {
+                "summoner": summoner is not None,
+                "ranked": ranked is not None,
+                "history": history is not None,
+                "mastery": usage_mode != "mastery" or mastery is not None,
+                "unavailable": sorted(load_errors),
+                "history_source": history_source if isinstance(history, dict) else None,
+            },
         }, history or {})
     enriched = await asyncio.gather(*(enrich(row) for row in selections))
     players = [result[0] for result in enriched if result[0]]
@@ -5125,6 +7497,10 @@ async def league_ongoing_game():
     }
     if settings.ongoing_order_player_by in sorters:
         players.sort(key=sorters[settings.ongoing_order_player_by])
+    # Keep the raw player rows for compatibility, while also exposing the
+    # upstream LeagueAkari-shaped aggregate contract for the rich ongoing
+    # cards (team badges, KDA outliers and tag popovers).
+    analysis = _ongoing_analysis_payload(players)
     queue = game_data.get("queue") or ((lobby or {}).get("gameConfig") or {})
     result = {
         "phase": live_phase,
@@ -5132,13 +7508,23 @@ async def league_ongoing_game():
         "queue": queue,
         "game_id": game_data.get("gameId") or (lobby or {}).get("partyId"),
         "players": players,
+        "teams": {
+            team: list(info.get("players") or [])
+            for team, info in analysis.get("teams", {}).items()
+        },
+        "analysis": analysis,
         "available": bool(players),
         "show_match_history_item_border": settings.ongoing_show_match_history_item_border,
         "order_player_by": settings.ongoing_order_player_by,
     }
     if players and not isinstance(lobby, dict):
         _remember_recent_players(players, game_data.get("gameId"))
-    _ongoing_cache.update({"key": cache_key, "expires_at": time.monotonic() + 30.0, "payload": result})
+    has_partial_data = any(player.get("data_availability", {}).get("unavailable") for player in players)
+    _ongoing_cache.update({
+        "key": cache_key,
+        "expires_at": time.monotonic() + (5.0 if has_partial_data else 30.0),
+        "payload": result,
+    })
     return result
 
 
@@ -5265,12 +7651,33 @@ async def league_champion_icon(champion_id: int):
 async def league_summoner_spell_icon(spell_id: int):
     if spell_id <= 0:
         raise HTTPException(status_code=404, detail="召唤师技能图标不存在")
+    # Current LCU builds no longer serve the numeric PNG path directly.  The
+    # match payload still gives us the numeric spell id, while the catalog is
+    # the source of truth for the corresponding client asset path (for
+    # example Flash/Heal are resolved to their real iconPath).  Resolve this
+    # before trying the legacy path so the browser does not receive a 400 and
+    # render the empty Icon fallback.
+    catalog_error = None
+    try:
+        catalog = await _league_loadout_catalog_payload()
+        spell = next((row for row in catalog.get("spells") or [] if int(row.get("id") or 0) == spell_id), None)
+        icon_path = str((spell or {}).get("icon_path") or "")
+        if icon_path.startswith("/lol-game-data/assets/") and ".." not in icon_path:
+            content, media_type = await league_lab_service.request_bytes(icon_path)
+            return Response(content=content, media_type=media_type, headers={"Cache-Control": "private, max-age=86400"})
+    except (RuntimeError, HTTPException) as exc:
+        catalog_error = exc
+
+    # Keep compatibility with older clients/catalog caches whose spell rows do
+    # not contain iconPath yet.  This branch is deliberately after the
+    # catalog lookup because the numeric route returns 400 on current clients.
     try:
         content, media_type = await league_lab_service.request_bytes(
             f"/lol-game-data/assets/v1/summoner-spells/{spell_id}.png"
         )
     except RuntimeError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        detail = str(catalog_error or exc)
+        raise HTTPException(status_code=404, detail=detail) from exc
     return Response(content=content, media_type=media_type, headers={"Cache-Control": "private, max-age=86400"})
 
 
@@ -5281,7 +7688,10 @@ async def league_item_icon(item_id: int):
     try:
         content, media_type = await league_lab_service.request_bytes(f"/lol-game-data/assets/v1/items/{item_id}.png")
     except RuntimeError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        try:
+            content, media_type = await _ddragon_item_icon(item_id)
+        except RuntimeError:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
     return Response(content=content, media_type=media_type, headers={"Cache-Control": "private, max-age=86400"})
 
 
@@ -5332,23 +7742,35 @@ async def _league_loadout_catalog_payload() -> dict:
         if not isinstance(style, dict) or not style.get("id"):
             continue
         perks = []
+        normalized_slots = []
         for slot in style.get("slots") or []:
+            if not isinstance(slot, dict):
+                continue
+            slot_perks = []
             for perk in (slot.get("perks") or []):
                 if not isinstance(perk, dict) or not perk.get("id"):
                     continue
                 perk_id = int(perk.get("id"))
-                perks.append({
+                normalized_perk = {
                     **perk_catalog.get(perk_id, {}),
                     "id": perk_id,
                     "name": str(perk_catalog.get(perk_id, {}).get("name") or perk.get("name") or perk_id),
                     "icon_path": str(perk_catalog.get(perk_id, {}).get("icon_path") or perk.get("iconPath") or ""),
-                })
+                }
+                perks.append(normalized_perk)
+                slot_perks.append(normalized_perk)
+            normalized_slots.append({
+                "type": str(slot.get("type") or ""),
+                "perks": slot_perks,
+            })
         normalized_styles.append(
             {
                 "id": int(style["id"]),
                 "name": str(style.get("name") or style["id"]),
                 "icon_path": style.get("iconPath") or "",
                 "perks": perks,
+                "allowed_sub_styles": [int(value) for value in (style.get("allowedSubStyles") or style.get("allowed_sub_styles") or []) if str(value).isdigit()],
+                "slots": normalized_slots,
             }
         )
     spell_rows = spells if isinstance(spells, list) else list(spells.values()) if isinstance(spells, dict) else []
@@ -5358,6 +7780,7 @@ async def _league_loadout_catalog_payload() -> dict:
             "name": str(spell.get("name") or spell.get("id")),
             "description": str(spell.get("description") or ""),
             "icon_path": spell.get("iconPath") or "",
+            "game_modes": [str(mode).upper() for mode in (spell.get("gameModes") or spell.get("game_modes") or [])],
         }
         for spell in spell_rows
         if isinstance(spell, dict) and spell.get("id")
@@ -5383,141 +7806,38 @@ async def league_perk_icon(perk_id: int):
     return Response(content=content, media_type=media_type, headers={"Cache-Control": "private, max-age=86400"})
 
 
+@router.get("/assets/client")
+async def league_client_asset(path: str):
+    """Proxy one read-only asset from the authenticated local League client."""
+    icon_path = "/" + str(path or "").lstrip("/")
+    if not icon_path.startswith("/lol-game-data/assets/") or ".." in icon_path:
+        raise HTTPException(status_code=404, detail="客户端资源不存在")
+    try:
+        content, media_type = await league_lab_service.request_bytes(icon_path)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(content=content, media_type=media_type, headers={"Cache-Control": "private, max-age=86400"})
+
+
+@router.get("/assets/perkstyles/{style_id}.png")
+async def league_perkstyle_icon(style_id: int):
+    if style_id <= 0:
+        raise HTTPException(status_code=404, detail="符文系图标不存在")
+    catalog = await _league_loadout_catalog_payload()
+    style = next((row for row in catalog.get("styles") or [] if int(row.get("id") or 0) == style_id), None)
+    icon_path = str((style or {}).get("icon_path") or "")
+    if not icon_path.startswith("/lol-game-data/assets/"):
+        raise HTTPException(status_code=404, detail="符文系图标不存在")
+    try:
+        content, media_type = await league_lab_service.request_bytes(icon_path)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(content=content, media_type=media_type, headers={"Cache-Control": "private, max-age=86400"})
+
+
 @router.get("/loadout-catalog")
 async def league_loadout_catalog():
     return await _league_loadout_catalog_payload()
-
-
-_OPGG_BASE_URL = "https://lol-api-champion.op.gg"
-_OPGG_MODES = {"ranked", "aram", "arena", "nexus_blitz", "urf"}
-_OPGG_REGIONS = {"global", "na", "euw", "kr", "br", "eune", "jp", "lan", "las", "oce", "tr", "ru", "sg", "id", "ph", "th", "vn", "tw", "me"}
-_OPGG_TIERS = {"all", "ibsg", "gold_plus", "platinum_plus", "emerald_plus", "diamond_plus", "master", "master_plus", "grandmaster", "challenger"}
-_OPGG_POSITIONS = {"mid", "jungle", "adc", "top", "support", "all", "none"}
-_opgg_cache: dict[str, tuple[float, object]] = {}
-
-
-def _opgg_value(value: str, allowed: set[str], label: str) -> str:
-    normalized = str(value or "").strip().lower()
-    if normalized not in allowed:
-        raise HTTPException(status_code=422, detail=f"不支持的 OP.GG {label}: {normalized}")
-    return normalized
-
-
-async def _opgg_get(path: str, params: dict | None = None, *, cache_seconds: int = 120):
-    cache_key = json.dumps([path, params or {}], ensure_ascii=True, sort_keys=True)
-    cached = _opgg_cache.get(cache_key)
-    if cached and time.monotonic() - cached[0] < cache_seconds:
-        return cached[1]
-    try:
-        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
-            response = await client.get(f"{_OPGG_BASE_URL}{path}", params=params, headers={"Accept": "application/json"})
-        response.raise_for_status()
-        payload = response.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail=f"OP.GG 数据请求失败: {type(exc).__name__}") from exc
-    _opgg_cache[cache_key] = (time.monotonic(), payload)
-    return payload
-
-
-@router.get("/opgg/versions")
-async def league_opgg_versions(region: str = "global", mode: str = "ranked"):
-    region = _opgg_value(region, _OPGG_REGIONS, "地区")
-    mode = _opgg_value(mode, _OPGG_MODES, "模式")
-    return await _opgg_get(f"/api/{region}/champions/{mode}/versions", cache_seconds=900)
-
-
-@router.get("/opgg/champions")
-async def league_opgg_champions(region: str = "global", mode: str = "ranked", tier: str = "all", version: str = ""):
-    region = _opgg_value(region, _OPGG_REGIONS, "地区")
-    mode = _opgg_value(mode, _OPGG_MODES, "模式")
-    tier = _opgg_value(tier, _OPGG_TIERS, "分段")
-    if version and not re.fullmatch(r"\d{1,2}\.\d{1,2}", version):
-        raise HTTPException(status_code=422, detail="OP.GG 版本格式无效")
-    params = {"version": version or None, "tier": None if mode == "arena" else tier}
-    return await _opgg_get(f"/api/{region}/champions/{mode}", params=params)
-
-
-@router.get("/opgg/champions/{champion_id}")
-async def league_opgg_champion(
-    champion_id: int,
-    region: str = "global",
-    mode: str = "ranked",
-    position: str = "top",
-    tier: str = "all",
-    version: str = "",
-):
-    if champion_id <= 0:
-        raise HTTPException(status_code=422, detail="英雄 ID 无效")
-    region = _opgg_value(region, _OPGG_REGIONS, "地区")
-    mode = _opgg_value(mode, _OPGG_MODES, "模式")
-    tier = _opgg_value(tier, _OPGG_TIERS, "分段")
-    position = _opgg_value(position, _OPGG_POSITIONS, "位置")
-    if mode != "ranked":
-        position = "none"
-    if version and not re.fullmatch(r"\d{1,2}\.\d{1,2}", version):
-        raise HTTPException(status_code=422, detail="OP.GG 版本格式无效")
-    path = f"/api/{region}/champions/{mode}/{champion_id}" if mode == "arena" else f"/api/{region}/champions/{mode}/{champion_id}/{position}"
-    params = {"version": version or None, "tier": None if mode == "arena" else tier}
-    return await _opgg_get(path, params=params)
-
-
-@router.post("/opgg/apply-spells")
-async def league_opgg_apply_spells(body: OpggSpellApply):
-    _require_opgg_apply_access(body.source, "opgg_auto_apply_spells")
-    spell1, spell2 = (int(value) for value in body.spell_ids)
-    if spell1 <= 0 or spell2 <= 0:
-        raise HTTPException(status_code=422, detail="召唤师技能 ID 无效")
-    try:
-        current = await league_lab_service.request("GET", "/lol-champ-select/v1/session/my-selection")
-        old1, old2 = int((current or {}).get("spell1Id") or 0), int((current or {}).get("spell2Id") or 0)
-        flash_id = 4
-        if body.flash_position != "auto" and flash_id in {spell1, spell2}:
-            if (body.flash_position == "d" and spell2 == flash_id) or (body.flash_position == "f" and spell1 == flash_id):
-                spell1, spell2 = spell2, spell1
-        elif spell1 == old2 or spell2 == old1:
-            spell1, spell2 = spell2, spell1
-        await _require_live_phase("ChampSelect")
-        await league_lab_service.request("PATCH", "/lol-champ-select/v1/session/my-selection", json_body={"spell1Id": spell1, "spell2Id": spell2})
-    except HTTPException:
-        raise
-    except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"applied": True, "spell1_id": spell1, "spell2_id": spell2}
-
-
-@router.post("/opgg/apply-runes")
-async def league_opgg_apply_runes(body: OpggRuneApply):
-    _require_opgg_apply_access(body.source, "opgg_auto_apply_runes")
-    selected = [int(value) for value in [*body.primary_rune_ids, *body.secondary_rune_ids, *body.stat_mod_ids] if int(value) > 0]
-    if not selected:
-        raise HTTPException(status_code=422, detail="符文配置为空")
-    page_body = {
-        "name": f"[OP.GG] {body.champion_name}" + (f" - {body.position}" if body.position != "none" else ""),
-        "primaryStyleId": body.primary_page_id,
-        "subStyleId": body.secondary_page_id,
-        "selectedPerkIds": selected,
-        "current": True,
-    }
-    try:
-        pages = await league_lab_service.request("GET", "/lol-perks/v1/pages")
-        editable = next((page for page in (pages or []) if isinstance(page, dict) and page.get("isEditable")), None)
-        if editable and editable.get("id") is not None:
-            page_id = editable["id"]
-            await _require_live_phase("ChampSelect")
-            await league_lab_service.request("PUT", f"/lol-perks/v1/pages/{page_id}", json_body=page_body)
-        else:
-            await _require_live_phase("ChampSelect")
-            created = await league_lab_service.request("POST", "/lol-perks/v1/pages", json_body=page_body)
-            page_id = created.get("id") if isinstance(created, dict) else None
-        if page_id is None:
-            raise RuntimeError("LCU 未返回可用符文页")
-        await _require_live_phase("ChampSelect")
-        await league_lab_service.request("PUT", "/lol-perks/v1/currentpage", json_body=page_id)
-    except HTTPException:
-        raise
-    except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"applied": True, "page_id": page_id, "name": page_body["name"]}
 
 
 @router.get("/toolkit/overview")
@@ -5673,7 +7993,7 @@ async def league_friend_metadata():
 
 def _require_toolkit_account_actions() -> None:
     if not league_lab_service.settings.toolkit_account_actions_enabled:
-        raise HTTPException(status_code=403, detail="账号写入工具默认关闭，请先在工具箱中明确启用")
+        raise HTTPException(status_code=403, detail="账号写入工具已关闭，请先在工具箱中开启")
 
 
 async def _require_live_phase(expected: str | set[str] | tuple[str, ...]) -> str:
@@ -5695,13 +8015,28 @@ async def _require_live_phase(expected: str | set[str] | tuple[str, ...]) -> str
     return phase
 
 
-def _require_opgg_apply_access(source: str, feature: str) -> None:
-    """Separate explicit manual writes from opt-in automatic OP.GG writes."""
-    if source == "automation":
-        if not league_lab_service.settings.automation_enabled or not getattr(league_lab_service.settings, feature, False):
-            raise HTTPException(status_code=403, detail="OP.GG 自动写入需要同时开启自动化总开关和对应功能开关")
-        return
-    _require_toolkit_account_actions()
+async def _require_reroll_evidence() -> dict:
+    """Require the live LCU session to expose a usable champion reroll.
+
+    ``benchEnabled`` identifies the bench surface, but newer ARAM-family
+    queues (including KIWI) can expose a bench without the legacy reroll
+    action.  Keep the write contract tied to the two explicit LCU fields used
+    by LeagueAkari: ``allowRerolling`` and a positive ``rerollsRemaining``.
+    """
+
+    try:
+        session = await league_lab_service.request("GET", "/lol-champ-select/v1/session")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=f"无法读取最新英雄选择会话：{exc}") from exc
+    if not isinstance(session, dict):
+        raise HTTPException(status_code=409, detail="无法确认客户端当前是否支持重随")
+    try:
+        rerolls_remaining = int(session.get("rerollsRemaining") or 0)
+    except (TypeError, ValueError):
+        rerolls_remaining = 0
+    if session.get("allowRerolling") is not True or rerolls_remaining <= 0:
+        raise HTTPException(status_code=409, detail="客户端当前未明确支持重随或没有剩余次数")
+    return session
 
 
 def _unique_nonempty(values: list[str], label: str) -> list[str]:
@@ -6273,71 +8608,6 @@ async def _league_game_settings_path() -> Path:
     return settings_path
 
 
-async def _league_recommended_items_dir() -> Path:
-    install_root = await league_lab_service.request("GET", "/data-store/v1/install-dir")
-    if not isinstance(install_root, str) or not install_root.strip():
-        raise RuntimeError("LCU 未返回游戏安装目录")
-    root = Path(install_root).expanduser().resolve()
-    region = (league_lab_service.credentials.region if league_lab_service.credentials else "").upper()
-    target = (root.parent / "Game" / "Config" / "Global" / "Recommended") if region == "TENCENT" else (root / "Config" / "Global" / "Recommended")
-    target.mkdir(parents=True, exist_ok=True)
-    if not target.is_dir():
-        raise RuntimeError("推荐装备目录不可用")
-    return target
-
-
-@router.post("/opgg/apply-items")
-async def league_opgg_apply_items(body: OpggItemSetApply):
-    _require_opgg_apply_access(body.source, "opgg_auto_apply_items")
-    safe_parts = [body.champion_id, body.mode, body.region, body.tier, body.position, body.version or "latest"]
-    uid = "insight-opgg-" + "-".join(re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(part)) for part in safe_parts)
-    item_set = {
-        "uid": uid,
-        "title": f"[OP.GG] {body.champion_name} - {body.mode}" + (f" - {body.position}" if body.position != "none" else ""),
-        "sortrank": 0,
-        "type": "global",
-        "map": "any",
-        "mode": "any",
-        "blocks": [
-            {"type": group.title, "items": [{"id": str(item_id), "count": 1} for item_id in group.item_ids if item_id > 0]}
-            for group in body.groups
-        ],
-        "associatedChampions": [],
-        "associatedMaps": [],
-        "preferredItemSlots": [],
-    }
-    item_set["blocks"] = [block for block in item_set["blocks"] if block["items"]]
-    if not item_set["blocks"]:
-        raise HTTPException(status_code=422, detail="装备配置为空")
-    try:
-        target_dir = await _league_recommended_items_dir()
-        target = (target_dir / f"{uid}.json").resolve()
-        if target.parent != target_dir.resolve():
-            raise RuntimeError("推荐装备文件路径无效")
-        temporary = target.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps(item_set, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-        os.replace(temporary, target)
-    except (OSError, RuntimeError) as exc:
-        raise HTTPException(status_code=409, detail=f"写入推荐装备失败: {exc}") from exc
-    return {"applied": True, "path": str(target), "uid": uid, "blocks": len(item_set["blocks"])}
-
-
-@router.delete("/opgg/item-sets")
-async def league_opgg_clear_item_sets():
-    try:
-        target_dir = await _league_recommended_items_dir()
-        removed = []
-        for target in target_dir.glob("insight-opgg-*.json"):
-            resolved = target.resolve()
-            if resolved.parent != target_dir.resolve() or not resolved.is_file():
-                continue
-            resolved.unlink()
-            removed.append(resolved.name)
-    except (OSError, RuntimeError) as exc:
-        raise HTTPException(status_code=409, detail=f"清理推荐装备失败: {exc}") from exc
-    return {"cleared": True, "removed": removed, "count": len(removed)}
-
-
 async def _league_game_settings_file_mode() -> str:
     settings_path = await _league_game_settings_path()
     return "writable" if settings_path.stat().st_mode & stat.S_IWRITE else "readonly"
@@ -6625,6 +8895,17 @@ async def cancel_auto_accept():
     return league_lab_service.status()
 
 
+@router.post("/actions/cancel-auto-matchmaking")
+async def cancel_auto_matchmaking():
+    """Cancel the local auto-search plan without touching the LCU queue."""
+    await league_lab_service.cancel_auto_matchmaking("normal")
+    league_lab_service.settings.auto_matchmaking_enabled = False
+    league_lab_service._write_settings(league_lab_service.settings)
+    league_lab_service.last_action = "已取消自动匹配"
+    league_lab_service.last_action_at = time.time()
+    return league_lab_service.status()
+
+
 @router.post("/actions/{action}")
 async def run_league_lab_action(action: Literal["accept", "decline-ready-check", "play-again", "reconnect", "start-matchmaking", "stop-matchmaking"]):
     endpoints = {
@@ -6713,6 +8994,137 @@ async def league_bench_swap(champion_id: int):
     return league_lab_service.status()
 
 
+@router.post("/champ-select/select/{champion_id}")
+async def league_champ_select_select_or_bench(champion_id: int):
+    """Select a Mini champion using the same two paths as LeagueAkari.
+
+    In the ARAM-style BAN_PICK subset phase, the first click is a normal
+    ``session/actions/:id`` pick/lock request when the local player has not
+    selected a champion yet.  Once a champion is held (or during finalization),
+    the same surface is a bench swap.  Keep this decision on a fresh session
+    snapshot so the Mini never guesses from its last poll.  The account-write
+    gate is intentionally checked before any LCU request.
+    """
+
+    if champion_id <= 0:
+        raise HTTPException(status_code=422, detail="无效英雄 ID")
+    _require_toolkit_account_actions()
+    try:
+        await _require_live_phase("ChampSelect")
+        session = await league_lab_service.request("GET", "/lol-champ-select/v1/session")
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=f"无法读取最新英雄选择会话：{exc}") from exc
+
+    if not isinstance(session, dict):
+        raise HTTPException(status_code=409, detail="无法读取当前英雄选择会话")
+
+    timer = session.get("timer") if isinstance(session.get("timer"), dict) else {}
+    timer_phase = str(timer.get("phase") or "")
+    local_cell = session.get("localPlayerCellId")
+    local_member = next(
+        (
+            row for row in (session.get("myTeam") or [])
+            if isinstance(row, dict) and str(row.get("cellId")) == str(local_cell)
+        ),
+        {},
+    )
+    current_champion = int(local_member.get("championId") or 0)
+
+    # LeagueAkari scopes the direct pick to the first unfinished local pick
+    # action and only performs it from BAN_PICK.  In subset modes, the
+    # candidate must also be in the server-provided subset pool.
+    is_direct_pick = timer_phase == "BAN_PICK" and current_champion <= 0
+    if is_direct_pick:
+        try:
+            pickable = await league_lab_service.request("GET", "/lol-champ-select/v1/pickable-champion-ids")
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=f"无法确认英雄当前是否可选：{exc}") from exc
+        try:
+            pickable_ids = {int(value) for value in (pickable or [])}
+        except (TypeError, ValueError):
+            pickable_ids = set()
+        if champion_id not in pickable_ids:
+            raise HTTPException(status_code=409, detail="该英雄当前不可选或已被占用")
+
+    if is_direct_pick and bool(session.get("allowSubsetChampionPicks")):
+        try:
+            subset = await league_lab_service.request(
+                "GET", "/lol-lobby-team-builder/champ-select/v1/subset-champion-list"
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=f"无法确认当前子集英雄池：{exc}") from exc
+        try:
+            subset_ids = {int(value) for value in (subset or [])}
+        except (TypeError, ValueError):
+            subset_ids = set()
+        if champion_id not in subset_ids:
+            raise HTTPException(status_code=409, detail="该英雄不在当前可选英雄子集内")
+
+    if is_direct_pick:
+        actions = [group for group in (session.get("actions") or []) if isinstance(group, list)]
+        current_group = next(
+            (
+                group
+                for group in actions
+                if group and not all(
+                    bool(action.get("completed"))
+                    for action in group
+                    if isinstance(action, dict)
+                )
+            ),
+            [],
+        )
+        first_pick = next(
+            (
+                action
+                for action in current_group
+                if isinstance(action, dict)
+                and str(action.get("actorCellId")) == str(local_cell)
+                and str(action.get("type") or "") == "pick"
+                and not bool(action.get("completed"))
+            ),
+            None,
+        )
+        if first_pick is None or first_pick.get("id") is None:
+            raise HTTPException(status_code=409, detail="当前没有可直接锁定的英雄选择动作")
+        action_id = quote(str(first_pick.get("id")), safe="")
+        try:
+            await league_lab_service.request(
+                "PATCH",
+                f"/lol-champ-select/v1/session/actions/{action_id}",
+                json_body={"championId": champion_id, "completed": True, "type": "pick"},
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=f"选择英雄失败：{exc}") from exc
+        league_lab_service.last_action = f"已从 Mini 选择并锁定英雄 {champion_id}"
+    else:
+        bench_ids = {
+            int(item.get("championId"))
+            for item in (session.get("benchChampions") or [])
+            if isinstance(item, dict) and item.get("championId") is not None
+        }
+        if champion_id not in bench_ids:
+            raise HTTPException(status_code=409, detail="该英雄不在当前备战席中")
+        try:
+            await league_lab_service.request(
+                "POST", f"/lol-champ-select/v1/session/bench/swap/{champion_id}"
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=f"换取英雄失败：{exc}") from exc
+        league_lab_service.last_action = f"已从 Mini 换取英雄 {champion_id}"
+
+    league_lab_service.last_action_at = time.time()
+    try:
+        await league_lab_service._refresh_state()
+    except RuntimeError:
+        # The write already reached the LCU; a transient refresh failure must
+        # not turn a successful action into an unsafe retry prompt.
+        pass
+    return league_lab_service.status()
+
+
 @router.put("/champ-select/auto-select-temporarily-disabled")
 async def league_set_auto_select_temporarily_disabled(body: AutoSelectTemporaryDisableBody):
     if league_lab_service.phase != "ChampSelect":
@@ -6750,11 +9162,36 @@ async def league_champ_select_dodge(body: ChampSelectDodgeRequest):
     return league_lab_service.status()
 
 
+@router.post("/champ-select/dodge-loop/start")
+async def league_champ_select_dodge_loop_start(body: ChampSelectDodgeLoopRequest):
+    """Start the explicitly confirmed, cancellable five-worker dodge loop."""
+
+    _require_toolkit_account_actions()
+    try:
+        await _require_live_phase("ChampSelect")
+    except HTTPException:
+        raise
+    try:
+        league_lab_service.start_dodge_loop()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return league_lab_service.status()
+
+
+@router.post("/champ-select/dodge-loop/cancel")
+async def league_champ_select_dodge_loop_cancel():
+    """Cancel only the local dodge-loop task; it never writes to the LCU."""
+
+    league_lab_service._terminate_dodge_loop("user-cancelled")
+    return league_lab_service.status()
+
+
 @router.post("/champ-select/reroll")
 async def league_champ_select_reroll():
     _require_toolkit_account_actions()
     try:
         await _require_live_phase("ChampSelect")
+        await _require_reroll_evidence()
         await league_lab_service._record_action(
             "已使用一次重随",
             "POST",
@@ -6766,6 +9203,146 @@ async def league_champ_select_reroll():
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return league_lab_service.status()
+
+
+@router.post("/champ-select/reroll-charity")
+async def league_champ_select_charity_reroll(body: ChampSelectCharityRerollRequest):
+    """Reroll and, only with fresh evidence, take the original champion back.
+
+    The second write is deliberately conservative: the original champion must
+    be present in the fresh bench, be currently pickable, and be usable in the
+    current bench phase.  Missing/ambiguous optional LCU data means the
+    reroll has happened but no follow-up swap is attempted.
+    """
+
+    _require_toolkit_account_actions()
+    await _require_live_phase("ChampSelect")
+    before = await _require_reroll_evidence()
+
+    local_cell = before.get("localPlayerCellId")
+    local_member = next(
+        (
+            item for item in (before.get("myTeam") or [])
+            if isinstance(item, dict) and str(item.get("cellId")) == str(local_cell)
+        ),
+        None,
+    )
+    try:
+        original_champion_id = int((local_member or {}).get("championId") or 0)
+        rerolls_remaining = int(before.get("rerollsRemaining") or 0)
+    except (TypeError, ValueError):
+        original_champion_id = 0
+        rerolls_remaining = 0
+    if original_champion_id <= 0:
+        raise HTTPException(status_code=409, detail="当前没有可记录的已选择英雄，已阻止慈善重随")
+    try:
+        await league_lab_service.request(
+            "POST",
+            "/lol-champ-select/v1/session/my-selection/reroll",
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=f"重随失败：{exc}") from exc
+
+    report = {
+        "original_champion_id": original_champion_id,
+        "rerolled": True,
+        "grabbed_back": False,
+        "swap_reason": None,
+    }
+
+    try:
+        after = await league_lab_service.request("GET", "/lol-champ-select/v1/session")
+    except RuntimeError as exc:
+        after = None
+        report["swap_reason"] = f"无法读取重随后的会话：{exc}"
+
+    if isinstance(after, dict):
+        bench_rows = after.get("benchChampions")
+        timer = after.get("timer")
+        phase = str((timer or {}).get("phase") or "") if isinstance(timer, dict) else ""
+        bench_ids = []
+        if isinstance(bench_rows, list):
+            for item in bench_rows:
+                if isinstance(item, dict):
+                    try:
+                        champion_id = int(item.get("championId") or 0)
+                    except (TypeError, ValueError):
+                        champion_id = 0
+                    if champion_id > 0:
+                        bench_ids.append(champion_id)
+        if not bool(after.get("benchEnabled")):
+            report["swap_reason"] = "重随后的会话没有启用备战席"
+        elif original_champion_id not in bench_ids:
+            report["swap_reason"] = "原英雄没有进入重随后的备战席"
+        elif phase not in {"FINALIZATION", "BAN_PICK"}:
+            report["swap_reason"] = "当前阶段不允许从备战席换取英雄"
+        else:
+            try:
+                pickable = await league_lab_service.request(
+                    "GET", "/lol-champ-select/v1/pickable-champion-ids"
+                )
+            except RuntimeError as exc:
+                pickable = None
+                report["swap_reason"] = f"无法确认原英雄当前是否可选：{exc}"
+            pickable_ids = set()
+            if isinstance(pickable, list):
+                for value in pickable:
+                    try:
+                        pickable_ids.add(int(value))
+                    except (TypeError, ValueError):
+                        continue
+            if report["swap_reason"] is None and original_champion_id not in pickable_ids:
+                report["swap_reason"] = "原英雄当前不可选，未执行换回"
+            if report["swap_reason"] is None and phase == "BAN_PICK":
+                subset = after.get("allowSubsetChampionPicks")
+                try:
+                    subset_ids = await league_lab_service.request(
+                        "GET", "/lol-champ-select/v1/subset-champion-ids"
+                    )
+                except RuntimeError as exc:
+                    subset_ids = None
+                    report["swap_reason"] = f"无法确认子集英雄池：{exc}"
+                if report["swap_reason"] is None and not bool(subset):
+                    report["swap_reason"] = "当前 BAN_PICK 阶段没有子集选人证据"
+                elif report["swap_reason"] is None and (
+                    not isinstance(subset_ids, list) or original_champion_id not in {
+                        int(value) for value in subset_ids
+                        if isinstance(value, (int, float, str)) and str(value).isdigit()
+                    }
+                ):
+                    report["swap_reason"] = "原英雄不在当前子集英雄池，未执行换回"
+
+        if report["swap_reason"] is None:
+            # Re-check both controls immediately before the optional second
+            # account write.  The reroll may have changed the phase or the
+            # user may have disabled account actions while it was settling.
+            _require_toolkit_account_actions()
+            try:
+                await _require_live_phase("ChampSelect")
+                await league_lab_service.request(
+                    "POST",
+                    f"/lol-champ-select/v1/session/bench/swap/{original_champion_id}",
+                )
+                report["grabbed_back"] = True
+            except HTTPException as exc:
+                report["swap_reason"] = exc.detail
+            except RuntimeError as exc:
+                report["swap_reason"] = f"换回原英雄失败：{exc}"
+
+    if report["grabbed_back"]:
+        league_lab_service.last_action = f"已慈善重随并取回原英雄 {original_champion_id}"
+    else:
+        league_lab_service.last_action = "已慈善重随，原英雄未满足安全换回条件"
+    league_lab_service.last_action_at = time.time()
+    try:
+        await league_lab_service._refresh_state()
+    except RuntimeError:
+        # The reroll itself already completed; preserve its result if the
+        # optional post-write refresh races a client phase transition.
+        pass
+    result = league_lab_service.status()
+    result["charity_reroll"] = report
+    return result
 
 
 @router.post("/champ-select/skin/{skin_id}")

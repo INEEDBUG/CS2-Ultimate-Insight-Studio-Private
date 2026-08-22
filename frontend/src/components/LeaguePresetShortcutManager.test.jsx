@@ -65,4 +65,35 @@ describe("LeaguePresetShortcutManager", () => {
     await handler({state:"Pressed"});
     expect(sendLeagueInGameLines).toHaveBeenCalledWith([expect.stringContaining("敌人")],"","shortcut","rating","enemy");
   });
+
+  it("uses the backend-saved preset options and shared generator for shortcuts", async () => {
+    fetchLeagueLabStatus
+      .mockResolvedValueOnce({ settings: {
+        toolkit_account_actions_enabled: true,
+        in_game_send_enabled: true,
+        in_game_rating_shortcuts: { enemy: "Ctrl+Alt+R" },
+        in_game_rating_preset_options: {
+          target_mode: "all",
+          name_display_strategy: "preferName",
+          display: { win_rate: true, kda: false, main_champions: false, main_positions: false },
+        },
+      } })
+      .mockResolvedValueOnce({ current_summoner: { puuid: "self" }, settings: {
+        in_game_rating_preset_options: {
+          target_mode: "all",
+          name_display_strategy: "preferName",
+          display: { win_rate: true, kda: false, main_champions: false, main_positions: false },
+        },
+      } });
+    fetchLeagueOngoingGame.mockResolvedValue({ players: [
+      { puuid: "self", team: 100, summoner: { gameName: "我" }, rating_summary: { win_rate: 1, avg_kda: 9 } },
+      { puuid: "enemy", team: 200, summoner: { gameName: "敌人" }, rating_summary: { win_rate: 0, avg_kda: 1 } },
+    ] });
+    render(<LeaguePresetShortcutManager />);
+    await waitFor(() => expect(register).toHaveBeenCalledWith("Ctrl+Alt+R", expect.any(Function)));
+    await register.mock.calls.find(([shortcut]) => shortcut === "Ctrl+Alt+R")[1]({ state: "Pressed" });
+    await waitFor(() => expect(sendLeagueInGameLines).toHaveBeenCalledWith(
+      ["敌人：胜率 0%"], "", "shortcut", "rating", "enemy",
+    ));
+  });
 });

@@ -1,8 +1,8 @@
 <h1 align="center">
   <br>
-  <img src="./frontend/public/cs2-ultimate-insight-logo.png" alt="CS2 Ultimate Insight Studio" width="140">
+  <img src="./frontend/public/cs2-ultimate-insight-logo.png" alt="MaxGameStudio" width="140">
   <br>
-  CS2 Ultimate Insight Studio
+  MaxGameStudio
   <br>
 </h1>
 
@@ -109,13 +109,16 @@ This repository does not display upstream donation QR codes or solicit money on 
 
 ## Installation
 
-Download the latest `CS2 Ultimate Insight Studio_x.x.x_x64-setup.exe` from this repository's [Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases), run the installer and follow the prompts.
+> [!WARNING]
+> **`2.5.14-rc.57` is a test-only release candidate.** It is not published to the stable updater manifest, so existing stable clients will not be prompted to install it. Testers must install it manually from the [GitHub prereleases](https://github.com/INEEDBUG/MaxGameStudio/releases).
+
+Download the latest `MaxGameStudio_x.x.x_x64-setup.exe` from this repository's [Releases page](https://github.com/INEEDBUG/MaxGameStudio/releases), run the installer and follow the prompts.
 
 By default, the window `×` button asks whether to keep the app running in the Windows system tray or exit completely, with an option to remember the choice. Parsing and downloads continue while the app is in the tray. The behavior can be changed at any time under Settings → System & Updates.
 
 After installation, launch from desktop or start menu. **No browser or manual backend start is required.** The lightweight Tauri shell starts the bundled Python backend and renders the UI with the Windows system WebView2 runtime.
 
-The desktop app checks the signed GitHub updater channel at launch and every 15 minutes while running or resident in the tray. When a new release is found, it downloads and verifies the signed package, starts an in-place NSIS upgrade, closes the old process, and relaunches the new version automatically. User settings, demo data, and projects remain in the separate application-data directory. Manual installers remain available on [this project's Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private/releases).
+The desktop app checks the signed GitHub updater channel at launch and every 15 minutes while running or resident in the tray. Stable releases are downloaded, verified and installed in place before the new version is relaunched. User settings, demo data and projects remain in the separate application-data directory. Release candidates carrying `-rc.N` are GitHub prereleases only: they do not update `updater/latest.json` and are never offered to stable clients. Manual installers remain available on [this project's Releases page](https://github.com/INEEDBUG/MaxGameStudio/releases).
 
 > **Recommended: Installation path without Chinese characters.** e.g., `D:\CS2-Insight-Agent\` ✅, `D:\游戏工具\CS2-Insight-Agent\` ❌
 

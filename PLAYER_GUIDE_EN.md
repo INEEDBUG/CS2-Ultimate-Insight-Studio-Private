@@ -83,7 +83,7 @@ Prefer a walkthrough? Watch the community video tutorial first:
 
 ### Step 1: Download the installer
 
-Open this project's [Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases) and download the latest **`CS2 Ultimate Insight Studio_x.x.x_x64-setup.exe`** installer.
+Open this project's [Releases page](https://github.com/INEEDBUG/MaxGameStudio/releases) and download the latest **`MaxGameStudio_x.x.x_x64-setup.exe`** installer.
 
 ### Step 2: Run the installer
 
@@ -111,7 +111,7 @@ Double-click the desktop shortcut. The app opens as a desktop application: you d
 
 The app checks for updates at startup and every 15 minutes while it is running or in the tray. When a new signed release is available, it shows the version and release notes, downloads and verifies the package, performs the in-place upgrade, and relaunches the new version automatically. No second installer click is required, and your settings and demo-library data are retained.
 
-You can also install a newer installer from [this project's Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases) over the existing version.
+You can also install a newer installer from [this project's Releases page](https://github.com/INEEDBUG/MaxGameStudio/releases) over the existing version.
 
 ---
 
@@ -339,7 +339,7 @@ Confirm the installer came from the official Releases page, then use **More info
 
 **How do I update?**
 
-Install the newest package from [this project's Releases page](https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio/releases). Existing settings and data are retained.
+Install the newest package from [this project's Releases page](https://github.com/INEEDBUG/MaxGameStudio/releases). Existing settings and data are retained.
 
 **OBS Configuration Check fails.**
 
@@ -445,4 +445,4 @@ Yes. Add clips from different demos to the queue. The app groups them by demo, s
 
 Have fun—and may your highlights outnumber your fails. 🔥💀
 
-> **CS2 Ultimate Insight Studio** · Local training and match-review tool
+> **MaxGameStudio** · Local training and match-review tool

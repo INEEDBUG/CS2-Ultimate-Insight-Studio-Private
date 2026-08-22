@@ -87,6 +87,24 @@ export function getLeagueChampionIconUrl(championId) {
   return withDesktopSessionToken(url);
 }
 
+/**
+ * Return a browser-loadable URL for an asset exposed by the authenticated
+ * League client.  The Mini window is a separate Tauri webview, so a relative
+ * `/api/...` URL would resolve against `tauri.localhost` instead of the local
+ * backend.  Keep the desktop base and session query handling in one place so
+ * image elements (which cannot send our axios header) work in both dev and
+ * packaged windows.
+ */
+export function getLeagueClientAssetUrl(assetPath) {
+  const path = String(assetPath || "").trim();
+  if (!path) return "";
+  const encodedPath = encodeURIComponent(path);
+  const url = API_BASE_URL
+    ? `${API_BASE_URL}/api/league-lab/assets/client?path=${encodedPath}`
+    : `/api/league-lab/assets/client?path=${encodedPath}`;
+  return withDesktopSessionToken(url);
+}
+
 export function getLeagueSummonerSpellIconUrl(spellId) {
   const id = encodeURIComponent(String(spellId || ""));
   const url = API_BASE_URL ? `${API_BASE_URL}/api/league-lab/assets/summoner-spells/${id}.png` : `/api/league-lab/assets/summoner-spells/${id}.png`;
@@ -102,6 +120,12 @@ export function getLeagueItemIconUrl(itemId) {
 export function getLeaguePerkIconUrl(perkId) {
   const id = encodeURIComponent(String(perkId || ""));
   const url = API_BASE_URL ? `${API_BASE_URL}/api/league-lab/assets/perks/${id}.png` : `/api/league-lab/assets/perks/${id}.png`;
+  return withDesktopSessionToken(url);
+}
+
+export function getLeaguePerkStyleIconUrl(styleId) {
+  const id = encodeURIComponent(String(styleId || ""));
+  const url = API_BASE_URL ? `${API_BASE_URL}/api/league-lab/assets/perkstyles/${id}.png` : `/api/league-lab/assets/perkstyles/${id}.png`;
   return withDesktopSessionToken(url);
 }
 

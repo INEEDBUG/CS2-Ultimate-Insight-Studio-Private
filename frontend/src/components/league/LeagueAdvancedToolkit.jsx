@@ -101,7 +101,7 @@ function buildDetailedMatch(preview, details) {
   };
 }
 
-export default function LeagueAdvancedToolkit({ enabled, busy, onBusyChange, onError, onDryRunGame = () => {}, onOpenPlayer = () => {}, streamerMode = false, useAliases = false }) {
+export default function LeagueAdvancedToolkit({ enabled, busy, onBusyChange, onError, onDryRunGame = () => {}, onOpenPlayer = () => {}, streamerMode = false, useAliases = false, section = "all" }) {
   const [options,setOptions]=useState(null);
   const [champions,setChampions]=useState([]);
   const [queueId,setQueueId]=useState("");
@@ -134,8 +134,8 @@ export default function LeagueAdvancedToolkit({ enabled, busy, onBusyChange, onE
   const inspectGame=async()=>{const parsed=Number(gameId);if(!Number.isSafeInteger(parsed)||parsed<=0){onError("Game ID 必须是正整数");return;}const request=++previewRequest.current;detailsRequest.current+=1;setGameDetails(null);setGameDetailsError("");onBusyChange(true);try{const next=await fetchLeagueGamePreview(parsed,gameSource,true);if(disposed.current||request!==previewRequest.current)return;setGamePreview(next);}catch(error){if(!disposed.current&&request===previewRequest.current){setGamePreview(null);onError(error?.response?.data?.detail||"对局预览读取失败");}}finally{if(!disposed.current&&request===previewRequest.current)onBusyChange(false);}};
   const inspectGameDetails=async()=>{const parsed=Number(gamePreview?.metadata?.game_id||gameId);if(!Number.isSafeInteger(parsed)||parsed<=0)return;const request=++detailsRequest.current;const source=gameSource;setGameDetailsBusy(true);setGameDetailsError("");try{const next=await fetchLeagueMatchDetails(parsed,source);if(disposed.current||request!==detailsRequest.current)return;setGameDetails(next);}catch(error){if(!disposed.current&&request===detailsRequest.current){const message=error?.response?.data?.detail||error?.message||"对局完整详情读取失败";setGameDetails(null);setGameDetailsError(message);onError(message);}}finally{if(!disposed.current&&request===detailsRequest.current)setGameDetailsBusy(false);}};
   const previewName=(player,index)=>{const raw=player?.game_name||player?.summoner?.gameName||player?.champion_name||`玩家 ${index+1}`;return streamerMode?maskLeagueName(raw,index,useAliases,player?.puuid):raw;};
-
-  return <div className="space-y-4">
+  return <div className={`space-y-4 toolkit-view-${section}`}>
+    <style>{`\n      .toolkit-view-lobby > section:nth-of-type(1),\n      .toolkit-view-lobby > section:nth-of-type(4),\n      .toolkit-view-lobby > section:nth-of-type(5),\n      .toolkit-view-misc > section:nth-of-type(2),\n      .toolkit-view-misc > section:nth-of-type(3) { display: none; }\n    `}</style>
     <section className="rounded-2xl border border-emerald-400/20 bg-cs2-bg-elevated p-4">
       <div className="flex items-center gap-2"><Search className="h-4 w-4 text-emerald-300"/><h3 className="text-sm font-bold">任意 Game ID 对局预览</h3></div>
       <p className="mt-1 text-xs text-cs2-text-muted">按 LeagueAkari 的 Game View 读取完整比分与时间线摘要，并可把历史阵容载入实时对局面板进行只读模拟。</p>

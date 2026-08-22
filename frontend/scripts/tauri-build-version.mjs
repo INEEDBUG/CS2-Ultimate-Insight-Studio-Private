@@ -3,6 +3,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveCargoReleaseRoot } from "./cargo-release-root.mjs";
 
 const version = process.argv.slice(2).find((arg) => arg !== "--")?.trim();
 if (!version || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
@@ -98,16 +99,21 @@ run(
 
 if (process.platform === "win32") {
   const tauriRoot = join(frontendRoot, "src-tauri");
-  const releaseRoot = join(tauriRoot, "target", "release");
+  const releaseRoot = resolveCargoReleaseRoot({
+    frontendRoot,
+    cargoTargetDir: buildEnv.CARGO_TARGET_DIR,
+    cargoBuildTarget: buildEnv.CARGO_BUILD_TARGET,
+  });
   const loader = join(releaseRoot, "WebView2Loader.dll");
   const unwindRuntime = join(releaseRoot, "libunwind.dll");
   const hook = join(tauriRoot, "windows", "upgrade-hooks.nsh");
   const generatedInstaller = join(releaseRoot, "nsis", "x64", "installer.nsi");
+  const legacyGeneratedInstaller = join(releaseRoot, "bundle", "nsis", "x64", "installer.nsi");
   const artifact = join(
     releaseRoot,
     "bundle",
     "nsis",
-    `CS2 Ultimate Insight Studio_${version}_x64-setup.exe`,
+    `MaxGameStudio_${version}_x64-setup.exe`,
   );
   const updaterSignature = `${artifact}.sig`;
   if (!hasUpdaterSigningKey && existsSync(updaterSignature)) {
@@ -134,7 +140,13 @@ if (process.platform === "win32") {
   if (gnullvmBuild && !hookBody.includes('File /a "/oname=libunwind.dll"')) {
     throw new Error("NSIS hook does not install libunwind.dll beside the Tauri executable");
   }
-  const installerBody = readFileSync(generatedInstaller, "utf8");
+  const installerScript = existsSync(generatedInstaller)
+    ? generatedInstaller
+    : legacyGeneratedInstaller;
+  if (!existsSync(installerScript)) {
+    throw new Error(`Generated NSIS script was not found beneath: ${releaseRoot}`);
+  }
+  const installerBody = readFileSync(installerScript, "utf8");
   if (!installerBody.includes("windows\\upgrade-hooks.nsh")) {
     throw new Error("Generated NSIS script does not include the project installer hook");
   }

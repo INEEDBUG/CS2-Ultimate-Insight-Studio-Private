@@ -48,8 +48,15 @@ export async function stopLeagueMatchmaking() {
   return runLeagueLabAction("stop-matchmaking");
 }
 
-export async function fetchLeagueMatches(limit = 20) {
-  const { data } = await API.get("/league-lab/matches", { params: { limit } });
+export async function fetchLeagueMatches(limit = 20, begIndex = 0) {
+  const params = { limit };
+  if (Number(begIndex) > 0) params.beg_index = Number(begIndex);
+  const { data } = await API.get("/league-lab/matches", { params });
+  return data;
+}
+
+export async function collectLeagueMatches(options = {}) {
+  const { data } = await API.post("/league-lab/matches/collect", options);
   return data;
 }
 
@@ -206,41 +213,6 @@ export async function fetchLeagueCooldownTimerState() {
 
 export async function sendLeagueCooldownTimerText(text) {
   const { data } = await API.post("/league-lab/cooldown-timer/send", { text });
-  return data;
-}
-
-export async function fetchLeagueOpggVersions(params) {
-  const { data } = await API.get("/league-lab/opgg/versions", { params });
-  return data;
-}
-
-export async function fetchLeagueOpggChampions(params) {
-  const { data } = await API.get("/league-lab/opgg/champions", { params });
-  return data;
-}
-
-export async function fetchLeagueOpggChampion(championId, params) {
-  const { data } = await API.get(`/league-lab/opgg/champions/${encodeURIComponent(championId)}`, { params });
-  return data;
-}
-
-export async function applyLeagueOpggSpells(body, source = "manual") {
-  const { data } = await API.post("/league-lab/opgg/apply-spells", { ...body, source });
-  return data;
-}
-
-export async function applyLeagueOpggRunes(body, source = "manual") {
-  const { data } = await API.post("/league-lab/opgg/apply-runes", { ...body, source });
-  return data;
-}
-
-export async function applyLeagueOpggItems(body) {
-  const { data } = await API.post("/league-lab/opgg/apply-items", body);
-  return data;
-}
-
-export async function clearLeagueOpggItems() {
-  const { data } = await API.delete("/league-lab/opgg/item-sets");
   return data;
 }
 
@@ -418,8 +390,30 @@ export async function swapLeagueBenchChampion(championId) {
   return data;
 }
 
+// Mirrors LeagueAkari's Mini click behavior: in BAN_PICK this can lock the
+// first local pick; otherwise the same candidate is exchanged from the bench.
+export async function selectLeagueChampionFromMini(championId) {
+  const { data } = await API.post(`/league-lab/champ-select/select/${championId}`);
+  return data;
+}
+
 export async function rerollLeagueChampion() {
   const { data } = await API.post("/league-lab/champ-select/reroll");
+  return data;
+}
+
+export async function charityRerollLeagueChampion(confirmation) {
+  const { data } = await API.post("/league-lab/champ-select/reroll-charity", { confirmation });
+  return data;
+}
+
+export async function startLeagueDodgeLoop(confirmation) {
+  const { data } = await API.post("/league-lab/champ-select/dodge-loop/start", { confirmation });
+  return data;
+}
+
+export async function cancelLeagueDodgeLoop() {
+  const { data } = await API.post("/league-lab/champ-select/dodge-loop/cancel");
   return data;
 }
 

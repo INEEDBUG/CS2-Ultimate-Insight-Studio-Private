@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, Clock3, Map as MapIcon } from "lucide-react";
+import { ChevronDown, ChevronUp, Clock3, Crown, Map as MapIcon } from "lucide-react";
 import {
   getLeagueChampionIconUrl,
   getLeagueItemIconUrl,
@@ -20,6 +20,12 @@ const TABS = [
   ["timeline", "时间线"],
 ];
 
+// Keep every summary row on one shared column track.  The explicit minimum
+// width lets narrow windows scroll instead of allowing KP/damage/CS to drift
+// when a player name or item build is longer than its neighbour's.
+const TEAM_TABLE_GRID = "grid min-w-[920px] grid-cols-[minmax(220px,1fr)_112px_82px_100px_106px_218px] gap-2";
+const MATCH_METRIC_GRID = "grid min-w-0 flex-1 grid-cols-[minmax(104px,1fr)_minmax(104px,1fr)_minmax(104px,1fr)] gap-2";
+
 function formatNumber(value) {
   if (value == null || value === "") return "—";
   const number = Number(value);
@@ -31,51 +37,261 @@ function formatDuration(value) {
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 }
 
+function assetId(value) {
+  if (value && typeof value === "object") {
+    value = value.item_id ?? value.itemId ?? value.perk_id ?? value.perkId ?? value.spell_id ?? value.spellId ?? value.id;
+  }
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function itemValues(value) {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "object") return [];
+  const indexed = Object.entries(value)
+    .map(([key, item]) => {
+      const match = String(key).match(/^(?:item|slot)?[_-]?(\d+)$/i);
+      return match ? [Number(match[1]), item] : null;
+    })
+    .filter(Boolean)
+    .sort((left, right) => left[0] - right[0]);
+  return indexed.length ? indexed.map(([, item]) => item) : Object.values(value);
+}
+
+function itemSlots(player) {
+  const sources = [player, player?.stats, player?.match_stats].filter((source) => source && typeof source === "object");
+  let fallback = null;
+  for (const source of sources) {
+    for (const key of ["item_slots", "itemSlots", "items", "loadout"]) {
+      const values = itemValues(source[key]);
+      if (!values.length) continue;
+      const slots = values.slice(0, 7).map(assetId);
+      fallback ||= slots;
+      if (slots.some(Boolean)) return [...slots, ...Array(7 - slots.length).fill(null)].slice(0, 7);
+    }
+    const slots = Array.from({ length: 7 }, (_, index) => assetId(
+      source[`item${index}`] ?? source[`item_${index}`] ?? source[`Item${index}`],
+    ));
+    fallback ||= slots;
+    if (slots.some(Boolean)) return slots;
+  }
+  return [...(fallback || []), ...Array(7 - (fallback || []).length).fill(null)].slice(0, 7);
+}
+
+function normalizedItems(player) {
+  return itemSlots(player).filter(Boolean);
+}
+
+function canonicalName(player, index = 0) {
+  const body = player || {};
+  const name = String(body.game_name ?? body.gameName ?? body.riot_id_game_name ?? body.riotIdGameName ?? body.name ?? body.champion_name ?? `玩家 ${index + 1}`).trim();
+  const tag = String(body.tag_line ?? body.tagLine ?? body.riot_id_tagline ?? body.riotIdTagline ?? "").trim();
+  if (!tag || name.endsWith(`#${tag}`) || name.includes(` #${tag}`)) return name;
+  return `${name}#${tag}`;
+}
+
 function playerName(player, index, streamerMode, useAliases) {
-  const raw = player.game_name || player.champion_name || `玩家 ${index + 1}`;
-  if (streamerMode) return maskLeagueName(raw, index, useAliases, player.puuid);
-  return `${raw}${player.tag_line ? `#${player.tag_line}` : ""}`;
+  const raw = canonicalName(player, index);
+  if (streamerMode) {
+    // LeagueAkari's privacy mode intentionally replaces Riot IDs with the
+    // champion name in the match card. This also avoids repeating the same
+    // masked name in the compact two-team roster.
+    return player?.champion_name || maskLeagueName(raw, index, useAliases, player?.puuid);
+  }
+  return raw;
 }
 
 function Icon({ src, title, className = "h-7 w-7" }) {
-  return <img src={src} alt="" title={title} className={`${className} rounded-md border border-white/10 bg-black/20 object-cover`} />;
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
+    return <span aria-label={title || "资源"} title={title} className={`${className} inline-grid place-items-center rounded-md border border-white/10 bg-black/20 text-[9px] text-cs2-text-muted`}>—</span>;
+  }
+  return <img src={src} alt="" title={title} onError={() => setFailed(true)} className={`${className} rounded-md border border-white/10 bg-black/20 object-cover`} />;
+}
+
+function firstAssetId(values) {
+  for (const value of values) {
+    const id = assetId(value);
+    if (id) return id;
+  }
+  return null;
+}
+
+function spellIds(player) {
+  const sources = [player, player?.stats, player?.match_stats].filter((source) => source && typeof source === "object");
+  for (const source of sources) {
+    const array = source.spells ?? source.summonerSpells ?? source.summoner_spells;
+    if (Array.isArray(array)) {
+      const ids = array.map(assetId).filter(Boolean).slice(0, 2);
+      if (ids.length) return ids;
+    }
+    const ids = [
+      firstAssetId([source.spell1_id, source.spell1Id, source.summoner1Id, source.summoner_spell1_id]),
+      firstAssetId([source.spell2_id, source.spell2Id, source.summoner2Id, source.summoner_spell2_id]),
+    ].filter(Boolean);
+    if (ids.length) return ids;
+  }
+  return [];
 }
 
 function SpellIcons({ player, compact = false }) {
-  const spellIds = [player.spell1_id, player.spell2_id].filter((id) => Number(id) > 0);
-  if (!spellIds.length) return null;
+  const ids = spellIds(player);
+  if (!ids.length) return null;
   return <div className="flex gap-1">
-    {spellIds.map((id) => <Icon key={id} src={getLeagueSummonerSpellIconUrl(id)} title={`召唤师技能 ${id}`} className={compact ? "h-6 w-6" : "h-8 w-8"} />)}
+    {ids.map((id) => <Icon key={id} src={getLeagueSummonerSpellIconUrl(id)} title={`召唤师技能 ${id}`} className={compact ? "h-6 w-6" : "h-8 w-8"} />)}
   </div>;
 }
 
 function Loadout({ player, compact = false }) {
+  const items = normalizedItems(player);
   return <div className="flex min-w-0 flex-wrap items-center gap-1">
-    {(player.items || []).slice(0, 7).map((id, index) => <Icon key={`${id}-${index}`} src={getLeagueItemIconUrl(id)} title={`装备 ${id}`} className={compact ? "h-5 w-5" : "h-7 w-7"} />)}
-    {!player.items?.length ? <span className="text-[10px] text-cs2-text-muted">无装备记录</span> : null}
+    {items.slice(0, 7).map((id, index) => <Icon key={`${id}-${index}`} src={getLeagueItemIconUrl(id)} title={`装备 ${id}`} className={compact ? "h-5 w-5" : "h-7 w-7"} />)}
+    {!items.length ? <span className="text-[10px] text-cs2-text-muted">无装备记录</span> : null}
   </div>;
+}
+
+function uniqueParticipants(match) {
+  const rows = Array.isArray(match?.participants) ? match.participants : [];
+  const seen = new Set();
+  const unique = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const key = row.puuid || row.participant_puuid || row.participant_id || row.participantId || `${row.team_id || row.teamId}:${row.champion_id || row.championId}:${unique.length}`;
+    if (seen.has(String(key))) continue;
+    seen.add(String(key));
+    unique.push({
+      ...row,
+      participant_id: row.participant_id ?? row.participantId,
+      puuid: row.puuid ?? row.participant_puuid,
+      team_id: row.team_id ?? row.teamId,
+      champion_id: row.champion_id ?? row.championId,
+      champion_name: row.champion_name ?? row.championName,
+      game_name: row.game_name ?? row.gameName ?? row.riotIdGameName,
+      tag_line: row.tag_line ?? row.tagLine ?? row.riotIdTagline,
+      spell1_id: row.spell1_id ?? row.spell1Id ?? row.summoner1Id ?? row.stats?.spell1Id ?? row.stats?.summoner1Id,
+      spell2_id: row.spell2_id ?? row.spell2Id ?? row.summoner2Id ?? row.stats?.spell2Id ?? row.stats?.summoner2Id,
+      spells: row.spells ?? row.summonerSpells ?? row.summoner_spells,
+      items: normalizedItems(row),
+      item_slots: itemSlots(row),
+      perks: row.perks ?? row.runes ?? [],
+      damage: row.damage ?? row.totalDamageDealtToChampions,
+      damage_taken: row.damage_taken ?? row.totalDamageTaken,
+      cs: row.cs ?? ((Number(row.totalMinionsKilled) || 0) + (Number(row.neutralMinionsKilled) || 0)),
+    });
+  }
+  if (unique.length) return unique;
+  if (match && (match.champion_id || match.championId || match.participant_puuid)) {
+    return [{
+      ...match,
+      puuid: match.participant_puuid,
+      team_id: match.team_id ?? match.teamId,
+      champion_id: match.champion_id ?? match.championId,
+      champion_name: match.champion_name ?? match.championName,
+      game_name: match.game_name ?? match.gameName,
+      items: normalizedItems(match),
+      item_slots: itemSlots(match),
+    }];
+  }
+  return [];
+}
+
+/** Build the read-only historical payload consumed by LeagueOngoingGame. */
+export function buildLeagueHistoricalPreview(match, participantRows = null) {
+  const participants = Array.isArray(participantRows) ? participantRows : uniqueParticipants(match);
+  const players = participants.map((player, index) => ({
+    participant_id: player?.participant_id ?? player?.participantId ?? index + 1,
+    puuid: player?.puuid || player?.participant_puuid || "",
+    team: player?.team_id ?? player?.teamId ?? "UNKNOWN",
+    champion_id: Number(player?.champion_id ?? player?.championId ?? 0),
+    champion_name: player?.champion_name || player?.championName || "未知英雄",
+    position: player?.position || player?.role || "",
+    summoner: {
+      gameName: player?.game_name || player?.gameName || player?.riot_id_game_name || "",
+      tagLine: player?.tag_line || player?.tagLine || player?.riot_id_tagline || "",
+      profileIconId: player?.profile_icon_id ?? player?.profileIconId,
+    },
+    tag: player?.tag || null,
+    premade_group: null,
+    recent: { matches: 0, wins: 0 },
+    champion_usage: { matches: 0, wins: 0, average_kda: 0 },
+    match_stats: {
+      kills: Number(player?.kills || 0),
+      deaths: Number(player?.deaths || 0),
+      assists: Number(player?.assists || 0),
+      kda: (Number(player?.kills || 0) + Number(player?.assists || 0)) / Math.max(1, Number(player?.deaths || 0)),
+      damage: Number(player?.damage ?? player?.totalDamageDealtToChampions ?? 0),
+      gold: Number(player?.gold ?? player?.goldEarned ?? 0),
+      cs: Number(player?.cs ?? 0),
+      items: normalizedItems(player),
+      win: player?.win ?? null,
+    },
+  }));
+  const teamIds = [...new Set(players.map((player) => player.team))].filter((team) => team !== "UNKNOWN");
+  return {
+    phase: "HistoricalPreview",
+    queue: { id: match?.queue_id ?? match?.queueId, gameMode: match?.game_mode || match?.gameMode },
+    game_id: match?.game_id ?? match?.gameId,
+    players,
+    available: players.length > 0,
+    historical_preview: true,
+    source: match?.source || "lcu",
+    metadata: {
+      game_id: match?.game_id ?? match?.gameId,
+      played_at: match?.played_at ?? match?.playedAt,
+      duration_seconds: match?.duration_seconds ?? match?.durationSeconds,
+      game_mode: match?.game_mode ?? match?.gameMode,
+      game_type: match?.game_type ?? match?.gameType,
+      queue_id: match?.queue_id ?? match?.queueId,
+    },
+    teams: teamIds.map((teamId) => ({ team_id: teamId, players: players.filter((player) => player.team === teamId) })),
+  };
+}
+
+function mapName(match) {
+  const id = Number(match?.map_id ?? match?.mapId);
+  return ({ 11: "召唤师峡谷", 12: "嚎哭深渊", 21: "水晶之痕" })[id] || match?.map_name || match?.game_mode || "未知地图";
+}
+
+function queueName(match) {
+  const id = Number(match?.queue_id ?? match?.queueId);
+  return ({ 400: "普通对战", 420: "单双排位", 430: "匹配对战", 440: "灵活排位", 450: "极地大乱斗", 490: "快速游戏" })[id] || match?.game_mode || match?.game_type || "未知队列";
+}
+
+function relativeTime(value) {
+  const raw = value == null ? 0 : (typeof value === "number" || /^\d+(\.\d+)?$/.test(String(value)) ? Number(value) : Date.parse(value));
+  const timestamp = Number.isFinite(raw) ? (raw > 0 && raw < 1e12 ? raw * 1000 : raw) : 0;
+  if (!timestamp) return "时间未知";
+  const diff = Math.max(0, Date.now() - timestamp);
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} 天前`;
+  return formatLeagueTimestamp(value);
 }
 
 function TeamTable({ players, targetPuuid, streamerMode, useAliases, onOpenPlayer }) {
   const hasTeamContext = players.length > 1;
   const teamKills = players.reduce((sum, player) => sum + Number(player.kills || 0), 0);
-  const teamDamage = players.reduce((sum, player) => sum + Number(player.damage || 0), 0);
-  return <div className="overflow-x-auto rounded-xl border border-cs2-border-subtle">
-    <div className="grid grid-cols-[minmax(180px,1fr)_100px_72px_72px_88px_minmax(110px,auto)] gap-2 border-b border-cs2-border-subtle bg-white/[.035] px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-cs2-text-muted">
+  const teamDamage = players.reduce((sum, player) => sum + Number(player.damage || player.totalDamageDealtToChampions || 0), 0);
+  return <div data-testid="league-team-table" className="overflow-x-auto rounded-xl border border-cs2-border-subtle">
+    <div className={`${TEAM_TABLE_GRID} border-b border-cs2-border-subtle bg-white/[.035] px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-cs2-text-muted`}>
       <span>玩家</span><span className="text-center">K / D / A</span><span className="text-right">参团</span><span className="text-right">伤害</span><span className="text-right">补刀 / 金币</span><span>装备</span>
     </div>
     {players.map((player, index) => {
       const highlighted = player.puuid && player.puuid === targetPuuid;
       const kp = hasTeamContext && teamKills ? Math.round((Number(player.kills || 0) + Number(player.assists || 0)) / teamKills * 100) : null;
       const damageShare = hasTeamContext && teamDamage ? Math.round(Number(player.damage || 0) / teamDamage * 100) : null;
-      return <div key={player.puuid || player.participant_id || index} className={`grid grid-cols-[minmax(180px,1fr)_100px_72px_72px_88px_minmax(110px,auto)] items-center gap-2 border-b border-cs2-border-subtle px-3 py-2 text-xs last:border-b-0 ${highlighted ? "bg-cyan-400/[.08]" : ""}`}>
+      return <div key={player.puuid || player.participant_id || index} className={`${TEAM_TABLE_GRID} items-center border-b border-cs2-border-subtle px-3 py-2 text-xs tabular-nums last:border-b-0 ${highlighted ? "bg-cyan-400/[.08]" : ""}`}>
         <button type="button" disabled={!player.puuid} onClick={() => player.puuid && onOpenPlayer?.(player.puuid)} className="flex min-w-0 items-center gap-2 text-left disabled:cursor-default">
           <Icon src={getLeagueChampionIconUrl(player.champion_id)} title={player.champion_name} className="h-8 w-8" />
           <span className="min-w-0"><b className="block truncate">{playerName(player, index, streamerMode, useAliases)}</b><span className="text-[10px] text-cs2-text-muted">{player.position || player.role || player.champion_name}</span></span>
         </button>
         <span className="text-center font-mono font-bold"><span>{player.kills ?? "—"}</span><span className="text-cs2-text-muted"> / </span><span className="text-rose-300">{player.deaths ?? "—"}</span><span className="text-cs2-text-muted"> / </span><span>{player.assists ?? "—"}</span></span>
         <span className="text-right font-mono">{kp == null ? "—" : `${kp}%`}</span>
-        <span className="text-right"><b>{formatNumber(player.damage)}</b><small className="block text-[9px] text-cs2-text-muted">{damageShare == null ? "—" : `${damageShare}%`}</small></span>
+        <span className="text-right"><b>{formatNumber(player.damage ?? player.totalDamageDealtToChampions)}</b><small className="block text-[9px] text-cs2-text-muted">{damageShare == null ? "—" : `${damageShare}%`}</small></span>
         <span className="text-right"><b>{formatNumber(player.cs)}</b><small className="block text-[9px] text-cs2-text-muted">{formatNumber(player.gold)}g</small></span>
         <Loadout player={player} compact />
       </div>;
@@ -209,7 +425,7 @@ function RunesTab({ participants, perkMap, streamerMode, useAliases }) {
     <Icon src={getLeagueChampionIconUrl(player.champion_id)} title={player.champion_name} className="h-9 w-9"/>
     <span className="min-w-[150px] flex-1 text-xs"><b className="block">{participantDisplay(player, index, streamerMode, useAliases)}</b><small className="text-cs2-text-muted">{player.position || player.role || player.champion_name}</small></span>
     <SpellIcons player={player}/>
-    <div className="flex max-w-xl flex-1 flex-wrap gap-2">{(player.perks || []).length ? player.perks.map((perkId) => { const perk = perkMap.get(Number(perkId)); const description = plainDescription(perk?.long_description || perk?.short_description); return <span key={perkId} className="flex max-w-56 items-center gap-1.5 rounded-lg bg-white/[.035] px-2 py-1"><Icon src={getLeaguePerkIconUrl(perkId)} title={perk?.name || `符文 ${perkId}`} className="h-7 w-7"/><span className="min-w-0 text-[10px]"><b className="block truncate text-cs2-text-primary">{perk?.name || `符文 ${perkId}`}</b>{description ? <small className="block max-w-44 truncate text-cs2-text-muted" title={description}>{description}</small> : null}</span></span>; }) : <span className="text-[11px] text-cs2-text-muted">无符文记录</span>}{player.augments?.length ? <span className="w-full text-[10px] text-violet-200">强化：{player.augments.join(" · ")}</span> : null}</div>
+    <div className="flex max-w-xl flex-1 flex-wrap gap-2">{(player.perks || []).map(assetId).filter(Boolean).length ? (player.perks || []).map(assetId).filter(Boolean).map((perkId) => { const perk = perkMap.get(Number(perkId)); const description = plainDescription(perk?.long_description || perk?.short_description); return <span key={perkId} className="flex max-w-56 items-center gap-1.5 rounded-lg bg-white/[.035] px-2 py-1"><Icon src={getLeaguePerkIconUrl(perkId)} title={perk?.name || `符文 ${perkId}`} className="h-7 w-7"/><span className="min-w-0 text-[10px]"><b className="block truncate text-cs2-text-primary">{perk?.name || `符文 ${perkId}`}</b>{description ? <small className="block max-w-44 truncate text-cs2-text-muted" title={description}>{description}</small> : null}</span></span>; }) : <span className="text-[11px] text-cs2-text-muted">无符文记录</span>}{player.augments?.length ? <span className="w-full text-[10px] text-violet-200">强化：{player.augments.join(" · ")}</span> : null}</div>
   </section>)}</div>;
 }
 
@@ -381,7 +597,7 @@ function TimelineTab({ details, participants, streamerMode, useAliases, hideStat
   return <section className="space-y-3 text-xs">{hideStats ? null : <div className="grid gap-2 sm:grid-cols-3"><Stat icon={MapIcon} label="数据源" value={String(details.source || "LCU").toUpperCase()}/><Stat label="时间线帧" value={formatNumber(details.frame_count)}/><Stat label="事件数量" value={formatNumber(details.event_count)}/></div>}<div className="flex flex-wrap gap-1">{[["difference", "经济差"], ["teams", "队伍经济"], ["player", "玩家属性"]].map(([id, label]) => <button key={id} type="button" onClick={() => setSection(id)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${section === id ? "bg-violet-400/15 text-violet-200" : "text-cs2-text-muted hover:bg-white/5"}`}>{label}</button>)}</div>{section === "difference" ? <DifferenceTimeline details={details}/> : null}{section === "teams" ? <TeamGoldTimeline details={details}/> : null}{section === "player" ? <PlayerStatsTimeline details={details} participants={participants} streamerMode={streamerMode} useAliases={useAliases}/> : null}</section>;
 }
 
-export default function LeagueDetailedMatchCard({ match, streamerMode = false, useAliases = false, onOpenPlayer, onError, initialDetails = null }) {
+export default function LeagueDetailedMatchCard({ match, streamerMode = false, useAliases = false, onOpenPlayer, onError, initialDetails = null, onDryRunGame = null }) {
   const [expanded, setExpanded] = useState(false);
   const [tab, setTab] = useState("summary");
   const [matchDetails, setMatchDetails] = useState(initialDetails);
@@ -390,23 +606,45 @@ export default function LeagueDetailedMatchCard({ match, streamerMode = false, u
   const detailsRequest = useRef(null);
   const perksRequest = useRef(null);
   const disposed = useRef(false);
-  const participants = Array.isArray(match.participants) ? match.participants : [];
+  const participants = useMemo(() => uniqueParticipants(match), [match]);
   const matchKey = `${match.game_id ?? "unknown"}|${match.source || "auto"}`;
   const matchKeyRef = useRef(matchKey);
   matchKeyRef.current = matchKey;
-  const targetPuuid = match.participant_puuid || participants.find((player) => Number(player.champion_id) === Number(match.champion_id) && Number(player.team_id) === Number(match.team_id))?.puuid;
-  const target = participants.find((player) => player.puuid && player.puuid === targetPuuid) || { ...match, puuid: targetPuuid };
-  const teams = useMemo(() => [...new Set(participants.map((player) => player.team_id).filter((value) => value != null))].map((teamId) => ({ teamId, players: participants.filter((player) => player.team_id === teamId) })), [participants]);
-  const ownTeam = participants.filter((player) => player.team_id === target.team_id);
+  const targetPuuid = String(match.participant_puuid ?? match.participantPuuid ?? "");
+  const targetRow = participants.find((player) => player.puuid && String(player.puuid) === targetPuuid)
+    || participants.find((player) => Number(player.champion_id) === Number(match.champion_id) && String(player.team_id) === String(match.team_id));
+  const target = {
+    ...match,
+    ...(targetRow || {}),
+    puuid: targetRow?.puuid || targetPuuid || match.puuid,
+    team_id: targetRow?.team_id ?? match.team_id,
+    champion_id: targetRow?.champion_id ?? match.champion_id,
+    champion_name: targetRow?.champion_name ?? match.champion_name,
+    damage: targetRow?.damage ?? match.damage,
+    cs: targetRow?.cs ?? match.cs,
+    items: normalizedItems(targetRow || match),
+    item_slots: itemSlots(targetRow || match),
+  };
+  const teams = useMemo(() => {
+    const groups = new Map();
+    for (const player of participants) {
+      const teamId = player.team_id ?? "unknown";
+      const key = String(teamId);
+      if (!groups.has(key)) groups.set(key, { teamId, players: [] });
+      groups.get(key).players.push(player);
+    }
+    return [...groups.values()];
+  }, [participants]);
+  const ownTeam = participants.filter((player) => String(player.team_id) === String(target.team_id));
   // Tencent's match-history summary can contain only the current participant.
   // A one-row "team" cannot prove either kill participation or team damage share.
   const hasTeamContext = ownTeam.length > 1;
   const teamKills = ownTeam.reduce((sum, player) => sum + Number(player.kills || 0), 0);
-  const teamDamage = ownTeam.reduce((sum, player) => sum + Number(player.damage || 0), 0);
+  const teamDamage = ownTeam.reduce((sum, player) => sum + Number(player.damage ?? player.totalDamageDealtToChampions ?? 0), 0);
   const kda = (Number(target.kills || 0) + Number(target.assists || 0)) / Math.max(1, Number(target.deaths || 0));
   const kp = hasTeamContext && teamKills ? (Number(target.kills || 0) + Number(target.assists || 0)) / teamKills * 100 : null;
-  const damageShare = hasTeamContext && teamDamage ? Number(target.damage || 0) / teamDamage * 100 : null;
-  const matchWin = leagueWinState(match.win);
+  const damageShare = hasTeamContext && teamDamage ? Number(target.damage ?? target.totalDamageDealtToChampions ?? 0) / teamDamage * 100 : null;
+  const matchWin = leagueWinState(target.win ?? match.win);
 
   useEffect(() => {
     disposed.current = false;
@@ -472,22 +710,67 @@ export default function LeagueDetailedMatchCard({ match, streamerMode = false, u
 
   const GoldTimeline = ({ details }) => <TimelineTab details={details} participants={participants} streamerMode={streamerMode} useAliases={useAliases} hideStats/>;
 
-  return <article className={`overflow-hidden rounded-2xl border ${matchWin === true ? "border-emerald-400/25 bg-emerald-400/[.045]" : matchWin === false ? "border-rose-400/25 bg-rose-400/[.045]" : "border-cs2-border-subtle bg-cs2-bg-elevated"}`}>
-    <div className="flex min-h-[118px] items-stretch">
-      <div className="flex min-w-0 flex-1 gap-3 p-3">
-        <div className="relative h-14 w-14 shrink-0"><Icon src={getLeagueChampionIconUrl(match.champion_id)} title={match.champion_name} className="h-14 w-14" /><span className={`absolute -bottom-1 -right-1 rounded px-1.5 py-0.5 text-[9px] font-black ${matchWin === true ? "bg-emerald-500 text-black" : matchWin === false ? "bg-rose-500 text-white" : "bg-white/15 text-cs2-text-muted"}`}>{matchWin === true ? "胜" : matchWin === false ? "负" : "未知"}</span></div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-start justify-between gap-2"><div><b className="text-sm">{match.champion_name || `英雄 ${match.champion_id}`}</b><span className="ml-2 text-[10px] text-cs2-text-muted">{match.position || match.role || "未知位置"}</span></div><span className="font-mono text-base font-black">{match.kills || 0}<i className="px-1 not-italic text-cs2-text-muted">/</i><span className="text-rose-300">{match.deaths || 0}</span><i className="px-1 not-italic text-cs2-text-muted">/</i>{match.assists || 0}</span></div>
-          <div className="mt-1 flex flex-wrap gap-x-3 text-[10px] text-cs2-text-muted"><span>KDA <b className="text-cs2-text-primary">{kda.toFixed(2)}</b></span><span>参团 <b className="text-cs2-text-primary">{kp == null ? "—" : `${kp.toFixed(0)}%`}</b></span><span>伤害占比 <b className="text-cs2-text-primary">{damageShare == null ? "—" : `${damageShare.toFixed(0)}%`}</b></span><span>补刀/分 <b className="text-cs2-text-primary">{match.duration_seconds ? (Number(match.cs || 0) / (Number(match.duration_seconds) / 60)).toFixed(1) : "—"}</b></span></div>
-          <div className="mt-2 flex flex-wrap items-center gap-1"><SpellIcons player={match} compact/><Loadout player={match} compact /></div>
-          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-cs2-text-muted"><span>{match.game_mode || "未知模式"}</span><span>·</span><Clock3 className="h-3 w-3"/><span>{formatDuration(match.duration_seconds)}</span><span>·</span><span>{formatLeagueTimestamp(match.played_at)}</span><span>·</span><span>Game {match.game_id ?? "未知"}</span></div>
+  const championId = assetId(target.champion_id);
+  const position = target.position || target.role || "";
+  const durationSeconds = Number(match.duration_seconds ?? match.gameDuration ?? 0);
+  const cs = Number(target.cs ?? match.cs ?? 0);
+  const csPerMinute = durationSeconds > 0 ? (cs / (durationSeconds / 60)).toFixed(1) : "—";
+  const targetSpellIds = spellIds(target);
+  const itemIds = normalizedItems(target);
+  const resultLabel = matchWin === true ? "胜利" : matchWin === false ? "失败" : "未知";
+  const winTone = matchWin === true ? "win" : matchWin === false ? "loss" : "neutral";
+  const tags = [
+    Number(target.penta_kills ?? target.pentaKills) > 0 ? `五杀 ×${target.penta_kills ?? target.pentaKills}` : null,
+    Number(target.quadra_kills ?? target.quadraKills) > 0 ? `四杀 ×${target.quadra_kills ?? target.quadraKills}` : null,
+    Number(target.triple_kills ?? target.tripleKills) > 0 ? `三杀 ×${target.triple_kills ?? target.tripleKills}` : null,
+    Number(target.double_kills ?? target.doubleKills) > 0 ? `双杀 ×${target.double_kills ?? target.doubleKills}` : null,
+  ].filter(Boolean);
+
+  return <article data-testid="league-match-card" className={`relative w-full min-w-0 overflow-hidden ${expanded ? "" : ""}`}>
+    <div className="relative box-border flex min-h-[128px] w-full overflow-hidden rounded border border-solid border-white/10 bg-neutral-900/95 select-none dark:bg-neutral-900/95">
+      <div className="z-10 flex min-w-0 flex-1 gap-2 px-4 py-1">
+        <div className="z-20 my-1 flex min-w-0 flex-1 flex-col justify-between">
+          <div className="flex h-12 gap-2">
+            <div className="flex w-[70px] shrink-0 items-center">
+              <div className="relative">
+                <Icon src={championId ? getLeagueChampionIconUrl(championId) : ""} title={target.champion_name} className={`relative -left-0.5 h-11 w-11 rounded-lg border-2 ${matchWin === true ? "border-blue-300/80" : matchWin === false ? "border-red-300/80" : "border-white/70"}`} />
+                {position ? <span className="absolute bottom-0 right-0 rounded-sm bg-black/80 px-1 text-[9px] text-white/80">{position}</span> : null}
+                {Number(target.kills || 0) >= 10 ? <Crown className="absolute -top-2 left-1/2 h-3.5 w-3.5 -translate-x-1/2 text-yellow-400" /> : null}
+              </div>
+            </div>
+
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <div className="flex w-[84px] shrink-0 gap-0.5">
+                {(targetSpellIds.length || target.perks?.length) ? <><SpellIcons player={target} compact/><div className="flex flex-col gap-0.5">{target.perks?.[0] ? <Icon src={getLeaguePerkIconUrl(assetId(target.perks[0]))} title="主系符文" className="h-6 w-6"/> : null}{target.perks?.[1] ? <Icon src={getLeaguePerkIconUrl(assetId(target.perks[1]))} title="副系符文" className="h-6 w-6"/> : null}</div></> : null}
+              </div>
+              <div className={`${MATCH_METRIC_GRID} items-center`}>
+                <div className="min-w-0 text-center">
+                  <div className="flex items-center justify-center gap-0.5"><b className="text-base text-white">{target.kills ?? 0}</b><span className="mx-px text-xs text-white/60">/</span><b className="text-base text-red-300">{target.deaths ?? 0}</b><span className="mx-px text-xs text-white/60">/</span><b className="text-base text-white">{target.assists ?? 0}</b></div>
+                  <div className="flex justify-center gap-1 text-xs text-white/80">{Number(target.deaths || 0) === 0 && (Number(target.kills || 0) > 0 || Number(target.assists || 0) > 0) ? <span className="text-yellow-200">完美</span> : <span>{kda.toFixed(2)}</span>}<span>({kp == null ? "—" : `${kp.toFixed(0)}%`})</span><span className="sr-only">参团</span></div>
+                </div>
+                <div className="min-w-0 text-center"><b className="block text-base text-white">{damageShare == null ? "—" : `${damageShare.toFixed(0)}%`}</b><span className="text-xs text-white/70">{formatNumber(target.damage ?? target.totalDamageDealtToChampions)} 伤害</span><span className="sr-only">伤害占比</span></div>
+                <div className="hidden min-w-0 text-center min-[700px]:block"><b className="block text-base text-white">{formatNumber(cs)} <small className="text-[11px] font-normal text-white/60">补兵</small></b><span className="text-xs text-white/70">{csPerMinute} / 分钟</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className={`w-[70px] shrink-0 text-sm font-bold leading-none ${matchWin === true ? "text-blue-300" : matchWin === false ? "text-red-300" : "text-white"}`}>{resultLabel}</div>
+            <div className="flex gap-0.5">{itemIds.slice(0, 6).map((id, index) => <Icon key={`${id}-${index}`} src={getLeagueItemIconUrl(id)} title={`装备 ${id}`} className="h-5 w-5"/>)}{itemIds[6] ? <Icon src={getLeagueItemIconUrl(itemIds[6])} title={`饰品 ${itemIds[6]}`} className="h-5 w-5 rounded-full"/> : null}</div>
+            <div className="min-w-0 flex-1 truncate">{tags.map((tag) => <span key={tag} className="mr-1 inline-flex rounded bg-white/10 px-1.5 py-0.5 text-[9px] text-white/70">{tag}</span>)}</div>
+          </div>
+
+          <div className="flex min-w-0 items-center text-xs text-white/70"><span className="text-white/85">{queueName(match)}</span><span className="mx-1 text-white/40">·</span><span>{formatDuration(durationSeconds)}</span><span className="mx-1 text-white/40">·</span><span title={formatLeagueTimestamp(match.played_at)}>{relativeTime(match.played_at)}</span><span className="mx-1 text-white/40">·</span><span className="min-w-0 truncate">{mapName(match)}</span>{kp == null || damageShare == null ? <span className="sr-only">—</span> : null}</div>
         </div>
-        {participants.length ? <div className="hidden w-44 shrink-0 grid-cols-2 gap-x-2 lg:grid">{teams.slice(0, 2).map((team) => <div key={team.teamId} className="space-y-0.5">{team.players.slice(0, 5).map((player, index) => <button key={player.puuid || index} type="button" disabled={!player.puuid} onClick={() => player.puuid && onOpenPlayer?.(player.puuid)} className={`flex w-full min-w-0 items-center gap-1 text-left text-[9px] ${player.puuid === targetPuuid ? "font-bold text-cyan-200" : "text-cs2-text-muted"}`}><Icon src={getLeagueChampionIconUrl(player.champion_id)} title={player.champion_name} className="h-4 w-4"/><span className="truncate">{playerName(player, index, streamerMode, useAliases)}</span></button>)}</div>)}</div> : null}
+
+        {participants.length ? <div className="z-20 my-1 hidden w-[168px] max-w-[168px] gap-2 lg:flex">{teams.slice(0, 2).map((team) => <div key={String(team.teamId)} className="flex min-w-0 flex-1 flex-col justify-between gap-0.5">{team.players.slice(0, 5).map((player, index) => <button key={player.puuid || player.participant_id || index} type="button" disabled={!player.puuid} onClick={() => player.puuid && onOpenPlayer?.(player.puuid)} className="group flex min-w-0 cursor-pointer items-center gap-1 text-left"><Icon src={assetId(player.champion_id) ? getLeagueChampionIconUrl(assetId(player.champion_id)) : ""} title={player.champion_name} className={`h-4 w-4 shrink-0 rounded ${String(player.puuid) === String(target.puuid) ? "ring-1 ring-white/70" : ""}`}/><span className={`min-w-0 truncate text-xs transition-colors group-hover:text-white ${String(player.puuid) === String(target.puuid) ? "font-bold text-white/90" : "text-white/70"}`}>{playerName(player, index, streamerMode, useAliases)}</span></button>)}</div>)}</div> : null}
       </div>
-      <button type="button" aria-label={expanded ? "收起战绩详情" : "展开战绩详情"} onClick={() => setExpanded((value) => !value)} className="grid w-10 shrink-0 place-items-center border-l border-cs2-border-subtle bg-white/[.025] text-cs2-text-muted hover:bg-white/[.06] hover:text-white">{expanded ? <ChevronUp className="h-4 w-4"/> : <ChevronDown className="h-4 w-4"/>}</button>
+
+      <button type="button" aria-label={expanded ? "收起战绩详情" : "展开战绩详情"} onClick={() => setExpanded((value) => !value)} className="z-20 flex w-8 shrink-0 cursor-pointer items-center justify-center border-l border-white/10 bg-white/5 text-base text-white/60 transition-colors hover:bg-white/10 hover:text-white"><ChevronDown className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : "-rotate-90"}`} /></button>
+      <div className={`pointer-events-none absolute inset-0 z-0 ${winTone === "win" ? "shadow-[inset_3px_0_0_rgba(147,197,253,.95),inset_0_0_26px_rgba(59,130,246,.08)]" : winTone === "loss" ? "shadow-[inset_3px_0_0_rgba(252,165,165,.95),inset_0_0_26px_rgba(239,68,68,.08)]" : "shadow-[inset_3px_0_0_rgba(255,255,255,.45)]"}`} />
     </div>
     {expanded ? <div className="border-t border-cs2-border-subtle p-3">
-      <div className="mb-3 flex flex-wrap items-center gap-1"><div className="flex min-w-0 flex-1 flex-wrap gap-1">{TABS.map(([id, label]) => <button key={id} type="button" onClick={() => void selectTab(id)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${tab === id ? "bg-cyan-400/15 text-cyan-200" : "text-cs2-text-muted hover:bg-white/5"}`}>{label}</button>)}</div><LeagueMatchReplayActions match={match} onError={onError}/></div>
+      <div className="mb-3 flex flex-wrap items-center gap-1"><div className="flex min-w-0 flex-1 flex-wrap gap-1">{TABS.map(([id, label]) => <button key={id} type="button" onClick={() => void selectTab(id)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${tab === id ? "bg-cyan-400/15 text-cyan-200" : "text-cs2-text-muted hover:bg-white/5"}`}>{label}</button>)}</div><div className="flex gap-1"><LeagueMatchReplayActions match={match} onError={onError}/>{onDryRunGame ? <button type="button" aria-label="载入实时面板模拟" title="将历史阵容载入实时对局面板（只读）" onClick={() => onDryRunGame(buildLeagueHistoricalPreview(match, participants))} className="rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-2.5 py-1.5 text-xs font-semibold text-cyan-200">模拟</button> : null}</div></div>
       {tab === "summary" ? <div className="space-y-3">{teams.map((team) => { const teamWin = leagueWinState(team.players[0]?.win); return <section key={team.teamId}><h4 className="mb-1.5 text-[11px] font-bold text-cs2-text-muted">队伍 {team.teamId} · {teamWin === true ? "胜利" : teamWin === false ? "失败" : "结果未知"}</h4><TeamTable players={team.players} targetPuuid={targetPuuid} streamerMode={streamerMode} useAliases={useAliases} onOpenPlayer={onOpenPlayer}/></section>; })}</div> : null}
       {tab === "details" ? <RawDetailsTab match={match} participants={participants} streamerMode={streamerMode} useAliases={useAliases}/> : null}
       {tab === "runes" ? <RunesTab participants={participants} perkMap={perkMap} streamerMode={streamerMode} useAliases={useAliases}/> : null}

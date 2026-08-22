@@ -1,7 +1,12 @@
 import { useEffect, useRef } from "react";
 import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import { fetchLeagueLabStatus, fetchLeagueOngoingGame, sendLeagueInGameLines, sendLeagueInGamePreset } from "../api/leagueLabApi";
-import { buildLeagueFormPreset, buildLeagueJunglePreset, buildLeaguePremadePreset } from "../utils/leagueChatPresets";
+import {
+  buildLeaguePresetLines,
+  getLeaguePresetOptions,
+  selectLeaguePresetPlayers,
+  shortcutSettingsKey,
+} from "../utils/leagueChatPresets";
 
 const POLL_INTERVAL_MS = 2500;
 
@@ -28,7 +33,7 @@ export default function LeaguePresetShortcutManager() {
             if (preset?.id && shortcut && !desired.has(shortcut)) desired.set(shortcut, `fixed:${preset.id}`);
           }
           for (const kind of ["rating", "premade", "jungle"]) for (const target of ["friendly", "enemy", "all"]) {
-            const shortcut = String(settings[`in_game_${kind}_shortcuts`]?.[target] || "").trim();
+            const shortcut = String(settings[shortcutSettingsKey(kind)]?.[target] || "").trim();
             if (shortcut && !desired.has(shortcut)) desired.set(shortcut, `generated:${kind}:${target}`);
           }
         }
@@ -53,9 +58,13 @@ export default function LeaguePresetShortcutManager() {
               try {
                 const [game, liveStatus] = await Promise.all([fetchLeagueOngoingGame(), fetchLeagueLabStatus()]);
                 const players = game?.players || [];
-                const own = players.find((player) => player?.puuid && player.puuid === liveStatus?.current_summoner?.puuid);
-                const selected = target === "all" || !own ? players : players.filter((player) => target === "friendly" ? String(player.team) === String(own.team) : String(player.team) !== String(own.team));
-                const lines = kind === "premade" ? buildLeaguePremadePreset(selected) : kind === "jungle" ? buildLeagueJunglePreset(selected) : buildLeagueFormPreset(selected);
+                const options = getLeaguePresetOptions(liveStatus?.settings, kind);
+                // Shortcut target is authoritative for the trigger; the
+                // saved selected-player list is still honoured only when the
+                // user explicitly chose it in the page.
+                const targetOptions = { ...options, targetMode: target };
+                const selected = selectLeaguePresetPlayers(players, targetOptions, liveStatus?.current_summoner?.puuid || "");
+                const lines = buildLeaguePresetLines(kind, selected, options, {});
                 if (lines.length) await sendLeagueInGameLines(lines.slice(0, 10), "", "shortcut", kind, target);
               } catch {
                 // Missing live data or a backend safety rejection leaves the game untouched.

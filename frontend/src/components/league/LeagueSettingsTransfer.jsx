@@ -3,16 +3,29 @@ import { useRef, useState } from "react";
 
 const EXPORT_FORMAT = "cs2-ultimate-insight-studio/league-settings";
 const EXPORT_SCHEMA_VERSION = 1;
+const LEAGUE_AKARI_FORMAT = "league-akari-settings";
+const LEAGUE_AKARI_DATABASE_VERSION = 15;
 const MAX_IMPORT_BYTES = 1024 * 1024;
 const SENSITIVE_KEY = /(password|passwd|secret|token|credential|private.?key|api.?key|authorization|cookie)/i;
 const SAFETY_DEFAULTS = {
   automation_enabled: false,
+  auto_accept_enabled: false,
+  play_again_enabled: false,
+  auto_reconnect_enabled: false,
+  auto_handle_invitations_enabled: false,
+  auto_skip_leader_enabled: false,
+  auto_select_enabled: false,
+  auto_champion_config_enabled: false,
+  auto_honor_enabled: false,
+  auto_matchmaking_enabled: false,
+  auto_reply_enabled: false,
+  lock_offline_status: false,
+  auto_set_status_message_enabled: false,
+  auto_set_ranked_status_enabled: false,
+  auto_send_aram_team_side_enabled: false,
   toolkit_account_actions_enabled: false,
   in_game_send_enabled: false,
   terminate_game_shortcut_enabled: false,
-  opgg_auto_apply_runes: false,
-  opgg_auto_apply_spells: false,
-  opgg_auto_apply_items: false,
 };
 
 function isPlainObject(value) {
@@ -25,6 +38,55 @@ function stripSensitiveValues(value) {
   return Object.fromEntries(Object.entries(value)
     .filter(([key]) => !SENSITIVE_KEY.test(key))
     .map(([key, item]) => [key, stripSensitiveValues(item)]));
+}
+
+const LEAGUE_AKARI_KEY_ALIASES = {
+  "window-manager-main/aux-window/enabled": "mini_enabled",
+  "window-manager-main/aux-window/autoShow": "mini_auto_show",
+  "window-manager-main/aux-window/opacity": "mini_opacity",
+  "window-manager-main/aux-window/pinned": "mini_pinned",
+  "window-manager-main/aux-window/showSkinSelector": "mini_show_skin_selector",
+  "window-manager-main/ongoing-game-window/enabled": "ongoing_enabled",
+  "window-manager-main/ongoing-game-window/pinned": "ongoing_pinned",
+  "window-manager-main/ongoing-game-window/showShortcut": "ongoing_window_shortcut",
+  "window-manager-main/cd-timer-window/enabled": "cooldown_timer_enabled",
+  "window-manager-main/cd-timer-window/pinned": "cooldown_pinned",
+  "window-manager-main/cd-timer-window/showShortcut": "cooldown_window_shortcut",
+  "window-manager-main/cd-timer-window/timerType": "cooldown_timer_type",
+  "window-manager-main/cd-timer-window/reverseAdjustmentDirection": "cooldown_timer_reverse_adjustment",
+};
+
+function camelToSnake(value) {
+  return String(value || "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[-\s]+/g, "_")
+    .toLowerCase();
+}
+
+function mapLeagueAkariSettingKey(key, allowed) {
+  const normalized = String(key || "").trim();
+  if (!normalized) return null;
+  if (LEAGUE_AKARI_KEY_ALIASES[normalized]) return LEAGUE_AKARI_KEY_ALIASES[normalized];
+  if (allowed.has(normalized)) return normalized;
+  const leaf = normalized.slice(normalized.lastIndexOf("/") + 1);
+  const snakeLeaf = camelToSnake(leaf);
+  return allowed.has(snakeLeaf) ? snakeLeaf : null;
+}
+
+function parseLeagueAkariSettings(document, allowed) {
+  if (Number(document.databaseVersion) > LEAGUE_AKARI_DATABASE_VERSION) {
+    throw new Error("该 LeagueAkari 设置文件来自更新版本，当前客户端无法安全导入");
+  }
+  if (!Array.isArray(document.data)) throw new Error("LeagueAkari 设置文件缺少有效的 data[]");
+  const imported = {};
+  for (const item of document.data) {
+    if (!isPlainObject(item) || typeof item.key !== "string" || !Object.prototype.hasOwnProperty.call(item, "value")) {
+      throw new Error("LeagueAkari 设置文件包含无效的 data[] 项");
+    }
+    const target = mapLeagueAkariSettingKey(item.key, allowed);
+    if (target) imported[target] = item.value;
+  }
+  return imported;
 }
 
 export function buildLeagueSettingsExport(settings, exportedAt = new Date().toISOString()) {
@@ -43,16 +105,26 @@ export function parseLeagueSettingsImport(text, currentSettings = {}) {
   } catch {
     throw new Error("文件不是有效的 JSON");
   }
-  const imported = document?.format === EXPORT_FORMAT ? document.settings : document;
+  const allowed = new Set(Object.keys(currentSettings || {}));
+  const imported = document?.type === LEAGUE_AKARI_FORMAT
+    ? parseLeagueAkariSettings(document, allowed)
+    : document?.format === EXPORT_FORMAT ? document.settings : document;
   if (!isPlainObject(imported)) throw new Error("文件中没有有效的 League 设置对象");
   if (document?.format === EXPORT_FORMAT && Number(document.schema_version) > EXPORT_SCHEMA_VERSION) {
     throw new Error("该设置文件来自更新版本，当前客户端无法安全导入");
   }
-  const allowed = new Set(Object.keys(currentSettings || {}));
   const sanitized = Object.fromEntries(Object.entries(stripSensitiveValues(imported))
     .filter(([key]) => allowed.has(key)));
   if (!Object.keys(sanitized).length) throw new Error("设置文件没有当前版本可识别的字段");
-  return { ...sanitized, ...SAFETY_DEFAULTS };
+  const profiles = isPlainObject(sanitized.auto_select_profiles)
+    ? Object.fromEntries(Object.entries(sanitized.auto_select_profiles).map(([key, profile]) => {
+      const safeProfile = isPlainObject(profile) ? profile : {};
+      const pick = isPlainObject(safeProfile.pick) ? safeProfile.pick : {};
+      const ban = isPlainObject(safeProfile.ban) ? safeProfile.ban : {};
+      return [key, { ...safeProfile, pick: { ...pick, enabled: false, bench_handle_trade_enabled: false }, ban: { ...ban, enabled: false } }];
+    }))
+    : sanitized.auto_select_profiles;
+  return { ...sanitized, ...(profiles ? { auto_select_profiles: profiles } : {}), ...SAFETY_DEFAULTS };
 }
 
 export default function LeagueSettingsTransfer({ settings, busy = false, onImport, onError }) {

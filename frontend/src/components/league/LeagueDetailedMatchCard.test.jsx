@@ -79,6 +79,40 @@ describe("LeagueDetailedMatchCard", () => {
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(4);
   });
 
+  it("uses non-empty item slots when a summary also contains an empty items array", () => {
+    const withSlots = {
+      ...match,
+      items: [],
+      item_slots: [1001, 0, 1002, 0, 0, 0, 2052],
+      participants: match.participants.map((player, index) => index === 0
+        ? { ...player, items: [], item_slots: [1001, 0, 1002, 0, 0, 0, 2052] }
+        : player),
+    };
+    render(<LeagueDetailedMatchCard match={withSlots} />);
+
+    expect(screen.getAllByTitle("装备 1001").length).toBeGreaterThan(0);
+    expect(screen.getAllByTitle("装备 1002").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "展开战绩详情" }));
+    const teamTable = screen.getAllByTestId("league-team-table")[0];
+    expect(teamTable.firstElementChild.className).toContain("min-w-[920px]");
+    expect(teamTable.children[1].className).toContain("min-w-[920px]");
+  });
+
+  it("renders LeagueAkari-style spells arrays and the local LCU asset URL", () => {
+    const upstreamMatch = {
+      ...match,
+      spell1_id: undefined,
+      spell2_id: undefined,
+      participants: match.participants.map((player, index) => index === 0
+        ? { ...player, spell1_id: undefined, spell2_id: undefined, spells: [4, 14], perks: [] }
+        : player),
+    };
+    render(<LeagueDetailedMatchCard match={upstreamMatch} />);
+
+    expect(screen.getByTitle("召唤师技能 4").getAttribute("src")).toBe("/api/league-lab/assets/summoner-spells/4.png");
+    expect(screen.getByTitle("召唤师技能 14").getAttribute("src")).toBe("/api/league-lab/assets/summoner-spells/14.png");
+  });
+
   it("loads timeline details only when that tab is opened", async () => {
     render(<LeagueDetailedMatchCard match={match} />);
     fireEvent.click(screen.getByRole("button", { name: "展开战绩详情" }));

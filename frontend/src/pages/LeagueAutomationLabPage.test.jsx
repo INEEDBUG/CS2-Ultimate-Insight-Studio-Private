@@ -13,6 +13,7 @@ vi.mock("../api/leagueLabApi", () => ({
   fetchLeagueMatches: vi.fn(),
   fetchLeagueOngoingGame: vi.fn(),
   fetchLeagueReplay: vi.fn(),
+  fetchLeagueChampions: vi.fn().mockResolvedValue({ champions: [] }),
   fetchLeagueLoadoutCatalog: vi.fn(),
   fetchLeagueMatchDetails: vi.fn(),
   selectLeagueClient: vi.fn(),
@@ -58,8 +59,10 @@ describe("LeagueAutomationLabPage", () => {
 
     fireEvent.click(screen.getByRole("switch", { name: "启用英雄联盟自动化" }));
     await waitFor(() => expect(saveLeagueLabSettings).toHaveBeenCalledWith(expect.objectContaining({ automation_enabled: true })));
+    fireEvent.click(screen.getByRole("button", { name: "其他" }));
+    fireEvent.click(screen.getByText("辅助窗口与外观"));
     expect(screen.getByLabelText("Mini 不透明度").value).toBe("1");
-    expect(screen.getByLabelText("OP.GG 不透明度").value).toBe("1");
+    expect(screen.queryByLabelText("OP.GG 不透明度")).toBeNull();
     expect(screen.getByRole("switch", { name: "Mini 显示皮肤选择器" })).toBeTruthy();
   });
 
@@ -121,5 +124,33 @@ describe("LeagueAutomationLabPage", () => {
     expect(screen.getByRole("switch", { name: "显示表现画像标签" })).toBeTruthy();
     expect(screen.getByLabelText("实时对局并发查询数").value).toBe("10");
     expect(screen.getByLabelText("组排推断阈值").value).toBe("5");
+  });
+
+  it("shows the same read-only auto-select move and delayed plans in the main editor", async () => {
+    fetchLeagueLabStatus.mockResolvedValueOnce({
+      ...status,
+      phase: "ChampSelect",
+      settings: { ...status.settings, auto_select_enabled: false },
+      auto_select: {
+        enabled: false,
+        move: "show-ban",
+        active_group_id: "ranked",
+        assigned_position: "middle",
+        actionability: { show: false },
+        expected_bans: [{ id: 4, status: "bannable" }],
+        delayed_ban: { move: "show-ban", remaining_seconds: 1.25 },
+        config: { pick_strategy: "show-and-lock-in", ban_strategy: "show-and-lock-in", show_intent: false },
+      },
+    });
+
+    render(<LeagueAutomationLabPage />);
+    await screen.findByText("已连接：Tester");
+    fireEvent.click(screen.getByRole("button", { name: "自动化" }));
+    fireEvent.click(screen.getByRole("button", { name: "自动选择 / 禁用" }));
+
+    expect(await screen.findByTestId("main-auto-select-runtime")).toBeTruthy();
+    expect(screen.getAllByText("亮出禁用").length).toBeGreaterThan(0);
+    expect(screen.getByText("禁用计划")).toBeTruthy();
+    expect(screen.getByText("1.3 秒")).toBeTruthy();
   });
 });

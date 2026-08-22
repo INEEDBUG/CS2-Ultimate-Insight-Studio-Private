@@ -1,6 +1,6 @@
 #define MyAppName "CS2 Insight Agent"
 #define MyAppPublisher "CS2 Insight Agent"
-#define MyAppURL "https://github.com/INEEDBUG/CS2-Ultimate-Insight-Studio-Private"
+#define MyAppURL "https://github.com/INEEDBUG/MaxGameStudio"
 #ifndef MyAppVersion
   #define MyAppVersion "0.0.0"
 #endif
